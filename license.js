@@ -48,17 +48,41 @@ function getMachineFingerprint() {
   }
 }
 
+// ===== OBFUSCATION =====
+// Keys and secrets never appear in plaintext in the bundle. Each string is
+// stored as hex char-codes XOR-ed with a rotating mask. This blocks naive
+// extraction (strings/grep/asar read); full protection requires a server.
+const _MASK = [0x5a, 0x33, 0xc7, 0x81, 0x1e];
+
+function _deobf(hex) {
+  let out = '';
+  for (let i = 0; i < hex.length; i += 2) {
+    out += String.fromCharCode(parseInt(hex.substr(i, 2), 16) ^ _MASK[(i / 2) % _MASK.length]);
+  }
+  return out;
+}
+
+// Key-signing HMAC secret (v2 — obfuscated)
+const _KSRC = '007e93de4e7b7684b2416803f5b541090084d32d0e6c8cb2470565f5';
+// License-file signature secret (v2 — obfuscated, distinct from key secret)
+const _SSRC = '007e93de4e7b7684b241090280cf2a0e6695b2410c0198b32e6805';
+
 function _hmac(key, machineId) {
-  const secret = 'ZMT_P!EC3_2024_S3CR3T_K3Y';
+  const secret = _deobf(_KSRC);
   const data = key.toUpperCase().trim() + '::' + machineId;
   return crypto.createHmac('sha512', secret).update(data).digest('hex');
 }
 
-const VALID_KEYS = {
-  '1234512345.COM': { type: 'monthly', days: 30,   label: 'شهر واحد' },
-  'TAHERZER96.COM': { type: 'yearly',  days: 365,  label: 'سنة واحدة' },
-  'TAHERZER94@':    { type: '3years',  days: 1095, label: '3 سنوات' },
-};
+const _VALID_KEYS_SRC = [
+  { enc: '6b01f4b52b6b01f4b52b747088cc',        type: 'monthly', days: 30,   label: 'شهر واحد' },
+  { enc: '0e728fc44c007695b828747088cc',        type: 'yearly',  days: 365,  label: 'سنة واحدة' },
+  { enc: '0e728fc44c007695b82a1a',              type: '3years',  days: 1095, label: '3 سنوات' },
+];
+
+const VALID_KEYS = {};
+for (const src of _VALID_KEYS_SRC) {
+  VALID_KEYS[_deobf(src.enc)] = src;
+}
 
 function validateKey(key) {
   const norm = key.toUpperCase().trim();
@@ -89,6 +113,21 @@ function saveLicense(data) {
   } catch (e) { return false; }
 }
 
+// ===== LICENSE FILE INTEGRITY SIGNATURE =====
+// The license file is signed so editing expiresAt (or any field) is detected.
+function _sigPayload(license) {
+  return [license.machineId, license.activatedAt, license.expiresAt, license.type, license.keyHash].join('|');
+}
+
+function _licenseSig(license) {
+  return crypto.createHmac('sha256', _deobf(_SSRC)).update(_sigPayload(license)).digest('hex');
+}
+
+function _verifyLicenseSig(license) {
+  if (!license || typeof license.sig !== 'string') return false;
+  return license.sig === _licenseSig(license);
+}
+
 function activate(key) {
   const result = validateKey(key);
   if (!result.valid) return { success: false, message: 'مفتاح التفعيل غير صالح' };
@@ -102,6 +141,7 @@ function activate(key) {
     type: result.type,
     label: result.label,
   };
+  licenseData.sig = _licenseSig(licenseData);
 
   if (!saveLicense(licenseData)) {
     return { success: false, message: 'خطأ في حفظ بيانات التفعيل' };
@@ -118,6 +158,10 @@ function checkLicense() {
   const machineId = getMachineFingerprint();
   if (license.machineId !== machineId) {
     return { status: 'machine_mismatch', valid: false, message: 'هذا المفتاح مربوط بجهاز آخر' };
+  }
+
+  if (!_verifyLicenseSig(license)) {
+    return { status: 'license_tampered', valid: false, message: 'تم اكتشاف تعديل في ملف الترخيص — أعد إدخال مفتاحك للاستمرار' };
   }
 
   const now = Date.now();

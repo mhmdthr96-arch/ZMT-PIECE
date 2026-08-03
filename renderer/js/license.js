@@ -42,6 +42,12 @@ async function checkAndEnforceLicense() {
     return false;
   }
 
+  if (result.status === 'license_tampered') {
+    _licenseState.valid = false;
+    showFreezeOverlay(result.message || 'تم اكتشاف تعديل في ملف الترخيص');
+    return false;
+  }
+
   if (result.status === 'active') {
     _licenseState.valid = true;
     _licenseState.license = result.license;
