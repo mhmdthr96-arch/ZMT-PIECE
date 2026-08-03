@@ -1,0 +1,81 @@
+<div class="page" id="page-suppliers">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-truck"></i> <span data-i18n="suppliers.title">الموردين</span></h1>
+      <p><span data-i18n="suppliers.sub">إدارة موردي قطع الغيار</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="toolbar">
+      <div class="search-bar">
+        <i class="fas fa-search"></i>
+        <input type="text" data-i18n-placeholder="suppliers.search" placeholder="بحث عن مورد..." id="supSearch">
+      </div>
+      <button class="btn btn-primary" onclick="showAddSupplierForm()"><i class="fas fa-plus"></i> <span data-i18n="suppliers.add">إضافة مورد</span></button>
+    </div>
+
+    <div id="suppliersGrid" class="supplier-grid"></div>
+    <div id="suppliersEmpty" class="placeholder-box" style="display:none">
+      <i class="fas fa-truck" style="font-size:48px;color:#555"></i>
+      <p data-i18n="suppliers.empty">لا يوجد موردين</p>
+    </div>
+  </div>
+</div>
+
+<!-- Add Supplier Modal -->
+<div class="modal-overlay" id="addSupplierModal">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header">
+      <h3><i class="fas fa-plus-circle"></i> <span data-i18n="suppliers.addModalTitle">إضافة مورد جديد</span></h3>
+      <button class="modal-close" onclick="closeAddSupplier()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label><span data-i18n="suppliers.formName">اسم المورد</span> <span class="required">*</span></label>
+        <input type="text" class="form-input" id="supName" data-i18n-placeholder="suppliers.formNamePl" placeholder="مثال: مؤسسة XX لقطع الغيار">
+      </div>
+      <div class="form-group">
+        <label><span data-i18n="suppliers.formPhone">رقم الهاتف</span></label>
+        <input type="text" class="form-input" id="supPhone" placeholder="05XXXXXXXX" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label><span data-i18n="suppliers.formAddress">العنوان</span></label>
+        <input type="text" class="form-input" id="supAddress" data-i18n-placeholder="suppliers.formAddressPl" placeholder="مثال: الرياض - شارع الملك فهد">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeAddSupplier()"><span data-i18n="suppliers.cancel">إلغاء</span></button>
+      <button class="btn btn-success" onclick="confirmAddSupplier()"><i class="fas fa-check"></i> <span data-i18n="suppliers.save">حفظ</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Supplier Modal -->
+<div class="modal-overlay" id="editSupplierModal">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header">
+      <h3><i class="fas fa-edit"></i> <span data-i18n="suppliers.editModalTitle">تعديل المورد</span></h3>
+      <button class="modal-close" onclick="closeEditSupplier()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label><span data-i18n="suppliers.formName">اسم المورد</span> <span class="required">*</span></label>
+        <input type="text" class="form-input" id="editSupName">
+      </div>
+      <div class="form-group">
+        <label><span data-i18n="suppliers.formPhone">رقم الهاتف</span></label>
+        <input type="text" class="form-input" id="editSupPhone" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label><span data-i18n="suppliers.formAddress">العنوان</span></label>
+        <input type="text" class="form-input" id="editSupAddress">
+      </div>
+      <input type="hidden" id="editSupId">
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeEditSupplier()"><span data-i18n="suppliers.cancel">إلغاء</span></button>
+      <button class="btn btn-success" onclick="confirmEditSupplier()"><i class="fas fa-check"></i> <span data-i18n="suppliers.save">حفظ</span></button>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,160 @@
+<div class="page" id="page-transfer">
+  <div class="page-header">
+    <div class="page-header-content">
+      <button class="btn-back" onclick="navigateTo('inventory')"><i class="fas fa-arrow-right"></i></button>
+      <h1><i class="fas fa-exchange-alt"></i> <span data-i18n="transfer.title">فاتورة نقل منتجات بين الفروع</span></h1>
+      <p><span id="transferSubText" data-i18n="transfer.sub">نقل منتجات من محل إلى آخر مع تسجيل ديون</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <!-- Store Info Bar -->
+    <div class="transfer-store-bar">
+      <div class="transfer-store-info">
+        <div class="transfer-store-icon"><i class="fas fa-store"></i></div>
+        <div>
+          <div class="transfer-store-label" data-i18n="transfer.senderStore">المحل المرسل</div>
+          <div class="transfer-store-code" id="transferFromCode"></div>
+        </div>
+      </div>
+      <div class="transfer-arrow"><i class="fas fa-arrow-left"></i></div>
+      <div class="transfer-store-info">
+        <div class="transfer-store-icon transfer-store-icon-dest"><i class="fas fa-flag"></i></div>
+        <div>
+          <div class="transfer-store-label" data-i18n="transfer.destination">الوجهة</div>
+          <div class="transfer-store-code" id="transferToCode">--</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Destination Selector -->
+    <div class="transfer-dest-section">
+      <label data-i18n="transfer.selectDestination">اختر محل الوجهة <span class="required">*</span></label>
+      <select class="form-input" id="transferDestSelect" onchange="onTransferDestChange()">
+        <option value="" data-i18n="transfer.chooseDestination2">-- اختر الوجهة --</option>
+      </select>
+    </div>
+
+    <!-- Product Search -->
+    <div class="transfer-search-section">
+      <div class="barcode-scanner-section">
+        <div class="scanner-input-wrap">
+          <i class="fas fa-qrcode scanner-icon"></i>
+          <input type="text" class="form-input scanner-input" id="transferBarcodeScanner"
+            data-i18n-placeholder="transfer.scanPlaceholder2" placeholder="امسح الباركود ضوئياً..." dir="ltr" autocomplete="off"
+            onkeydown="handleTransferBarcodeScan(event)">
+          <span class="scanner-status" id="transferScannerStatus" data-i18n="transfer.scannerReady">جاهز للمسح</span>
+        </div>
+        <div class="scanner-result" id="transferScannerResult" style="display:none"></div>
+      </div>
+
+      <div class="form-group" style="margin-top:12px">
+        <label data-i18n="transfer.searchExisting">ابحث عن منتج في المخزون (بالاسم أو الباركود)</label>
+        <input type="text" class="form-input" id="transferProdSearch" data-i18n-placeholder="transfer.searchPlaceholder2" placeholder="اسم المنتج أو الباركود..." oninput="searchTransferProduct(this.value)">
+      </div>
+      <div id="transferSearchResults" class="search-results" style="position:relative;z-index:10"></div>
+      <div id="transferSelectedProduct" style="display:none" class="selected-prod-info">
+        <div class="sel-prod-row">
+          <span><strong id="transferSelName"></strong></span>
+          <span class="text-muted" id="transferSelBarcode"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Transfer Item Form -->
+    <div class="transfer-item-form" id="transferItemForm" style="display:none">
+      <h4 style="margin:0 0 12px;color:var(--bmw-blue-1)"><i class="fas fa-box"></i> <span data-i18n="transfer.productDataTitle">بيانات المنتج للنقل</span></h4>
+
+      <div class="form-row" style="grid-template-columns:2fr 1fr 1fr 1fr">
+        <div class="form-group">
+          <label data-i18n="transfer.productName">اسم المنتج</label>
+          <input type="text" class="form-input" id="transferItemName" readonly>
+        </div>
+        <div class="form-group">
+          <label data-i18n="transfer.availableQty">الكمية المتوفرة</label>
+          <input type="text" class="form-input" id="transferItemAvail" readonly style="color:var(--bmw-blue-1);font-weight:700">
+        </div>
+        <div class="form-group">
+          <label data-i18n="transfer.transferQty">الكمية للنقل <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="transferItemQty" value="1" min="1">
+        </div>
+        <div class="form-group">
+          <label data-i18n="transfer.buyPrice">سعر الشراء <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="transferItemBuyPrice" value="0" min="0">
+        </div>
+      </div>
+      <div class="form-row" style="grid-template-columns:1fr 1fr 1fr 1fr">
+        <div class="form-group">
+          <label data-i18n="transfer.sellPrice2">سعر البيع <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="transferItemSellPrice" value="0" min="0">
+        </div>
+        <div class="form-group">
+          <label data-i18n="transfer.brand2">العلامة التجارية</label>
+          <select class="form-input" id="transferItemBrand"></select>
+        </div>
+        <div class="form-group">
+          <label data-i18n="transfer.category2">التصنيف</label>
+          <select class="form-input" id="transferItemCategory"></select>
+        </div>
+        <div class="form-group" style="display:flex;align-items:flex-end">
+          <button class="btn btn-primary" onclick="addTransferItem()" style="width:100%">
+            <i class="fas fa-cart-plus"></i> <span data-i18n="transfer.addToCart2">إضافة إلى سلة النقل</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Transfer Cart -->
+    <div id="transferCartSection" style="display:none;margin-top:16px">
+      <hr>
+      <h4 style="display:flex;align-items:center;gap:8px;margin:0 0 10px">
+        <i class="fas fa-shopping-cart" style="color:var(--bmw-blue-1)"></i> <span data-i18n="transfer.transferCart">سلة فاتورة النقل</span>
+        <span style="font-size:12px;color:var(--silver-500);font-weight:400" id="transferCartCount">(0)</span>
+      </h4>
+      <div id="transferCartItems"></div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--silver-300)">
+        <div>
+          <span style="font-size:13px;color:var(--silver-600)" data-i18n="transfer.totalLabel2">الإجمالي:</span>
+          <strong style="font-size:20px;color:var(--bmw-blue-1)" id="transferCartTotal">DA0</strong>
+        </div>
+        <button class="btn btn-danger" onclick="clearTransferCart()"><i class="fas fa-trash"></i> <span data-i18n="transfer.clear3">تفريغ</span></button>
+      </div>
+    </div>
+
+    <!-- Payment Section -->
+    <div id="transferPaymentSection" style="display:none;margin-top:20px">
+      <hr>
+      <h4 style="margin:0 0 12px"><i class="fas fa-money-bill-wave" style="color:var(--bmw-blue-1)"></i> <span data-i18n="transfer.paymentSection">الدفع والديون</span></h4>
+
+      <div class="transfer-payment-card">
+        <div class="transfer-payment-row">
+          <span class="transfer-payment-label" data-i18n="transfer.totalLabel2">الإجمالي:</span>
+          <strong class="transfer-payment-value" id="transferPayTotal">DA0</strong>
+        </div>
+
+        <div class="form-group">
+          <label data-i18n="transfer.payNow2">المبلغ المدفوع الآن</label>
+          <input type="number" class="form-input no-spinner" id="transferPayAmount" value="0" min="0" oninput="updateTransferPaymentSummary()">
+        </div>
+
+        <div class="transfer-payment-row">
+          <span class="transfer-payment-label" data-i18n="transfer.remainingDebt2">المتبقي (دين):</span>
+          <strong class="transfer-payment-value transfer-payment-debt" id="transferPayDebt">DA0</strong>
+        </div>
+
+        <div class="transfer-pay-btns">
+          <button class="btn" onclick="setTransferPayFull()"><i class="fas fa-check-double"></i> <span data-i18n="transfer.fullPayment2">دفع كامل</span></button>
+          <button class="btn" onclick="setTransferPayNone()"><i class="fas fa-times"></i> <span data-i18n="transfer.noPayment2">بدون دفع</span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Execute Button -->
+    <div id="transferExecSection" style="display:none;margin-top:20px">
+      <button class="btn btn-success btn-lg" onclick="executeTransfer()" style="width:100%">
+        <i class="fas fa-check-circle"></i> <span data-i18n="transfer.confirmTransfer">تأكيد وتنفيذ فاتورة النقل</span>
+      </button>
+    </div>
+  </div>
+</div>

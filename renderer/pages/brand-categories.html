@@ -1,0 +1,25 @@
+<div class="page" id="page-brand-categories">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1>
+        <button class="btn-back" onclick="navigateTo('brands')"><i class="fas fa-arrow-right"></i></button>
+        <i class="fas fa-car" id="brandIcon"></i>
+        <span id="brandTitle" data-i18n="brandCat.brand">العلامة</span>
+      </h1>
+      <p><span id="brandSub" data-i18n="brandCat.category">اختر نوع القطعة</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="toolbar">
+      <div class="search-bar">
+        <i class="fas fa-search"></i>
+        <input type="text" placeholder="بحث عن نوع..." data-i18n-placeholder="brandCat.searchPlaceholder" id="catSearch">
+      </div>
+      <button class="btn btn-primary" id="btnAddProduct" onclick="openAddProduct()">
+        <i class="fas fa-plus"></i> <span data-i18n="brandCat.addProduct">إضافة منتج</span>
+      </button>
+    </div>
+    <div class="brand-grid" id="categoriesGrid"></div>
+  </div>
+</div>

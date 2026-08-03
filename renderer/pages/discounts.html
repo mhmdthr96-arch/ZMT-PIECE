@@ -1,0 +1,45 @@
+<div class="page" id="page-discounts">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-percent"></i> <span data-i18n="discounts.title">التخفيضات</span></h1>
+      <p><span data-i18n="discounts.sub">سجل التخفيضات الممنوحة</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#fff3e0;color:#e65100"><i class="fas fa-percent"></i></div>
+        <div class="stat-info">
+          <div class="stat-value" id="discTotalCount">0</div>
+          <div class="stat-label" data-i18n="discounts.totalDiscounts">إجمالي التخفيضات</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#e8f5e9;color:#2e7d32"><i class="fas fa-money-bill-wave"></i></div>
+        <div class="stat-info">
+          <div class="stat-value" id="discTotalAmount">DA0</div>
+          <div class="stat-label" data-i18n="discounts.totalValue">القيمة الإجمالية للتخفيضات</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th data-i18n="discounts.colDate">التاريخ</th>
+            <th data-i18n="discounts.colInvoice">الفاتورة</th>
+            <th data-i18n="discounts.colCustomer">العميل</th>
+            <th data-i18n="discounts.colType">النوع</th>
+            <th data-i18n="discounts.colRatio">النسبة</th>
+            <th data-i18n="discounts.colAmount">المبلغ</th>
+            <th data-i18n="discounts.colActions">إجراءات</th>
+          </tr>
+        </thead>
+        <tbody id="discBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>

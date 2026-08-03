@@ -1,0 +1,206 @@
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-view">
+    <div class="login-card">
+      <div class="login-logo">
+        <img src="../assets/logo.png" alt="ZMT PIECE" style="width:80px;height:80px;border-radius:16px;object-fit:cover;margin-bottom:8px">
+        <h1>ZMT PIECE</h1>
+        <p id="loginSubtitle" data-i18n="login.loginSubtitle">اختر طريقة الدخول</p>
+      </div>
+
+      <!-- STEP 1: Login Options -->
+      <div class="login-form" id="loginStep1">
+        <div class="login-tabs">
+          <button class="login-tab active" data-action="manager" onclick="loginSwitchAction('manager')">
+            <i class="fas fa-user-shield"></i> <span data-i18n="login.managerTab">مدير</span>
+          </button>
+          <button class="login-tab" data-action="user" onclick="loginSwitchAction('user')">
+            <i class="fas fa-user"></i> <span data-i18n="login.userTab">مستخدم</span>
+          </button>
+          <button class="login-tab" data-action="create" onclick="loginSwitchAction('create')">
+            <i class="fas fa-user-plus"></i> <span data-i18n="login.newAccountTab">حساب جديد</span>
+          </button>
+          <button class="login-tab" data-action="branch" onclick="loginSwitchAction('branch')">
+            <i class="fas fa-code-branch"></i> <span data-i18n="login.branchTab">فرع</span>
+          </button>
+        </div>
+
+        <!-- Manager Login -->
+        <div class="login-action" id="loginActionManager">
+          <div class="login-field">
+            <label data-i18n="login.codeLabel">الرمز المكون من 10 أرقام</label>
+            <input type="text" id="loginManagerCode" placeholder="0000000000" maxlength="10" dir="ltr"
+              style="font-size:22px;letter-spacing:5px;text-align:center;font-weight:800;font-family:'Courier New',monospace;">
+          </div>
+          <div class="login-field">
+            <label data-i18n="login.storePassword">كلمة مرور المحل</label>
+            <input type="password" id="loginManagerPassword" placeholder="أدخل كلمة المرور" data-i18n-placeholder="login.passwordPlaceholder">
+          </div>
+          <div class="login-status" id="loginManagerStatus"></div>
+          <button class="login-btn login-btn-primary" onclick="loginManagerDo()">
+            <i class="fas fa-user-shield"></i> <span data-i18n="login.loginManager">دخول كمدير</span>
+          </button>
+          <div style="text-align:center;margin-top:12px;">
+            <a href="#" onclick="loginShowRecovery();return false;" style="color:var(--bmw-blue-1);font-size:13px;text-decoration:none;">
+              <i class="fas fa-key"></i> <span data-i18n="login.forgotPassword">نسيت كلمة المرور؟</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- User Login -->
+        <div class="login-action" id="loginActionUser" style="display:none;">
+          <div class="login-field">
+            <label data-i18n="login.storeCode">كود المحل</label>
+            <input type="text" id="loginUserCode" placeholder="أدخل كود المحل (10 أرقام)" maxlength="10" dir="ltr" data-i18n-placeholder="login.storeCodePlaceholder"
+              style="font-size:18px;letter-spacing:3px;text-align:center;font-weight:700;font-family:'Courier New',monospace;">
+          </div>
+          <div class="login-field">
+            <label data-i18n="login.usernameLabel">اسم المستخدم</label>
+            <input type="text" id="loginUserUsername" placeholder="اسم المستخدم" data-i18n-placeholder="login.usernamePlaceholder">
+          </div>
+          <div class="login-field">
+            <label data-i18n="login.userPassword">كلمة المرور</label>
+            <input type="password" id="loginUserPassword" placeholder="كلمة المرور" data-i18n-placeholder="login.passwordPlaceholder">
+          </div>
+          <div class="login-status" id="loginUserStatus"></div>
+          <button class="login-btn login-btn-primary" onclick="loginUserDo()">
+            <i class="fas fa-user"></i> <span data-i18n="login.loginAsUser">دخول كمستخدم</span>
+          </button>
+        </div>
+
+        <!-- Create Account -->
+        <div class="login-action" id="loginActionCreate" style="display:none;">
+          <div class="login-field">
+            <label data-i18n="login.emailLabel">البريد الإلكتروني</label>
+            <input type="email" id="loginEmail" placeholder="your-email@gmail.com" dir="ltr">
+          </div>
+          <div class="login-status" id="loginCreateStatus"></div>
+          <button class="login-btn login-btn-primary" onclick="loginCreateAccount()">
+            <i class="fas fa-magic"></i> <span data-i18n="login.createAccount">إنشاء حساب</span>
+          </button>
+        </div>
+
+        <!-- Branch Connection -->
+        <div class="login-action" id="loginActionBranch" style="display:none;">
+          <div class="login-field">
+            <label data-i18n="login.mainStoreCode">الرمز الرئيسي للمحل</label>
+            <input type="text" id="loginBranchCode" placeholder="0000000000" maxlength="10" dir="ltr"
+              style="font-size:22px;letter-spacing:5px;text-align:center;font-weight:800;font-family:'Courier New',monospace;">
+          </div>
+          <div class="login-field">
+            <label data-i18n="login.branchPassword">كلمة مرور الفرع</label>
+            <input type="password" id="loginBranchPassword" placeholder="أدخل كلمة المرور" data-i18n-placeholder="login.passwordPlaceholder">
+          </div>
+          <div class="login-status" id="loginBranchStatus"></div>
+          <button class="login-btn login-btn-primary" onclick="loginConnectBranch()">
+            <i class="fas fa-link"></i> <span data-i18n="login.branchLogin">اتصال كفرع</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 2: Show generated code -->
+      <div class="login-form" id="loginStep2" style="display:none;">
+        <div class="login-success-icon">
+          <i class="fas fa-check-circle"></i>
+        </div>
+        <h2 style="text-align:center;color:#28a745;margin-bottom:8px;" data-i18n="login.accountCreatedTitle">تم إنشاء الحساب بنجاح!</h2>
+        <p style="text-align:center;color:#666;margin-bottom:20px;font-size:13px;" data-i18n="login.accountCreatedDesc">
+          احفظ هذا الرمز في مكان آمن. ستحتاجه لاستعادة بياناتك.
+        </p>
+        <div class="login-code-display" id="loginGeneratedCode"></div>
+        <p style="text-align:center;color:#999;font-size:11px;margin-top:12px;margin-bottom:20px;">
+          <i class="fas fa-exclamation-triangle" style="color:#e65100;"></i>
+          <span data-i18n="login.accountCreatedWarning">هذا الرمز لا يمكن استرجاعه. اكتبه أو صوره.</span>
+        </p>
+        <button class="login-btn login-btn-success" onclick="loginShowDashboard()">
+          <i class="fas fa-arrow-right"></i> <span data-i18n="login.enterApp">الدخول للبرنامج</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PASSWORD RECOVERY MODAL -->
+  <div class="recovery-overlay" id="recoveryOverlay" style="display:none;">
+    <div class="recovery-card">
+      <div class="recovery-header">
+        <i class="fas fa-key"></i>
+        <h2 data-i18n="login.recoveryTitle">استرداد كلمة المرور</h2>
+        <p id="recoverySubtitle" data-i18n="login.recoverySubtitle">أدخل بريدك الإلكتروني لعرض الرمز وكلمة المرور</p>
+      </div>
+
+      <!-- Step 1: Enter Email -->
+      <div class="recovery-step" id="recoveryStep1">
+        <div class="login-field">
+          <label data-i18n="login.emailLabel">البريد الإلكتروني</label>
+          <input type="email" id="recoveryEmail" placeholder="your-email@gmail.com" dir="ltr">
+        </div>
+        <div class="login-status" id="recoveryEmailStatus"></div>
+        <button class="login-btn login-btn-primary" onclick="recoveryLookup()">
+          <i class="fas fa-search"></i> <span data-i18n="login.searchBtn">بحث</span>
+        </button>
+        <div style="text-align:center;margin-top:12px;">
+          <a href="#" onclick="recoveryClose();return false;" style="color:#999;font-size:13px;text-decoration:none;">
+            <i class="fas fa-arrow-right"></i> <span data-i18n="login.backToLogin">العودة لتسجيل الدخول</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- Step 2: Show Code + Password -->
+      <div class="recovery-step" id="recoveryStep2" style="display:none;">
+        <div class="recovery-success-icon" style="color:#0066B1;">
+          <i class="fas fa-store"></i>
+        </div>
+        <div style="background:#f0f7ff;border:1px solid #0066B1;border-radius:8px;padding:16px;margin-bottom:16px;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+            <span style="color:#666;" data-i18n="login.storeNameSpan">اسم المحل:</span>
+            <strong id="recoveryStoreName">-</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+            <span style="color:#666;" data-i18n="login.codeSpan">الرمز:</span>
+            <span style="font-family:monospace;font-size:18px;font-weight:800;" id="recoveryCodeDisplay">-</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;">
+            <span style="color:#666;" data-i18n="login.passwordSpan">كلمة المرور:</span>
+            <span style="font-size:18px;font-weight:800;color:#dc3545;" id="recoveryPassDisplay">-</span>
+          </div>
+        </div>
+        <div class="recovery-actions">
+          <button class="login-btn login-btn-primary" onclick="recoveryLoginWithCode()" style="margin-bottom:10px;">
+            <i class="fas fa-sign-in-alt"></i> <span data-i18n="login.loginWithCode">دخول بالرمز</span>
+          </button>
+          <button class="login-btn" onclick="recoveryShowResetForm()" style="background:#6c757d;color:#fff;">
+            <i class="fas fa-key"></i> <span data-i18n="login.resetPassword">إعادة تعيين كلمة المرور</span>
+          </button>
+        </div>
+        <div style="text-align:center;margin-top:12px;">
+          <a href="#" onclick="recoveryBackToStep1();return false;" style="color:#999;font-size:13px;text-decoration:none;">
+            <i class="fas fa-redo"></i> <span data-i18n="login.searchAgainLink">بحث مرة أخرى</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- Step 3: Reset Password -->
+      <div class="recovery-step" id="recoveryStep3" style="display:none;">
+        <div class="recovery-success-icon" style="color:#0066B1;">
+          <i class="fas fa-lock"></i>
+        </div>
+        <h3 style="text-align:center;color:#0066B1;margin-bottom:16px;" data-i18n="login.newPasswordTitle">تعيين كلمة مرور جديدة</h3>
+        <div class="login-field">
+          <label data-i18n="login.newPassLabel">كلمة المرور الجديدة</label>
+          <input type="password" id="recoveryNewPass" placeholder="أدخل كلمة المرور الجديدة" data-i18n-placeholder="login.newPassPlaceholder">
+        </div>
+        <div class="login-field">
+          <label data-i18n="login.confirmPassLabel">تأكيد كلمة المرور</label>
+          <input type="password" id="recoveryConfirmPass" placeholder="أعد إدخال كلمة المرور" data-i18n-placeholder="login.confirmPassPlaceholder">
+        </div>
+        <div class="login-status" id="recoveryResetStatus"></div>
+        <button class="login-btn login-btn-primary" onclick="recoveryDoReset()">
+          <i class="fas fa-save"></i> <span data-i18n="login.saveNewPass">حفظ كلمة المرور الجديدة</span>
+        </button>
+        <div style="text-align:center;margin-top:12px;">
+          <a href="#" onclick="recoveryBackToStep2();return false;" style="color:#999;font-size:13px;text-decoration:none;">
+            <i class="fas fa-arrow-right"></i> <span data-i18n="login.backLink">العودة</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>

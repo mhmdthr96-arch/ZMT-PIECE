@@ -1,0 +1,183 @@
+<div class="page" id="page-reports">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-chart-line"></i> <span data-i18n="reports.title">التقارير</span></h1>
+      <p><span data-i18n="reports.sub">تحليلات المبيعات والمرتجعات — إحصائيات ذكية</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+
+    <!-- === PERIOD SELECTOR === -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-body" style="padding:16px 20px">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          <span style="font-weight:600;font-size:13px;color:var(--silver-700);margin-left:8px" data-i18n="reports.period2">الفترة:</span>
+          <button class="period-btn" data-period="week" onclick="setReportPeriod('week')" data-i18n="reports.thisWeek">هذا الأسبوع</button>
+          <button class="period-btn active" data-period="month" onclick="setReportPeriod('month')" data-i18n="reports.thisMonth">هذا الشهر</button>
+          <button class="period-btn" data-period="year" onclick="setReportPeriod('year')" data-i18n="reports.thisYear">هذه السنة</button>
+          <button class="period-btn" data-period="custom" onclick="setReportPeriod('custom')" data-i18n="reports.custom">مخصص</button>
+          <button class="period-btn" data-period="day" onclick="setReportPeriod('day')" data-i18n="reports.specificDay">يوم محدد</button>
+        </div>
+        <div id="reportDateRange" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--silver-200)">
+          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+            <label style="font-size:12px;color:var(--silver-600)"><span data-i18n="reports.from">من:</span> <input type="date" id="reportDateFrom" class="form-input" style="width:160px;margin-right:8px" onchange="renderReports()"></label>
+            <label style="font-size:12px;color:var(--silver-600)"><span data-i18n="reports.to">إلى:</span> <input type="date" id="reportDateTo" class="form-input" style="width:160px;margin-right:8px" onchange="renderReports()"></label>
+          </div>
+        </div>
+        <div id="reportSingleDay" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--silver-200)">
+          <label style="font-size:12px;color:var(--silver-600)"><span data-i18n="reports.date2">التاريخ:</span> <input type="date" id="reportSingleDate" class="form-input" style="width:160px;margin-right:8px" onchange="renderReports()"></label>
+        </div>
+      </div>
+    </div>
+
+    <!-- === STATS GRID (Sales + Returns + Comparison) === -->
+    <div class="stats-grid" style="margin-bottom:20px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
+      <div class="stat-card" style="background:linear-gradient(135deg,#0066B1,#004d8c);color:white">
+        <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-chart-bar" style="color:white"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="rSalesAmount" style="color:white;font-size:22px">DA0</span>
+          <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reports.totalSales">إجمالي المبيعات</span>
+        </div>
+        <div style="margin-top:6px;display:flex;gap:16px;font-size:11px;color:rgba(255,255,255,0.7)">
+          <span>📄 <span id="rSalesCount">0</span> <span data-i18n="reports.invoices2">فاتورة</span></span>
+          <span>📦 <span id="rSalesQty">0</span> <span data-i18n="common.piece">قطعة</span></span>
+          <span>💰 <span data-i18n="reports.profit2">ربح</span> <span id="rSalesProfit" style="color:#ffd700">DA0</span></span>
+        </div>
+        <div style="margin-top:3px;display:flex;gap:16px;font-size:11px;color:rgba(255,255,255,0.6)">
+          <span>💵 <span data-i18n="reports.paid2">مدفوع</span> <span id="rSalesPaid" style="color:#ffd700">DA0</span></span>
+          <span>📋 <span data-i18n="reports.remaining2">متبقي</span> <span id="rSalesDue" style="color:#ffcdd2">DA0</span></span>
+        </div>
+      </div>
+
+      <div class="stat-card" style="background:linear-gradient(135deg,#e65100,#bf4400);color:white">
+        <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-undo" style="color:white"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="rReturnsCount" style="color:white;font-size:22px">0</span>
+          <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reports.returnCount">عدد المرتجعات</span>
+        </div>
+        <div style="margin-top:6px;display:flex;gap:16px;font-size:11px;color:rgba(255,255,255,0.7)">
+          <span>📦 <span id="rReturnsQty">0</span> <span data-i18n="common.piece">قطعة</span></span>
+          <span>💵 <span data-i18n="reports.value">قيمة</span> <span id="rReturnsValue" style="color:#ffd700">DA0</span></span>
+        </div>
+      </div>
+
+      <div class="stat-card" style="background:linear-gradient(135deg,#2e7d32,#1b5e20);color:white">
+        <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-calculator" style="color:white"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="rNetAmount" style="color:white;font-size:22px">DA0</span>
+          <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reports.netSales2">صافي المبيعات</span>
+        </div>
+        <div style="margin-top:6px;display:flex;gap:16px;font-size:11px;color:rgba(255,255,255,0.7)">
+          <span>📈 <span data-i18n="reports.returnRatio">نسبة العائد</span> <span id="rReturnRate" style="color:#ffd700">0%</span></span>
+        </div>
+      </div>
+
+      <div class="stat-card" style="background:linear-gradient(135deg,#6a1b9a,#4a148c);color:white">
+        <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-percentage" style="color:white"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="rProfitMargin" style="color:white;font-size:22px">DA0</span>
+          <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reports.profitMargin">هامش الربح</span>
+        </div>
+        <div style="margin-top:6px;display:flex;gap:16px;font-size:11px;color:rgba(255,255,255,0.7)">
+          <span>📈 <span data-i18n="reports.ratioLabel">النسبة</span> <span id="rProfitMarginPct" style="color:#ffd700">0%</span></span>
+          <span>🏆 <span id="rTopProduct">—</span></span>
+        </div>
+      </div>
+
+      <div class="stat-card" style="background:linear-gradient(135deg,#b8860b,#8b6508);color:white">
+        <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-coins" style="color:white"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="rTotalProfitMargin" style="color:white;font-size:22px">DA0</span>
+          <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reports.totalProfitMargin">هامش الربح الكلي</span>
+        </div>
+        <div style="margin-top:6px;font-size:11px;color:rgba(255,255,255,0.7)">🕒 <span data-i18n="reports.allTimeLabel">إجمالي عام</span></div>
+      </div>
+    </div>
+
+    <!-- === CHARTS ROW 1: Comparison === -->
+    <div class="two-col" style="margin-bottom:20px">
+      <div class="chart-section">
+        <div class="chart-header"><h3><i class="fas fa-chart-pie"></i> <span data-i18n="reports.salesVsReturns">المبيعات vs المرتجعات</span></h3></div>
+        <div class="chart-container" style="height:280px;position:relative">
+          <canvas id="comparisonPieChart"></canvas>
+          <div id="comparisonPieCenter" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;font-weight:700;font-size:13px;color:var(--silver-700);line-height:1.4;display:none">
+            <div style="font-size:10px;color:var(--silver-500)" data-i18n="reports.net">صافي</div>
+            <div id="pieNetValue" style="font-size:16px">DA0</div>
+          </div>
+        </div>
+      </div>
+      <div class="chart-section">
+        <div class="chart-header"><h3><i class="fas fa-chart-bar"></i> <span data-i18n="reports.dailySalesVsReturns">المبيعات اليومية vs المرتجعات</span></h3></div>
+        <div class="chart-container" style="height:280px"><canvas id="comparisonBarChart"></canvas></div>
+      </div>
+    </div>
+
+    <!-- === CHARTS ROW 2: Trends === -->
+    <div class="two-col" style="margin-bottom:20px">
+      <div class="chart-section">
+        <div class="chart-header"><h3><i class="fas fa-chart-area"></i> <span data-i18n="reports.salesTrend">اتجاه المبيعات</span></h3></div>
+        <div class="chart-container" style="height:250px"><canvas id="salesTrendChart"></canvas></div>
+      </div>
+      <div class="chart-section">
+        <div class="chart-header"><h3><i class="fas fa-chart-area"></i> <span data-i18n="reports.returnsTrend">اتجاه المرتجعات</span></h3></div>
+        <div class="chart-container" style="height:250px"><canvas id="returnsTrendChart"></canvas></div>
+      </div>
+    </div>
+
+    <!-- === CHARTS ROW 3: Breakdowns === -->
+    <div class="two-col" style="margin-bottom:20px">
+      <div class="chart-section">
+        <div class="chart-header"><h3><i class="fas fa-tags"></i> <span data-i18n="reports.salesByCategory">المبيعات حسب الفئة</span></h3></div>
+        <div class="chart-container" style="height:240px"><canvas id="categoryPieChart"></canvas></div>
+      </div>
+      <div class="chart-section">
+        <div class="chart-header"><h3><i class="fas fa-exclamation-triangle"></i> <span data-i18n="reports.returnsByReason">المرتجعات حسب السبب</span></h3></div>
+        <div class="chart-container" style="height:240px"><canvas id="returnsReasonChart"></canvas></div>
+      </div>
+    </div>
+
+    <!-- === BEST SELLERS === -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><i class="fas fa-trophy"></i> <span data-i18n="reports.topProducts">أفضل المنتجات مبيعاً</span></div>
+      <div class="card-body">
+        <div class="table-container">
+          <table class="data-table">
+            <thead><tr>
+              <th>#</th><th data-i18n="reports.productCol">المنتج</th><th data-i18n="reports.barcodeCol">الباركود</th><th data-i18n="reports.qtySoldCol">الكمية المباعة</th><th data-i18n="reports.totalCol">الإجمالي</th><th data-i18n="reports.profitCol">الربح</th>
+            </tr></thead>
+            <tbody id="bestSellersBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- === DAILY BREAKDOWN === -->
+    <div class="card">
+      <div class="card-header"><i class="fas fa-calendar-day"></i> <span data-i18n="reports.dailyDetail2">تفصيل المبيعات والمرتجعات اليومي</span></div>
+      <div class="card-body">
+        <div class="table-container">
+          <table class="data-table">
+            <thead><tr>
+              <th data-i18n="reports.dateCol">التاريخ</th><th data-i18n="reports.salesInvoicesCol">فواتير البيع</th><th data-i18n="reports.piecesSoldCol">قطع مباعة</th><th data-i18n="reports.salesValueCol">قيمة المبيعات</th><th data-i18n="reports.returnsCol">مرتجعات</th><th data-i18n="reports.piecesReturnedCol">قطع مرتجعة</th><th data-i18n="reports.netDayCol">صافي اليوم</th>
+            </tr></thead>
+            <tbody id="dailyBreakdownBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Period button styles -->
+<style>
+  .period-btn {
+    padding:6px 16px;border:1px solid var(--silver-300);background:white;border-radius:20px;
+    font-size:12px;cursor:pointer;color:var(--silver-700);transition:all 0.2s;font-weight:500;
+  }
+  .period-btn:hover { border-color:var(--bmw-blue-1);color:var(--bmw-blue-1); }
+  .period-btn.active { background:var(--bmw-blue-1);color:white;border-color:var(--bmw-blue-1); }
+  .form-input { padding:6px 10px;border:1px solid var(--silver-300);border-radius:6px;font-size:13px; }
+  .form-input:focus { outline:none;border-color:var(--bmw-blue-1);box-shadow:0 0 0 2px rgba(0,102,177,0.15); }
+</style>

@@ -1,0 +1,138 @@
+<div class="page" id="page-supplier-detail">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1>
+        <button class="btn-back" onclick="navigateTo('suppliers')"><i class="fas fa-arrow-right"></i></button>
+        <i class="fas fa-user-tie"></i> <span id="sdTitle" data-i18n="suppliers.title">المورد</span>
+      </h1>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <!-- Supplier Info Card -->
+    <div class="sd-info-card">
+      <div class="sd-info-avatar">
+        <i class="fas fa-user-tie"></i>
+      </div>
+      <div class="sd-info-body">
+        <h2 id="sdName"></h2>
+        <div class="sd-info-details" id="sdDetails"></div>
+      </div>
+      <div class="sd-info-actions">
+        <button class="btn btn-sm" onclick="showSdEditForm()" title="تعديل" data-i18n-title="common.edit"><i class="fas fa-edit"></i></button>
+        <button class="btn btn-sm btn-danger" onclick="confirmSdDelete()" title="حذف" data-i18n-title="common.delete"><i class="fas fa-trash"></i></button>
+      </div>
+    </div>
+
+    <!-- Balance & Stats -->
+    <div class="sd-stats">
+      <div class="sd-stat">
+        <span class="sd-stat-icon" style="background:#e3f2fd;color:#1565c0"><i class="fas fa-file-invoice"></i></span>
+        <div>
+          <div class="sd-stat-label" data-i18n="common.total">إجمالي المشتريات</div>
+          <div class="sd-stat-val" id="sdTotalPurchases">DA0</div>
+        </div>
+      </div>
+      <div class="sd-stat">
+        <span class="sd-stat-icon" style="background:#e8f5e9;color:#2e7d32"><i class="fas fa-money-bill-wave"></i></span>
+        <div>
+          <div class="sd-stat-label" data-i18n="common.paid">إجمالي المدفوع</div>
+          <div class="sd-stat-val" id="sdTotalPaid">DA0</div>
+        </div>
+      </div>
+      <div class="sd-stat">
+        <span class="sd-stat-icon" style="background:#fff3e0;color:#e65100"><i class="fas fa-balance-scale"></i></span>
+        <div>
+          <div class="sd-stat-label" data-i18n="common.remaining">الرصيد المتبقي</div>
+          <div class="sd-stat-val" id="sdBalance">DA0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabs: Invoices & Payments -->
+    <div class="sd-tabs">
+      <button class="sd-tab active" onclick="switchSdTab('invoices')">
+        <i class="fas fa-file-invoice"></i> <span data-i18n="invoices.title">الفواتير</span> <span class="sd-badge" id="sdInvCount">0</span>
+      </button>
+      <button class="sd-tab" onclick="switchSdTab('payments')">
+        <i class="fas fa-money-bill-wave"></i> <span data-i18n="debts.payments">الدفعات</span> <span class="sd-badge" id="sdPayCount">0</span>
+      </button>
+    </div>
+
+    <!-- Invoices Tab -->
+    <div id="sdTabInvoices" class="sd-tab-content">
+      <div class="toolbar" style="margin-bottom:12px">
+        <div class="search-bar" style="flex:1">
+          <i class="fas fa-search"></i>
+          <input type="text" placeholder="بحث في الفواتير..." data-i18n-placeholder="invoices.search" id="sdInvSearch" oninput="filterSdInvoices(this.value)">
+        </div>
+      </div>
+      <div id="sdInvoicesList"></div>
+    </div>
+
+    <!-- Payments Tab -->
+    <div id="sdTabPayments" class="sd-tab-content" style="display:none">
+      <div class="toolbar" style="margin-bottom:12px">
+        <button class="btn btn-success" onclick="showPayModal()">
+          <i class="fas fa-plus"></i> <span data-i18n="debts.payments">تسجيل دفعة</span>
+        </button>
+      </div>
+      <div id="sdPaymentsList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Invoice Detail Modal -->
+<div class="modal-overlay" id="sdInvoiceModal">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <h3><i class="fas fa-file-invoice"></i> <span data-i18n="invoices.title">تفاصيل الفاتورة</span></h3>
+      <button class="modal-close" onclick="document.getElementById('sdInvoiceModal').style.display='none'">&times;</button>
+    </div>
+    <div class="modal-body" id="sdInvoiceBody"></div>
+    <div class="modal-footer" id="sdInvoiceFooter" style="flex-wrap:wrap;gap:8px">
+      <div id="sdPayInvoiceSection" style="display:none;align-items:center;gap:10px;flex:1;min-width:200px">
+        <span style="font-size:13px;color:var(--silver-600);white-space:nowrap" data-i18n="common.total">المبلغ:</span>
+        <input type="number" class="form-input no-spinner" id="sdPayInvoiceAmount"
+          style="flex:1;min-width:100px;padding:7px 10px" min="0" dir="ltr">
+        <button class="btn btn-success" onclick="payInvoiceFromDetail()" style="white-space:nowrap">
+          <i class="fas fa-money-bill-wave"></i> <span data-i18n="common.pay">دفع</span>
+        </button>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn" onclick="document.getElementById('sdInvoiceModal').style.display='none'"><span data-i18n="common.close">إغلاق</span></button>
+        <button class="btn btn-danger" id="sdDeleteInvoiceBtn" onclick="deleteInvoiceFromDetail()" style="display:none">
+          <i class="fas fa-trash"></i> <span data-i18n="common.delete">حذف</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Pay Modal -->
+<div class="modal-overlay" id="sdPayModal">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header">
+      <h3><i class="fas fa-money-bill-wave"></i> <span data-i18n="debts.payments">تسجيل دفعة للمورد</span></h3>
+      <button class="modal-close" onclick="closePayModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="sd-pay-summary">
+        <span data-i18n="common.remaining">الرصيد الحالي:</span>
+        <strong id="sdPayBalance">DA0</strong>
+      </div>
+      <div class="form-group">
+        <label data-i18n="common.total">المبلغ</label> <span class="required">*</span>
+        <input type="number" class="form-input no-spinner" id="sdPayAmount" placeholder="0.00" min="0" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="common.name">ملاحظة</label>
+        <input type="text" class="form-input" id="sdPayNote" placeholder="مثال: دفعة نقدية">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closePayModal()"><span data-i18n="common.cancel">إلغاء</span></button>
+      <button class="btn btn-success" onclick="confirmPay()"><i class="fas fa-check"></i> <span data-i18n="common.confirmPay">تأكيد الدفع</span></button>
+    </div>
+  </div>
+</div>

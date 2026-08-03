@@ -1,0 +1,170 @@
+<div class="page" id="page-inventory">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-warehouse"></i> <span data-i18n="inventory.title">المخزون</span></h1>
+      <p><span data-i18n="inventory.sub">إدارة مخزون قطع الغيار</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="toolbar">
+      <div class="search-bar">
+        <i class="fas fa-search"></i>
+        <input type="text" data-i18n-placeholder="inventory.search" placeholder="بحث في المخزون..." id="invSearch">
+      </div>
+      <button class="btn btn-primary hide-user" onclick="openInvAddModal()"><i class="fas fa-plus"></i> <span data-i18n="inventory.addWithInvoice">إضافة مخزون + فاتورة</span></button>
+      <button class="btn btn-primary" onclick="navigateTo('transfer')" id="btnTransferProducts" style="display:none"><i class="fas fa-exchange-alt"></i> <span id="btnTransferText" data-i18n="inventory.transferBtn">نقل منتجات</span></button>
+      <button class="btn hide-user" onclick="exportProductsCSV()"><i class="fas fa-download"></i> <span data-i18n="inventory.exportCSV">تصدير CSV</span></button>
+      <button class="btn hide-user" onclick="document.getElementById('importCsvInput').click()"><i class="fas fa-upload"></i> <span data-i18n="inventory.importCSV">استيراد CSV</span></button>
+      <input type="file" id="importCsvInput" accept=".csv" style="display:none" onchange="importProductsCSV(this)">
+    </div>
+
+    <div class="table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th><span data-i18n="inventory.col2">اسم القطعة</span></th>
+            <th><span data-i18n="inventory.col1">الباركود</span></th>
+            <th><span data-i18n="inventory.col3">العلامة</span></th>
+            <th data-i18n="inventory.categoryCol">التصنيف</th>
+            <th><span data-i18n="inventory.col4">الكمية</span></th>
+            <th class="hide-user"><span data-i18n="inventory.col5">سعر الشراء</span></th>
+            <th><span data-i18n="inventory.col6">سعر البيع</span></th>
+            <th><span data-i18n="inventory.col7">إجراءات</span></th>
+          </tr>
+        </thead>
+        <tbody id="invBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== ADD INVENTORY MODAL ===== -->
+<div class="modal-overlay" id="invAddModal">
+  <div class="modal" style="max-width:740px">
+    <div class="modal-header">
+      <h3><i class="fas fa-plus-circle"></i> <span data-i18n="inventory.addTitle">إضافة مخزون + فاتورة</span></h3>
+      <button class="modal-close" onclick="closeInvAddModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <!-- Barcode Scanner -->
+      <div class="barcode-scanner-section">
+        <div class="scanner-input-wrap">
+          <i class="fas fa-qrcode scanner-icon"></i>
+          <input type="text" class="form-input scanner-input" id="invBarcodeScanner"
+            data-i18n-placeholder="inventory.scanPlaceholder2" placeholder="امسح الباركود ضوئياً..." dir="ltr" autocomplete="off"
+            onkeydown="handleInvBarcodeScan(event)">
+          <span class="scanner-status" id="invScannerStatus" data-i18n="inventory.scannerReady">جاهز للمسح</span>
+        </div>
+        <div class="scanner-result" id="invScannerResult" style="display:none"></div>
+      </div>
+      <hr>
+
+      <!-- Product search -->
+      <div class="form-group">
+        <label data-i18n="inventory.searchExisting">ابحث عن منتج موجود (بالاسم أو الباركود)</label>
+        <input type="text" class="form-input" id="invProdSearch" data-i18n-placeholder="inventory.searchExistingPlaceholder" placeholder="اسم المنتج أو الباركود..." oninput="searchInvProduct(this.value)">
+      </div>
+      <div id="invSearchResults" class="search-results"></div>
+      <div id="invSelectedProduct" style="display:none" class="selected-prod-info">
+        <div class="sel-prod-row">
+          <span><strong id="invSelName"></strong></span>
+          <span class="text-muted" id="invSelBarcode"></span>
+        </div>
+      </div>
+
+      <hr>
+
+      <!-- Brand + Category -->
+      <div class="form-row">
+        <div class="form-group">
+          <label data-i18n="common.brand">العلامة التجارية <span class="required">*</span></label>
+          <select class="form-input" id="invBrand"></select>
+        </div>
+        <div class="form-group">
+          <label data-i18n="inventory.categoryCol">التصنيف <span class="required">*</span></label>
+          <select class="form-input" id="invCategory"></select>
+        </div>
+      </div>
+
+      <!-- Product info -->
+      <div class="form-row">
+        <div class="form-group" style="flex:2">
+          <label data-i18n="inventory.name">اسم المنتج <span class="required">*</span></label>
+          <input type="text" class="form-input" id="invProdName" data-i18n-placeholder="inventory.name" placeholder="اسم القطعة">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label data-i18n="inventory.barcode">الباركود <span class="required">*</span></label>
+          <div class="barcode-row">
+            <input type="text" class="form-input" id="invProdBar" data-i18n-placeholder="inventory.barcode" placeholder="الباركود" dir="ltr">
+            <button class="btn btn-sm" onclick="document.getElementById('invProdBar').value=DB.generateBarcode()" data-i18n="inventory.generate2">توليد</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label data-i18n="inventory.qty">الكمية <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="invQty" value="1" min="1">
+        </div>
+        <div class="form-group">
+          <label data-i18n="inventory.buyPrice">سعر الشراء <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="invBuyPrice" value="0" min="0">
+        </div>
+        <div class="form-group">
+          <label data-i18n="inventory.sellPrice">سعر البيع <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="invSellPrice" value="0" min="0">
+        </div>
+      </div>
+
+      <!-- Supplier -->
+      <div class="form-group">
+        <label data-i18n="inventory.supplierOptional">المورد (اختياري)</label>
+        <input type="text" class="form-input" id="invSupSearch" data-i18n-placeholder="inventory.supplierSearchPlaceholder" placeholder="ابحث عن مورد..." oninput="searchInvSupplier(this.value)">
+        <div id="invSupResults" class="search-results"></div>
+        <div id="invSelectedSupplier" style="display:none" class="selected-prod-info">
+          <span><strong id="invSupName"></strong></span>
+          <input type="hidden" id="invSupId">
+        </div>
+      </div>
+
+      <button class="btn btn-primary" onclick="invAddToCart()" style="width:100%;margin-top:8px">
+        <i class="fas fa-cart-plus"></i> <span data-i18n="inventory.addToCart">إضافة إلى سلة الفاتورة</span>
+      </button>
+
+      <!-- Cart -->
+      <div id="invCartSection" style="display:none;margin-top:16px">
+        <hr>
+        <h4 style="display:flex;align-items:center;gap:8px;margin:0 0 10px">
+          <i class="fas fa-shopping-cart" style="color:var(--bmw-blue-1)"></i> <span data-i18n="inventory.invoiceCart">سلة الفاتورة</span>
+          <span style="font-size:12px;color:var(--silver-500);font-weight:400" id="invCartCount">(0)</span>
+        </h4>
+        <div id="invCartItems"></div>
+
+        <!-- Timbre Fiscal -->
+        <div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 0;border-top:1px solid var(--silver-100)">
+          <label class="switch" style="margin:0">
+            <input type="checkbox" id="invTimbreCheck" onchange="invRecalcTotal()">
+            <span class="slider round"></span>
+          </label>
+          <label style="font-size:12px;color:var(--silver-600);cursor:pointer;user-select:none" for="invTimbreCheck">
+            <i class="fas fa-stamp" style="color:var(--bmw-orange)"></i> <span data-i18n="inventory.fiscalStamp2">الطابع الجبائي (Timbre Fiscal)</span>
+          </label>
+          <span id="invTimbreAmount" style="font-size:12px;font-weight:600;color:#e65100;display:none">DA0</span>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--silver-300)">
+          <div>
+            <span style="font-size:13px;color:var(--silver-600)" data-i18n="inventory.totalLabel">الإجمالي:</span>
+            <strong style="font-size:20px;color:var(--bmw-blue-1)" id="invCartTotal">DA0</strong>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn" onclick="invClearCart()"><i class="fas fa-trash"></i> <span data-i18n="inventory.clear2">تفريغ</span></button>
+            <button class="btn btn-success" onclick="invConfirmInvoice()"><i class="fas fa-check"></i> <span data-i18n="inventory.confirmInvoice">تأكيد الفاتورة</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

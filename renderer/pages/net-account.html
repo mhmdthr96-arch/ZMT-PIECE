@@ -1,0 +1,97 @@
+<div class="page" id="page-net-account">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-balance-scale"></i> <span data-i18n="net.title">صافي الحساب</span></h1>
+      <p><span data-i18n="net.sub">ملخص الحسابات المالية</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="stats-grid" id="netStats">
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#28a745"><i class="fas fa-arrow-up"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="netTotalSales">DA0</span>
+          <span class="stat-label" data-i18n="net.s1">إجمالي المبيعات</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#dc3545"><i class="fas fa-arrow-down"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="netTotalPurchases">DA0</span>
+          <span class="stat-label" data-i18n="net.s2">إجمالي المشتريات</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#ff6d00"><i class="fas fa-money-bill-wave"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="netTotalExpenses">DA0</span>
+          <span class="stat-label" data-i18n="net.totalExpenses">إجمالي المصروفات</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#0066B1"><i class="fas fa-calculator"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="netProfit">DA0</span>
+          <span class="stat-label" data-i18n="net.s3">صافي الربح</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#ffc107"><i class="fas fa-clock"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="netPending">DA0</span>
+          <span class="stat-label" data-i18n="net.s4">المبالغ المعلقة</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><i class="fas fa-coins"></i> <span data-i18n="net.marginTitle">هامش الربح</span></div>
+      <div class="card-body">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:18px">
+          <span style="font-weight:600;font-size:13px;color:var(--silver-700);margin-left:8px" data-i18n="net.periodLabel">الفترة:</span>
+          <button class="period-btn" data-period="day" onclick="setNetPeriod('day')" data-i18n="net.today">اليوم</button>
+          <button class="period-btn" data-period="week" onclick="setNetPeriod('week')" data-i18n="reports.thisWeek">هذا الأسبوع</button>
+          <button class="period-btn active" data-period="month" onclick="setNetPeriod('month')" data-i18n="reports.thisMonth">هذا الشهر</button>
+          <button class="period-btn" data-period="year" onclick="setNetPeriod('year')" data-i18n="reports.thisYear">هذه السنة</button>
+        </div>
+        <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
+          <div class="stat-card" style="background:linear-gradient(135deg,#28a745,#1b5e20);color:white">
+            <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-coins" style="color:white"></i></div>
+            <div class="stat-info">
+              <span class="stat-value" id="netTotalMargin" style="color:white;font-size:22px">DA0</span>
+              <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="net.totalMargin">هامش الربح الكلي</span>
+            </div>
+          </div>
+          <div class="stat-card" style="background:linear-gradient(135deg,#0066B1,#004d8c);color:white">
+            <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-chart-line" style="color:white"></i></div>
+            <div class="stat-info">
+              <span class="stat-value" id="netPeriodMargin" style="color:white;font-size:22px">DA0</span>
+              <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="net.periodMargin">هامش الربح للفترة</span>
+            </div>
+            <div style="margin-top:6px;font-size:11px;color:rgba(255,255,255,0.7)">📅 <span id="netPeriodLabel">—</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><i class="fas fa-exchange-alt"></i> <span data-i18n="net.logTitle">سجل المعاملات</span></div>
+      <div class="card-body">
+        <div id="netTransactions">
+          <div class="placeholder-box"><i class="fas fa-exchange-alt" style="font-size:36px;color:#555"></i><p data-i18n="net.empty">لا توجد معاملات حديثة</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Period button styles -->
+<style>
+  .period-btn {
+    padding:6px 16px;border:1px solid var(--silver-300);background:white;border-radius:20px;
+    font-size:12px;cursor:pointer;color:var(--silver-700);transition:all 0.2s;font-weight:500;
+  }
+  .period-btn:hover { border-color:var(--bmw-blue-1);color:var(--bmw-blue-1); }
+  .period-btn.active { background:var(--bmw-blue-1);color:white;border-color:var(--bmw-blue-1); }
+</style>

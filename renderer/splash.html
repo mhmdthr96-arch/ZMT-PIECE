@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZMT PIECE</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 100vw; height: 100vh; overflow: hidden;
+      background: #0a0c14;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Segoe UI', Tahoma, sans-serif;
+    }
+
+    .splash-container {
+      position: relative; width: 100%; height: 100%;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+
+    /* === BACKGROUND EFFECTS === */
+    .bg-grid {
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(rgba(0,102,177,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,102,177,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      animation: gridPulse 4s ease-in-out infinite;
+    }
+    @keyframes gridPulse {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 0.8; }
+    }
+
+    .bg-radial {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse 60% 50% at 50% 55%, rgba(0,102,177,0.12) 0%, transparent 70%);
+      animation: radialPulse 3s ease-in-out infinite;
+    }
+    @keyframes radialPulse {
+      0%, 100% { opacity: 0.5; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.05); }
+    }
+
+    /* === FLOATING PARTICLES === */
+    .particles { position: absolute; inset: 0; pointer-events: none; }
+    .particle {
+      position: absolute; border-radius: 50%;
+      background: rgba(0,102,177,0.6);
+      animation: particleFloat linear infinite;
+    }
+    @keyframes particleFloat {
+      0% { transform: translateY(100vh) scale(0); opacity: 0; }
+      10% { opacity: 1; }
+      90% { opacity: 1; }
+      100% { transform: translateY(-20px) scale(1); opacity: 0; }
+    }
+
+    /* === MAIN SVG LOGO === */
+    .logo-wrapper {
+      position: relative; z-index: 10;
+      opacity: 0; transform: scale(0.8);
+      animation: logoEntrance 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.3s forwards;
+    }
+    @keyframes logoEntrance {
+      0% { opacity: 0; transform: scale(0.8) translateY(20px); }
+      100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .logo-svg {
+      width: min(50vw, 420px); height: min(50vw, 420px);
+      filter: drop-shadow(0 0 30px rgba(0,102,177,0.3));
+    }
+
+    /* === GEAR ROTATION === */
+    .gear-group {
+      transform-origin: 190px 290px;
+      animation: gearSpin 6s linear infinite;
+    }
+    @keyframes gearSpin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .gear-inner {
+      transform-origin: 190px 290px;
+      animation: gearSpinReverse 4s linear infinite;
+    }
+    @keyframes gearSpinReverse {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(-360deg); }
+    }
+
+    .gear-small {
+      transform-origin: 310px 280px;
+      animation: gearSpin 3s linear infinite;
+    }
+
+    /* === ENGINE PISTON === */
+    .piston-group {
+      animation: pistonMove 1.5s ease-in-out infinite;
+    }
+    @keyframes pistonMove {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(8px); }
+    }
+
+    .crankshaft {
+      transform-origin: 85px 210px;
+      animation: crankSpin 1.5s linear infinite;
+    }
+    @keyframes crankSpin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .valve-left {
+      animation: valveOpen 1.5s ease-in-out infinite;
+    }
+    @keyframes valveOpen {
+      0%, 40%, 100% { transform: translateY(0); }
+      10%, 30% { transform: translateY(-5px); }
+    }
+
+    .valve-right {
+      animation: valveOpen 1.5s ease-in-out infinite 0.75s;
+    }
+
+    /* === LIGHT SWEEP === */
+    .light-sweep {
+      position: absolute; inset: 0; pointer-events: none; z-index: 15;
+      overflow: hidden;
+    }
+    .light-beam {
+      position: absolute; top: 0; bottom: 0; width: 120px;
+      background: linear-gradient(90deg, transparent, rgba(100,180,255,0.08), rgba(200,230,255,0.15), rgba(100,180,255,0.08), transparent);
+      transform: skewX(-15deg);
+      animation: sweepLight 4s ease-in-out infinite;
+    }
+    @keyframes sweepLight {
+      0% { left: -150px; opacity: 0; }
+      20% { opacity: 1; }
+      80% { opacity: 1; }
+      100% { left: calc(100% + 150px); opacity: 0; }
+    }
+
+    .light-beam-2 {
+      width: 80px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), rgba(255,255,255,0.1), rgba(255,255,255,0.05), transparent);
+      animation: sweepLight 4s ease-in-out infinite 2s;
+    }
+
+    /* === CINEMATIC VIGNETTE === */
+    .vignette {
+      position: absolute; inset: 0; pointer-events: none; z-index: 20;
+      background: radial-gradient(ellipse 70% 70% at 50% 50%, transparent 40%, rgba(0,0,0,0.6) 100%);
+    }
+
+    /* === TEXT ELEMENTS === */
+    .text-container {
+      position: absolute; bottom: 12%; left: 50%; transform: translateX(-50%);
+      text-align: center; z-index: 25; white-space: nowrap;
+    }
+
+    .brand-name {
+      font-size: min(8vw, 52px); font-weight: 900; letter-spacing: 12px;
+      color: #fff; text-transform: uppercase;
+      opacity: 0; transform: translateY(30px);
+      animation: textReveal 1s cubic-bezier(0.16, 1, 0.3, 1) 1.8s forwards;
+    }
+    .brand-name .piece {
+      color: #4da6ff;
+      text-shadow: 0 0 30px rgba(77,166,255,0.5);
+    }
+    @keyframes textReveal {
+      0% { opacity: 0; transform: translateY(30px); letter-spacing: 30px; }
+      100% { opacity: 1; transform: translateY(0); letter-spacing: 12px; }
+    }
+
+    .brand-sub {
+      font-size: 13px; color: rgba(255,255,255,0.4);
+      letter-spacing: 6px; text-transform: uppercase; margin-top: 8px;
+      opacity: 0; transform: translateY(20px);
+      animation: textReveal 0.8s cubic-bezier(0.16, 1, 0.3, 1) 2.3s forwards;
+    }
+
+    .brand-company {
+      font-size: 10px; color: rgba(255,255,255,0.25);
+      letter-spacing: 4px; text-transform: uppercase; margin-top: 16px;
+      opacity: 0;
+      animation: fadeIn 0.8s ease 2.8s forwards;
+    }
+    @keyframes fadeIn {
+      to { opacity: 1; }
+    }
+
+    /* === PROGRESS LINE === */
+    .progress-container {
+      position: absolute; bottom: 6%; left: 50%; transform: translateX(-50%);
+      width: 200px; z-index: 25;
+      opacity: 0; animation: fadeIn 0.5s ease 3s forwards;
+    }
+    .progress-bar {
+      width: 100%; height: 2px; background: rgba(255,255,255,0.1);
+      border-radius: 2px; overflow: hidden;
+    }
+    .progress-fill {
+      width: 0%; height: 100%;
+      background: linear-gradient(90deg, #0066B1, #4da6ff);
+      border-radius: 2px;
+      animation: progressFill 3.5s ease-in-out 1.5s forwards;
+      box-shadow: 0 0 10px rgba(77,166,255,0.5);
+    }
+    @keyframes progressFill {
+      0% { width: 0%; }
+      100% { width: 100%; }
+    }
+
+    /* === EXIT ANIMATION === */
+    .splash-container.exit {
+      animation: splashExit 0.8s cubic-bezier(0.7, 0, 0.84, 0) forwards;
+    }
+    @keyframes splashExit {
+      0% { opacity: 1; transform: scale(1); }
+      100% { opacity: 0; transform: scale(1.05); }
+    }
+
+    /* === METALLIC SHINE ON ENGINE === */
+    .metal-shine {
+      animation: metalShine 3s ease-in-out infinite;
+    }
+    @keyframes metalShine {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 0.8; }
+    }
+
+    /* === SPARK EFFECTS === */
+    .spark {
+      animation: sparkFlash 0.15s ease-out infinite;
+    }
+    @keyframes sparkFlash {
+      0%, 100% { opacity: 0; }
+      50% { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="splash-container" id="splashContainer">
+    <!-- Background -->
+    <div class="bg-grid"></div>
+    <div class="bg-radial"></div>
+    <div class="particles" id="particles"></div>
+
+    <!-- Main SVG Logo -->
+    <div class="logo-wrapper">
+      <svg class="logo-svg" viewBox="0 0 380 380" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <!-- Metallic Gradient -->
+          <linearGradient id="metalGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#1a3a5c"/>
+            <stop offset="30%" stop-color="#2a5a8c"/>
+            <stop offset="50%" stop-color="#4a8ac0"/>
+            <stop offset="70%" stop-color="#2a5a8c"/>
+            <stop offset="100%" stop-color="#1a3a5c"/>
+          </linearGradient>
+
+          <!-- Engine Block Gradient -->
+          <linearGradient id="engineGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#3a6a9c"/>
+            <stop offset="50%" stop-color="#1a4a7c"/>
+            <stop offset="100%" stop-color="#0d2d4c"/>
+          </linearGradient>
+
+          <!-- Gear Gradient -->
+          <linearGradient id="gearGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#4a8ac0"/>
+            <stop offset="50%" stop-color="#2a6a9c"/>
+            <stop offset="100%" stop-color="#1a4a7c"/>
+          </linearGradient>
+
+          <!-- Piston Gradient -->
+          <linearGradient id="pistonGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#5a9ad0"/>
+            <stop offset="100%" stop-color="#2a5a8c"/>
+          </linearGradient>
+
+          <!-- Glow Filter -->
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+            <feMerge>
+              <feMergeNode in="coloredBlur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+
+          <filter id="softGlow">
+            <feGaussianBlur stdDeviation="6" result="blur"/>
+            <feMerge>
+              <feMergeNode in="blur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+
+          <!-- Metallic Sheen -->
+          <linearGradient id="sheen" x1="-50%" y1="0%" x2="150%" y2="0%">
+            <stop offset="0%" stop-color="rgba(255,255,255,0)"/>
+            <stop offset="45%" stop-color="rgba(255,255,255,0)"/>
+            <stop offset="50%" stop-color="rgba(255,255,255,0.15)"/>
+            <stop offset="55%" stop-color="rgba(255,255,255,0)"/>
+            <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+            <animateTransform attributeName="gradientTransform" type="translate"
+              from="-1 0" to="2 0" dur="4s" repeatCount="indefinite"/>
+          </linearGradient>
+
+          <!-- Spark Gradient -->
+          <radialGradient id="sparkGrad">
+            <stop offset="0%" stop-color="#fff"/>
+            <stop offset="40%" stop-color="#4da6ff"/>
+            <stop offset="100%" stop-color="transparent"/>
+          </radialGradient>
+        </defs>
+
+        <!-- ===== ENGINE BLOCK (LEFT SIDE) ===== -->
+        <g class="piston-group">
+          <!-- Cylinder Block -->
+          <rect x="55" y="140" width="60" height="80" rx="4" fill="url(#engineGrad)"
+                stroke="#4a8ac0" stroke-width="1" opacity="0.9"/>
+
+          <!-- Cylinder Head -->
+          <rect x="50" y="135" width="70" height="12" rx="3" fill="#2a5a8c"
+                stroke="#4a8ac0" stroke-width="0.8"/>
+
+          <!-- Cooling Fins -->
+          <line x1="52" y1="155" x2="118" y2="155" stroke="#3a6a9c" stroke-width="0.8" opacity="0.6"/>
+          <line x1="52" y1="165" x2="118" y2="165" stroke="#3a6a9c" stroke-width="0.8" opacity="0.6"/>
+          <line x1="52" y1="175" x2="118" y2="175" stroke="#3a6a9c" stroke-width="0.8" opacity="0.6"/>
+          <line x1="52" y1="185" x2="118" y2="185" stroke="#3a6a9c" stroke-width="0.8" opacity="0.6"/>
+          <line x1="52" y1="195" x2="118" y2="195" stroke="#3a6a9c" stroke-width="0.8" opacity="0.6"/>
+          <line x1="52" y1="205" x2="118" y2="205" stroke="#3a6a9c" stroke-width="0.8" opacity="0.6"/>
+
+          <!-- Piston Inside Cylinder -->
+          <g class="crankshaft">
+            <rect x="62" y="160" width="46" height="18" rx="3" fill="url(#pistonGrad)"
+                  stroke="#5a9ad0" stroke-width="0.8"/>
+            <!-- Piston Rod -->
+            <line x1="85" y1="178" x2="85" y2="210" stroke="#4a8ac0" stroke-width="3" stroke-linecap="round"/>
+            <!-- Crankshaft Circle -->
+            <circle cx="85" cy="210" r="6" fill="none" stroke="#4a8ac0" stroke-width="2"/>
+            <circle cx="85" cy="210" r="2" fill="#4a8ac0"/>
+          </g>
+
+          <!-- Valves -->
+          <g class="valve-left">
+            <line x1="70" y1="133" x2="70" y2="145" stroke="#5a9ad0" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="70" cy="131" r="3" fill="#4a8ac0"/>
+          </g>
+          <g class="valve-right">
+            <line x1="100" y1="133" x2="100" y2="145" stroke="#5a9ad0" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="100" cy="131" r="3" fill="#4a8ac0"/>
+          </g>
+
+          <!-- Spark Plugs -->
+          <rect x="78" y="134" width="4" height="10" rx="1" fill="#8ac0ff" class="spark"
+                style="animation-delay: 0s"/>
+          <rect x="92" y="134" width="4" height="10" rx="1" fill="#8ac0ff" class="spark"
+                style="animation-delay: 0.75s"/>
+
+          <!-- Intake/Exhaust Manifold -->
+          <path d="M50 150 L40 150 L35 165 L40 165" fill="none" stroke="#3a6a9c" stroke-width="2" stroke-linecap="round"/>
+          <path d="M120 150 L130 150 L135 165 L130 165" fill="none" stroke="#3a6a9c" stroke-width="2" stroke-linecap="round"/>
+        </g>
+
+        <!-- ===== MAIN LOGO CIRCLE ===== -->
+        <circle cx="190" cy="170" r="85" fill="none" stroke="url(#metalGrad)" stroke-width="5"
+                filter="url(#glow)" opacity="0.9"/>
+
+        <!-- Inner Decorative Ring -->
+        <circle cx="190" cy="170" r="72" fill="none" stroke="#2a5a8c" stroke-width="1"
+                stroke-dasharray="4 6" opacity="0.5">
+          <animateTransform attributeName="transform" type="rotate"
+            from="0 190 170" to="360 190 170" dur="20s" repeatCount="indefinite"/>
+        </circle>
+
+        <!-- Crosshair Lines -->
+        <line x1="190" y1="80" x2="190" y2="260" stroke="#2a5a8c" stroke-width="1" opacity="0.3"/>
+        <line x1="100" y1="170" x2="280" y2="170" stroke="#2a5a8c" stroke-width="1" opacity="0.3"/>
+
+        <!-- Center Hub -->
+        <circle cx="190" cy="170" r="35" fill="none" stroke="#4a8ac0" stroke-width="2" filter="url(#glow)"/>
+        <circle cx="190" cy="170" r="20" fill="none" stroke="#3a6a9c" stroke-width="1.5"/>
+        <circle cx="190" cy="170" r="6" fill="#4a8ac0" opacity="0.8"/>
+
+        <!-- Z Letters in Logo -->
+        <text x="190" y="163" text-anchor="middle" font-size="28" font-weight="900"
+              fill="#4a8ac0" filter="url(#glow)" letter-spacing="2">ZMT</text>
+        <text x="190" y="185" text-anchor="middle" font-size="10" font-weight="400"
+              fill="rgba(77,166,255,0.6)" letter-spacing="4">PIECE</text>
+
+        <!-- Metallic Shine Overlay -->
+        <circle cx="190" cy="170" r="85" fill="url(#sheen)" class="metal-shine"/>
+
+        <!-- ===== MAIN GEAR (BOTTOM CENTER) ===== -->
+        <g class="gear-group">
+          <!-- Gear Teeth -->
+          <path d="M190 270 L182 260 L178 260 L170 270 L166 268 L170 258 L168 254 L178 250
+                   L180 240 L184 240 L190 230 L196 240 L200 240 L202 250 L212 254 L210 258
+                   L214 268 L210 270 L202 260 L198 260 Z"
+                fill="url(#gearGrad)" stroke="#5a9ad0" stroke-width="1"/>
+
+          <!-- Gear Body -->
+          <circle cx="190" cy="290" r="18" fill="url(#gearGrad)" stroke="#5a9ad0" stroke-width="1"/>
+
+          <!-- Gear Teeth Ring -->
+          <g>
+            <rect x="184" y="268" width="12" height="8" rx="2" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.5"/>
+            <rect x="184" y="304" width="12" height="8" rx="2" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.5"/>
+            <rect x="168" y="284" width="8" height="12" rx="2" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.5"/>
+            <rect x="204" y="284" width="8" height="12" rx="2" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.5"/>
+            <!-- Diagonal teeth -->
+            <rect x="170" y="270" width="10" height="8" rx="2" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.5" transform="rotate(-45 175 274)"/>
+            <rect x="200" y="270" width="10" height="8" rx="2" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.5" transform="rotate(45 205 274)"/>
+            <rect x="170" y="300" width="10" height="8" rx="2" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.5" transform="rotate(45 175 304)"/>
+            <rect x="200" y="300" width="10" height="8" rx="2" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.5" transform="rotate(-45 205 304)"/>
+          </g>
+
+          <!-- Gear Hub -->
+          <circle cx="190" cy="290" r="10" fill="#1a3a5c" stroke="#4a8ac0" stroke-width="1.5"/>
+          <circle cx="190" cy="290" r="4" fill="#4a8ac0"/>
+
+          <!-- Gear Metallic Shine -->
+          <circle cx="190" cy="290" r="18" fill="url(#sheen)" class="metal-shine"/>
+        </g>
+
+        <!-- ===== SMALL GEAR (RIGHT) ===== -->
+        <g class="gear-small">
+          <circle cx="310" cy="280" r="12" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.8"/>
+          <rect x="305" y="264" width="10" height="6" rx="1.5" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.4"/>
+          <rect x="305" y="290" width="10" height="6" rx="1.5" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.4"/>
+          <rect x="294" y="275" width="6" height="10" rx="1.5" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.4"/>
+          <rect x="320" y="275" width="6" height="10" rx="1.5" fill="url(#gearGrad)" stroke="#4a8ac0" stroke-width="0.4"/>
+          <circle cx="310" cy="280" r="5" fill="#1a3a5c" stroke="#4a8ac0" stroke-width="1"/>
+          <circle cx="310" cy="280" r="2" fill="#4a8ac0"/>
+        </g>
+
+        <!-- ===== CHAIN/BELT connecting gears ===== -->
+        <path d="M208 290 Q250 300 298 280" fill="none" stroke="#3a6a9c" stroke-width="1.5"
+              stroke-dasharray="3 3" opacity="0.5">
+          <animate attributeName="stroke-dashoffset" from="0" to="-12" dur="1s" repeatCount="indefinite"/>
+        </path>
+
+        <!-- ===== SPARKS near engine ===== -->
+        <circle cx="70" cy="140" r="2" fill="url(#sparkGrad)" class="spark"
+                style="animation-delay:0s; animation-duration:0.3s"/>
+        <circle cx="100" cy="138" r="1.5" fill="url(#sparkGrad)" class="spark"
+                style="animation-delay:0.5s; animation-duration:0.25s"/>
+        <circle cx="85" cy="136" r="1" fill="url(#sparkGrad)" class="spark"
+                style="animation-delay:1s; animation-duration:0.2s"/>
+        <circle cx="75" cy="138" r="1.5" fill="url(#sparkGrad)" class="spark"
+                style="animation-delay:1.2s; animation-duration:0.35s"/>
+
+        <!-- ===== EXHAUST SMOKE ===== -->
+        <g opacity="0.3">
+          <circle cx="35" cy="160" r="4" fill="#4a8ac0">
+            <animate attributeName="cy" from="160" to="130" dur="2s" repeatCount="indefinite"/>
+            <animate attributeName="r" from="4" to="10" dur="2s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" from="0.3" to="0" dur="2s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="38" cy="155" r="3" fill="#4a8ac0">
+            <animate attributeName="cy" from="155" to="120" dur="2.5s" repeatCount="indefinite" begin="0.5s"/>
+            <animate attributeName="r" from="3" to="8" dur="2.5s" repeatCount="indefinite" begin="0.5s"/>
+            <animate attributeName="opacity" from="0.25" to="0" dur="2.5s" repeatCount="indefinite" begin="0.5s"/>
+          </circle>
+          <circle cx="32" cy="158" r="2" fill="#4a8ac0">
+            <animate attributeName="cy" from="158" to="125" dur="2.2s" repeatCount="indefinite" begin="1s"/>
+            <animate attributeName="r" from="2" to="7" dur="2.2s" repeatCount="indefinite" begin="1s"/>
+            <animate attributeName="opacity" from="0.2" to="0" dur="2.2s" repeatCount="indefinite" begin="1s"/>
+          </circle>
+        </g>
+
+        <!-- ===== DECORATIVE ARCS ===== -->
+        <path d="M110 100 Q190 60 270 100" fill="none" stroke="#2a5a8c" stroke-width="1"
+              opacity="0.3" stroke-dasharray="2 4">
+          <animateTransform attributeName="transform" type="rotate"
+            from="0 190 170" to="-360 190 170" dur="30s" repeatCount="indefinite"/>
+        </path>
+        <path d="M120 250 Q190 310 260 250" fill="none" stroke="#2a5a8c" stroke-width="1"
+              opacity="0.3" stroke-dasharray="2 4">
+          <animateTransform attributeName="transform" type="rotate"
+            from="0 190 170" to="360 190 170" dur="25s" repeatCount="indefinite"/>
+        </path>
+
+        <!-- ===== OIL DROP ACCENT ===== -->
+        <circle cx="50" cy="250" r="2" fill="#4a8ac0" opacity="0.4">
+          <animate attributeName="opacity" from="0" to="0.6" dur="1s" repeatCount="indefinite" begin="0.2s"/>
+          <animate attributeName="opacity" from="0.6" to="0" dur="1s" repeatCount="indefinite" begin="1.2s"/>
+        </circle>
+
+        <!-- ===== RPM INDICATOR ===== -->
+        <g transform="translate(300, 160)">
+          <circle cx="0" cy="0" r="22" fill="none" stroke="#1a3a5c" stroke-width="2"/>
+          <circle cx="0" cy="0" r="22" fill="none" stroke="#4a8ac0" stroke-width="2"
+                  stroke-dasharray="100 140" stroke-dashoffset="0" opacity="0.6">
+            <animateTransform attributeName="transform" type="rotate"
+              from="-120 0 0" to="120 0 0" dur="2s" repeatCount="indefinite"/>
+          </circle>
+          <text x="0" y="4" text-anchor="middle" font-size="8" fill="#4a8ac0"
+                font-weight="700" opacity="0.7">RPM</text>
+        </g>
+
+        <!-- ===== PRESSURE GAUGE ===== -->
+        <g transform="translate(60, 100)">
+          <circle cx="0" cy="0" r="15" fill="none" stroke="#1a3a5c" stroke-width="1.5"/>
+          <line x1="0" y1="0" x2="0" y2="-10" stroke="#4a8ac0" stroke-width="1.5" stroke-linecap="round">
+            <animateTransform attributeName="transform" type="rotate"
+              values="-60 0 0;40 0 0;-60 0 0" dur="3s" repeatCount="indefinite"/>
+          </line>
+          <circle cx="0" cy="0" r="2" fill="#4a8ac0"/>
+        </g>
+      </svg>
+    </div>
+
+    <!-- Light Sweep Effect -->
+    <div class="light-sweep">
+      <div class="light-beam"></div>
+      <div class="light-beam light-beam-2"></div>
+    </div>
+
+    <!-- Vignette -->
+    <div class="vignette"></div>
+
+    <!-- Text -->
+    <div class="text-container">
+      <div class="brand-name">ZMT <span class="piece">PIECE</span></div>
+      <div class="brand-sub">Car Parts Management System</div>
+      <div class="brand-company">ZMT SOFTWARE</div>
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="progress-container">
+      <div class="progress-bar">
+        <div class="progress-fill"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Generate floating particles
+    const particlesEl = document.getElementById('particles');
+    for (let i = 0; i < 30; i++) {
+      const p = document.createElement('div');
+      p.className = 'particle';
+      const size = Math.random() * 3 + 1;
+      p.style.cssText = `
+        width: ${size}px; height: ${size}px;
+        left: ${Math.random() * 100}%;
+        animation-duration: ${Math.random() * 8 + 6}s;
+        animation-delay: ${Math.random() * 8}s;
+        opacity: ${Math.random() * 0.4 + 0.1};
+      `;
+      particlesEl.appendChild(p);
+    }
+
+    // Safety auto-exit (only if main process doesn't close us first)
+    setTimeout(() => {
+      const container = document.getElementById('splashContainer');
+      if (container && !container.classList.contains('exit')) {
+        container.classList.add('exit');
+        setTimeout(() => {
+          window.close();
+        }, 800);
+      }
+    }, 12000);
+  </script>
+</body>
+</html>

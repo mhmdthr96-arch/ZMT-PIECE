@@ -1,0 +1,114 @@
+<div class="page" id="page-debts">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-hand-holding-usd"></i> <span data-i18n="debts.title">الديون</span></h1>
+      <p><span data-i18n="debts.sub">إدارة ديون الموردين والعملاء</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <!-- Summary bar -->
+    <div class="debts-summary">
+      <div class="debts-summary-card" style="border-top:3px solid var(--bmw-orange)">
+        <span class="debts-summary-label" data-i18n="debts.totalSupplierDebts">ديون علينا (للموردين)</span>
+        <span class="debts-summary-value" id="dsSupplierDebt" style="color:var(--bmw-orange)">DA0</span>
+      </div>
+      <div class="debts-summary-card" style="border-top:3px solid #28a745">
+        <span class="debts-summary-label" data-i18n="debts.totalCustomerDebts">ديون لنا (على العملاء)</span>
+        <span class="debts-summary-value" id="dsCustomerDebt" style="color:#28a745">DA0</span>
+      </div>
+      <div class="debts-summary-card" style="border-top:3px solid var(--bmw-blue-1)">
+        <span class="debts-summary-label" data-i18n="debts.net">صافي الذمم</span>
+        <span class="debts-summary-value" id="dsNetDebt" style="color:var(--bmw-blue-1)">DA0</span>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="debts-tabs">
+      <button class="debts-tab active" data-tab="customers" onclick="switchDebtsTab('customers')">
+        <i class="fas fa-users"></i> <span data-i18n="debts.tabCustomers">العملاء</span>
+        <span class="debts-tab-badge" id="dtCustCount">0</span>
+      </button>
+      <button class="debts-tab" data-tab="suppliers" onclick="switchDebtsTab('suppliers')">
+        <i class="fas fa-truck"></i> <span data-i18n="debts.tabSuppliers">الموردين</span>
+        <span class="debts-tab-badge" id="dtSupCount">0</span>
+      </button>
+    </div>
+
+    <!-- Search + list container -->
+    <div class="debts-content">
+      <div class="debts-list-panel">
+        <div class="debts-search">
+          <i class="fas fa-search"></i>
+          <input type="text" class="form-input" id="debtsSearch" data-i18n-placeholder="debts.searchPlaceholder" placeholder="ابحث بالاسم أو رقم الهاتف..." oninput="filterDebtsList()">
+        </div>
+        <div class="debts-list" id="debtsList"></div>
+      </div>
+
+      <!-- Detail panel -->
+      <div class="debts-detail-panel" id="debtsDetailPanel">
+        <div class="debts-detail-header">
+          <button class="btn btn-sm" onclick="closeDebtsDetail()" style="font-size:11px"><i class="fas fa-arrow-right"></i> <span data-i18n="common.back">رجوع</span></button>
+          <div id="debtsDetailInfo" style="flex:1;min-width:0"></div>
+        </div>
+        <div class="debts-detail-body" id="debtsDetailBody">
+          <div class="placeholder-box"><i class="fas fa-hand-pointer"></i><p data-i18n="debts.chooseSide">اختر طرفاً من القائمة</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.debts-summary{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.debts-summary-card{flex:1;min-width:140px;background:#fff;border-radius:var(--radius);padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06)}
+.debts-summary-label{display:block;font-size:11px;color:var(--silver-500);margin-bottom:4px}
+.debts-summary-value{display:block;font-size:20px;font-weight:800}
+.debts-tabs{display:flex;gap:0;margin-bottom:14px;background:var(--silver-100);border-radius:var(--radius);padding:3px}
+.debts-tab{flex:1;padding:8px 12px;border:none;border-radius:4px;font-size:13px;font-weight:600;cursor:pointer;background:transparent;color:var(--silver-600);transition:all 0.15s;display:flex;align-items:center;justify-content:center;gap:6px}
+.debts-tab.active{background:#fff;color:var(--bmw-blue-1);box-shadow:0 1px 4px rgba(0,0,0,0.08)}
+.debts-tab-badge{font-size:10px;background:var(--bmw-blue-1);color:#fff;padding:0 7px;border-radius:10px;line-height:18px;font-weight:700}
+.debts-tab.active .debts-tab-badge{background:var(--bmw-blue-1)}
+.debts-content{display:flex;gap:16px;align-items:flex-start}
+.debts-list-panel{flex:1;min-width:280px;max-width:400px}
+.debts-detail-panel{flex:2;min-width:0;background:#fff;border-radius:var(--radius);box-shadow:0 1px 4px rgba(0,0,0,0.06);overflow:hidden;display:none}
+.debts-detail-panel.open{display:block}
+.debts-search{position:relative;margin-bottom:8px}
+.debts-search i{position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--silver-400);font-size:13px}
+.debts-search input{padding-right:32px;width:100%}
+.debts-list{max-height:calc(100vh - 280px);overflow-y:auto}
+.debts-entity{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px solid var(--silver-200);border-radius:var(--radius-sm);margin-bottom:4px;cursor:pointer;transition:all 0.12s}
+.debts-entity:hover{border-color:var(--bmw-blue-1);box-shadow:0 0 0 2px rgba(0,102,177,0.06)}
+.debts-entity.selected{border-color:var(--bmw-blue-1);background:rgba(0,102,177,0.04)}
+.debts-entity-icon{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.debts-entity-icon.customer{background:rgba(40,167,69,0.12);color:#28a745}
+.debts-entity-icon.supplier{background:rgba(230,81,0,0.12);color:#e65100}
+.debts-entity-info{flex:1;min-width:0}
+.debts-entity-name{font-size:13px;font-weight:700;color:var(--silver-800);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.debts-entity-phone{font-size:10px;color:var(--silver-400)}
+.debts-entity-balance{font-size:15px;font-weight:800;white-space:nowrap}
+.debts-entity-balance.positive{color:#e65100}
+.debts-entity-balance.negative{color:#28a745}
+.debts-entity-balance.zero{color:var(--silver-400)}
+.debts-detail-header{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--silver-200);background:var(--silver-50)}
+.debts-detail-info-name{font-size:16px;font-weight:800;color:var(--silver-800)}
+.debts-detail-info-sub{font-size:11px;color:var(--silver-500)}
+.debts-detail-body{padding:16px;max-height:calc(100vh - 340px);overflow-y:auto}
+.debts-stat-row{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.debts-stat-item{flex:1;min-width:100px;text-align:center;padding:10px;border-radius:var(--radius-sm);background:var(--silver-50)}
+.debts-stat-label{font-size:10px;color:var(--silver-500)}
+.debts-stat-value{font-size:17px;font-weight:800}
+.debts-section-title{font-size:12px;font-weight:700;color:var(--silver-600);margin:14px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--silver-200);display:flex;align-items:center;gap:6px}
+.debts-inv-item{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fff;border:1px solid var(--silver-200);border-radius:var(--radius-sm);margin-bottom:3px;transition:background 0.1s}
+.debts-inv-item:hover{background:var(--silver-50)}
+.debts-inv-info{flex:1;min-width:0}
+.debts-inv-num{font-size:11px;font-weight:700;color:var(--silver-800)}
+.debts-inv-date{font-size:9px;color:var(--silver-400)}
+.debts-inv-amount{font-size:13px;font-weight:700;white-space:nowrap}
+.debts-pay-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--silver-100);font-size:12px}
+.debts-pay-item:last-child{border-bottom:none}
+.debts-pay-date{color:var(--silver-500);font-size:10px;min-width:120px}
+.debts-pay-note{flex:1;color:var(--silver-600);font-size:11px}
+.debts-pay-amount{font-weight:700;white-space:nowrap}
+@media(max-width:780px){.debts-content{flex-direction:column}.debts-list-panel{max-width:none}}
+</style>

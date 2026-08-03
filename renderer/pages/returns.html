@@ -1,0 +1,34 @@
+<div class="page" id="page-returns">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-undo"></i> <span data-i18n="returns.title">المرتجعات</span></h1>
+      <p><span data-i18n="returns.sub">إدارة المرتجعات والاسترجاع</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="toolbar">
+      <button class="btn btn-primary"><i class="fas fa-plus"></i> <span data-i18n="returns.add">تسجيل مرتجع</span></button>
+      <button class="btn" onclick="exportReturnsExcel()"><i class="fas fa-file-export"></i> <span data-i18n="returns.export">تصدير</span></button>
+    </div>
+
+    <div class="table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th><span data-i18n="returns.col1">رقم المرتجع</span></th>
+            <th><span data-i18n="returns.col2">الفاتورة</span></th>
+            <th><span data-i18n="returns.col3">القطعة</span></th>
+            <th><span data-i18n="returns.col4">الكمية</span></th>
+            <th><span data-i18n="returns.col5">السبب</span></th>
+            <th><span data-i18n="returns.col6">التاريخ</span></th>
+            <th><span data-i18n="returns.col7">إجراءات</span></th>
+          </tr>
+        </thead>
+        <tbody id="returnsBody">
+          <tr><td colspan="7" class="empty-row"><i class="fas fa-undo"></i> <span data-i18n="returns.empty">لا توجد مرتجعات</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

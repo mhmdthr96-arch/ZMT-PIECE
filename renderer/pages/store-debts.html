@@ -1,0 +1,147 @@
+<div class="page" id="page-store-debts">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-store"></i> <span data-i18n="storeDebts.title">ديون المحلات</span></h1>
+      <p data-i18n="storeDebts.sub">ديون المحلات حسب فواتير التحويل</p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <!-- STORE LIST VIEW -->
+    <div id="sdListView">
+      <div id="sdSummary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px;">
+        <div class="bm-summary-card">
+          <div class="bm-summary-icon" style="background:#e3f2fd"><i class="fas fa-store" style="color:#1565c0"></i></div>
+          <div class="bm-summary-info">
+            <div class="bm-summary-value" id="sdTotalStores">0</div>
+            <div class="bm-summary-label" data-i18n="storeDebts.storeCount">عدد المحلات</div>
+          </div>
+        </div>
+        <div class="bm-summary-card">
+          <div class="bm-summary-icon" style="background:#e8f5e9"><i class="fas fa-arrow-up" style="color:#2e7d32"></i></div>
+          <div class="bm-summary-info">
+            <div class="bm-summary-value" id="sdTotalOwed" style="color:#2e7d32">0 DA</div>
+            <div class="bm-summary-label" data-i18n="storeDebts.owedToUs">لدينا ( عليهم )</div>
+          </div>
+        </div>
+        <div class="bm-summary-card">
+          <div class="bm-summary-icon" style="background:#ffebee"><i class="fas fa-arrow-down" style="color:#c62828"></i></div>
+          <div class="bm-summary-info">
+            <div class="bm-summary-value" id="sdTotalOwe" style="color:#c62828">0 DA</div>
+            <div class="bm-summary-label" data-i18n="storeDebts.weOwe">عليهم ( لنا )</div>
+          </div>
+        </div>
+        <div class="bm-summary-card">
+          <div class="bm-summary-icon" style="background:#fff3e0"><i class="fas fa-balance-scale" style="color:#e65100"></i></div>
+          <div class="bm-summary-info">
+            <div class="bm-summary-value" id="sdNetDebt">0 DA</div>
+            <div class="bm-summary-label" data-i18n="storeDebts.netDebt">صافي الديون</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="sdStoresList">
+        <div class="placeholder-box">
+          <i class="fas fa-store" style="font-size:48px;color:#555"></i>
+          <p data-i18n="storeDebts.emptyPlaceholder">لا توجد فواتير تحويل</p>
+    </div>
+  </div>
+</div>
+
+<!-- Invoice Payment Modal (shared) -->
+<div id="invPayModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeInvPay()">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <h3><i class="fas fa-hand-holding-usd"></i> <span data-i18n="storeDebts.payTitle">تسديد دفعة</span></h3>
+      <button class="modal-close" onclick="closeInvPay()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;padding:4px 0">
+          <span style="color:var(--silver-600)" data-i18n="storeDebts.total">الإجمالي:</span>
+          <strong id="invPayTotal">DA0</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0">
+          <span style="color:var(--silver-600)" data-i18n="storeDebts.paidPreviously">المدفوع سابقاً:</span>
+          <strong id="invPayPaid" style="color:#28a745">DA0</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--silver-200);margin-top:4px;padding-top:6px">
+          <span style="color:var(--silver-600)" data-i18n="common.remaining">المتبقي:</span>
+          <strong id="invPayRemaining" style="color:#e65100">DA0</strong>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label style="font-size:13px;font-weight:600" data-i18n="storeDebts.payAmount">مبلغ الدفعة</label>
+        <input type="number" class="form-input no-spinner" id="invPayAmount" value="0" min="0" style="width:150px;font-size:18px;font-weight:700;text-align:center">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeInvPay()" data-i18n="common.cancel">إلغاء</button>
+      <button class="btn btn-primary" onclick="confirmInvPayment()" data-i18n="storeDebts.confirmPay"><i class="fas fa-check"></i> تأكيد الدفع</button>
+    </div>
+  </div>
+</div>
+
+    <!-- INVOICE LIST VIEW (when a store is clicked) -->
+    <div id="sdDetailView" style="display:none">
+      <div style="margin-bottom:16px;display:flex;align-items:center;gap:12px">
+        <button class="btn" onclick="sdBackToList()" data-i18n="storeDebts.back"><i class="fas fa-arrow-right"></i> رجوع</button>
+        <div>
+          <h2 id="sdDetailName" style="margin:0;font-size:18px"></h2>
+          <div id="sdDetailCode" dir="ltr" style="font-size:12px;color:#888"></div>
+        </div>
+        <div style="margin-right:auto;text-align:left">
+          <div data-i18n="storeDebts.totalDebtLabel">إجمالي الدين</div>
+          <div id="sdDetailTotal" style="font-size:20px;font-weight:900"></div>
+        </div>
+      </div>
+
+      <div id="sdDetailSummary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px">
+        <div class="bm-summary-card">
+          <div class="bm-summary-icon" style="background:#e3f2fd"><i class="fas fa-file-invoice" style="color:#1565c0"></i></div>
+          <div class="bm-summary-info">
+            <div class="bm-summary-value" id="sdDetTotalInvoices">0</div>
+            <div class="bm-summary-label" data-i18n="storeDebts.totalInvoices">إجمالي الفواتير</div>
+          </div>
+        </div>
+        <div class="bm-summary-card">
+          <div class="bm-summary-icon" style="background:#e8f5e9"><i class="fas fa-check-circle" style="color:#2e7d32"></i></div>
+          <div class="bm-summary-info">
+            <div class="bm-summary-value" id="sdDetPaid" style="color:#2e7d32">0 DA</div>
+            <div class="bm-summary-label" data-i18n="storeDebts.paid">المدفوع</div>
+          </div>
+        </div>
+        <div class="bm-summary-card">
+          <div class="bm-summary-icon" style="background:#ffebee"><i class="fas fa-exclamation-circle" style="color:#c62828"></i></div>
+          <div class="bm-summary-info">
+            <div class="bm-summary-value" id="sdDetRemaining" style="color:#c62828">0 DA</div>
+            <div class="bm-summary-label" data-i18n="storeDebts.remaining">المتبقي</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="sdInvoicesContent">
+        <p class="text-muted" data-i18n="storeDebts.noInvoices">لا توجد فواتير</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Invoice Detail Modal (shared) -->
+<div id="invDetailModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeInvDetail()">
+  <div class="modal" style="max-width:800px;width:95%">
+    <div class="modal-header">
+      <h3 id="invDetailTitle"><i class="fas fa-file-invoice"></i> <span data-i18n="storeDebts.invoiceDetails">تفاصيل الفاتورة</span></h3>
+      <button class="modal-close" onclick="closeInvDetail()">&times;</button>
+    </div>
+    <div class="modal-body" id="invDetailBody" style="padding:0;max-height:80vh;overflow-y:auto;direction:ltr;text-align:left">
+    </div>
+    <div class="modal-footer" id="invDetailFooter" style="display:flex;gap:8px;flex-wrap:wrap;direction:ltr">
+      <button class="btn btn-primary" onclick="printInvFromDetail()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-print"></i> <span data-i18n="storeDebts.invoiceActionsPrint">طباعة</span></button>
+      <button class="btn" onclick="showInvPaymentSection()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-hand-holding-usd"></i> <span data-i18n="storeDebts.invoiceActionsPay">دفع</span></button>
+      <button class="btn" onclick="showInvEditSection()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-edit"></i> <span data-i18n="storeDebts.invoiceActionsEdit">تعديل</span></button>
+      <button class="btn btn-danger" onclick="deleteInvoiceFromDetail()" style="display:flex;align-items:center;gap:5px;margin-right:auto"><i class="fas fa-trash"></i> <span data-i18n="storeDebts.invoiceActionsDelete">حذف</span></button>
+      <button class="btn" onclick="closeInvDetail()" data-i18n="storeDebts.invoiceActionsClose">إغلاق</button>
+    </div>
+  </div>
+</div>

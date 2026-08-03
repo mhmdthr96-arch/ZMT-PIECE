@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZMT PIECE</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/license.css">
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- ===== TITLE BAR ===== -->
+    <div class="title-bar">
+      <div class="title-bar-drag">
+        <div class="title-bar-brand">
+          <div class="brand-logo-mini">
+            <img src="../assets/logo.png" alt="ZMT" style="width:22px;height:22px;border-radius:4px;object-fit:cover">
+          </div>
+          <span>ZMT <small id="appTitleText">PIECE</small></span>
+        </div>
+      </div>
+      <div class="title-bar-center">
+        <span class="connection-status" id="connectionStatus">
+          <span class="conn-dot" id="connDot"></span>
+          <span class="conn-text" id="connText">متصل</span>
+        </span>
+      </div>
+      <div class="title-bar-controls">
+        <button class="tb-btn" id="btnLang" title="Language">
+          <i class="fas fa-globe"></i>
+          <span class="lang-label" id="langLabel">AR</span>
+        </button>
+        <button class="tb-btn" id="btnTheme" title="الوضع الليلي">
+          <i class="fas fa-moon"></i>
+        </button>
+        <button class="tb-btn" id="btnMinimize"><i class="fas fa-minus"></i></button>
+        <button class="tb-btn" id="btnMaximize"><i class="fas fa-square"></i></button>
+        <button class="tb-btn tb-close" id="btnClose"><i class="fas fa-times"></i></button>
+      </div>
+    </div>
+
+    <!-- ===== SIDEBAR ===== -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <img src="../assets/logo.png" alt="ZMT" style="width:36px;height:36px;border-radius:8px;object-fit:cover">
+          <div class="logo-text">
+            <h2>ZMT</h2>
+            <span data-i18n="appTitle">PIECE</span>
+          </div>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-label" data-i18n="nav.main">الرئيسية</div>
+        <a class="nav-item active" data-page="dashboard" href="#"><i class="fas fa-th-large"></i><span data-i18n="nav.dashboard">لوحة التحكم</span></a>
+        <a class="nav-item" data-page="brands" href="#"><i class="fas fa-tags"></i><span data-i18n="nav.brands">العلامات التجارية</span></a>
+        <a class="nav-item" data-page="sales" href="#"><i class="fas fa-cart-plus"></i><span data-i18n="nav.sales">البيع</span></a>
+        <a class="nav-item" data-page="invoices" href="#"><i class="fas fa-file-invoice"></i><span data-i18n="nav.invoices">الفواتير</span></a>
+
+        <div class="nav-section-label" data-i18n="nav.manage">إدارة</div>
+        <a class="nav-item" data-page="inventory" href="#"><i class="fas fa-warehouse"></i><span data-i18n="nav.inventory">المخزون</span></a>
+        <a class="nav-item" data-page="suppliers" href="#"><i class="fas fa-truck"></i><span data-i18n="nav.suppliers">الموردين</span></a>
+        <a class="nav-item" data-page="customers" href="#"><i class="fas fa-users"></i><span data-i18n="nav.customers">العملاء</span></a>
+        <a class="nav-item" data-page="debts" href="#"><i class="fas fa-hand-holding-usd"></i><span data-i18n="nav.debts">الديون</span></a>
+        <a class="nav-item" data-page="store-debts" href="#"><i class="fas fa-store"></i><span data-i18n="nav.storeDebts">ديون المحلات</span></a>
+
+        <a class="nav-item" data-page="branches-monitor" href="#" id="navBranchesMonitor" style="display:none;">
+          <i class="fas fa-satellite-dish"></i><span data-i18n="nav.branchesMonitor">مراقبة الفروع</span>
+        </a>
+        <a class="nav-item" data-page="shared-inventory" href="#" id="navSharedInventory" style="display:none;">
+          <i class="fas fa-eye"></i><span data-i18n="nav.sharedInventory">المخزون المشترك</span>
+        </a>
+
+        <div class="nav-section-label" data-i18n="nav.finance">المالية</div>
+        <a class="nav-item" data-page="net-account" href="#"><i class="fas fa-balance-scale"></i><span data-i18n="nav.netAccount">صافي الحساب</span></a>
+        <a class="nav-item" data-page="discounts" href="#"><i class="fas fa-percent"></i><span data-i18n="nav.discounts">التخفيضات</span></a>
+        <a class="nav-item" data-page="returns" href="#"><i class="fas fa-undo"></i><span data-i18n="nav.returns">المرتجعات</span></a>
+        <a class="nav-item" data-page="reports" href="#"><i class="fas fa-chart-bar"></i><span data-i18n="nav.reports">التقارير</span></a>
+
+        <div class="nav-section-label" data-i18n="nav.system">النظام</div>
+        <a class="nav-item" data-page="backup" href="#"><i class="fas fa-database"></i><span data-i18n="nav.backup">النسخ الاحتياطي</span></a>
+        <a class="nav-item" data-page="settings" href="#"><i class="fas fa-cog"></i><span data-i18n="nav.settings">الاعدادات</span></a>
+        <a class="nav-item" data-page="connection" href="#"><i class="fas fa-cloud"></i><span data-i18n="nav.connection">اعدادات الاتصال</span></a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-stripes"></div>
+        <div id="sidebarUserInfo" style="display:flex;align-items:center;gap:8px;padding:8px 12px;width:100%;box-sizing:border-box;">
+          <i class="fas fa-user-circle" style="font-size:18px;color:var(--silver-400);"></i>
+          <span id="sidebarUserName" style="flex:1;font-size:12px;color:var(--silver-500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">ZMT PIECE v1.0</span>
+          <button onclick="userLogout()" style="background:none;border:none;cursor:pointer;padding:4px;color:var(--silver-500);font-size:14px;" title="تسجيل الخروج"><i class="fas fa-sign-out-alt"></i></button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ===== MAIN CONTENT ===== -->
+    <main class="main-content" id="pageContainer">
+      <!-- page content loaded dynamically -->
+    </main>
+
+  </div>
+
+  <!-- LOGIN OVERLAY (loaded inline) -->
+  <div class="login-overlay" id="loginOverlay" style="display:none;"></div>
+
+  <!-- LICENSE SYSTEM -->
+  <div class="license-overlay" id="licenseOverlay" style="display:none">
+    <div class="license-bg-pattern"></div>
+    <div class="license-card">
+      <div class="license-logo-section">
+        <img src="../assets/logo.png" alt="ZMT PIECE" style="width:72px;height:72px;border-radius:14px;object-fit:cover;margin-bottom:12px">
+        <h1 class="license-brand">ZMT <span>PIECE</span></h1>
+        <p class="license-tagline">Car Parts Management System</p>
+      </div>
+      <div class="license-form-section" id="licenseFormSection">
+        <div class="license-status" id="licenseStatus" style="display:none"></div>
+        <div class="license-input-group">
+          <label>أدخل مفتاح التفعيل</label>
+          <input type="text" id="licenseKeyInput" class="license-input"
+                 placeholder="أدخل المفتاح هنا..." dir="ltr"
+                 autocomplete="off" spellcheck="false">
+        </div>
+        <button class="license-activate-btn" id="licenseActivateBtn" onclick="doLicenseActivate()">
+          <i class="fas fa-key"></i> تفعيل البرنامج
+        </button>
+        <div class="license-hint">
+          <i class="fas fa-info-circle"></i>
+          تواصل مع المطور للحصول على مفتاح التفعيل
+        </div>
+      </div>
+      <div class="license-success-section" id="licenseSuccessSection" style="display:none">
+        <div class="license-success-icon"><i class="fas fa-check-circle"></i></div>
+        <h2 style="color:#28a745;margin-bottom:8px">تم التفعيل بنجاح!</h2>
+        <p id="licenseSuccessLabel" style="color:var(--silver-600);margin-bottom:20px"></p>
+        <button class="license-activate-btn" onclick="doLicenseEnterApp()" style="background:#28a745">
+          <i class="fas fa-arrow-left"></i> الدخول للبرنامج
+        </button>
+      </div>
+      <div class="license-footer"><span>ZMT SOFTWARE</span></div>
+    </div>
+  </div>
+
+  <!-- EXPIRY FREEZE OVERLAY -->
+  <div class="freeze-overlay" id="freezeOverlay" style="display:none">
+    <div class="freeze-card">
+      <div class="freeze-icon"><i class="fas fa-lock"></i></div>
+      <h1>انتهت مدة التفعيل</h1>
+      <p style="color:var(--silver-500);margin-bottom:8px">يرجى إدخال مفتاح تفعيل جديد لاستمرار العمل</p>
+      <p style="color:var(--silver-400);font-size:12px;margin-bottom:20px">بياناتك محفوظة وستعود بعد التفعيل</p>
+      <div class="freeze-input-group">
+        <input type="text" id="freezeKeyInput" class="license-input"
+               placeholder="مفتاح التفعيل الجديد..." dir="ltr" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="license-status" id="freezeStatus" style="display:none"></div>
+      <button class="license-activate-btn" onclick="doFreezeActivate()">
+        <i class="fas fa-key"></i> تفعيل واستمرار
+      </button>
+      <div class="license-footer" style="margin-top:20px">
+        <span>ZMT SOFTWARE — ZERIBIT MOHAMMED TAHAR</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- WATERMARK COUNTDOWN -->
+  <div class="watermark-countdown" id="watermarkCountdown" style="display:none">
+    <div class="watermark-inner">
+      <i class="fas fa-clock"></i>
+      <span id="watermarkText">متبقي 0 يوم</span>
+    </div>
+  </div>
+
+  <script src="js/vendor/xlsx.min.js"></script>
+  <script src="js/vendor/chart.min.js"></script>
+  <script src="js/vendor/supabase.min.js"></script>
+  <script src="js/vendor/papaparse.min.js"></script>
+  <script src="js/vendor/sql-asm.js"></script>
+  <script src="js/lib/file-detector.js"></script>
+  <script src="js/lib/keyword-matcher.js"></script>
+  <script src="js/lib/parsers.js"></script>
+  <script src="js/lib/smart-detector.js"></script>
+  <script src="js/lib/crypto-utils.js"></script>
+  <script src="js/lib/ai-agent.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/supabase-service.js"></script>
+  <script src="js/lan-service.js"></script>
+  <script src="js/pages/login.js"></script>
+  <script src="js/pages/data-migration.js"></script>
+  <script src="js/license.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

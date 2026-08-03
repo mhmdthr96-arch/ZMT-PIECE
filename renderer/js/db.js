@@ -1,0 +1,1052 @@
+const DB = (() => {
+  const DB_NAME = 'zmt_piece_db';
+  const DB_VERSION = 1;
+  const STORES = ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'meta'];
+  let db = null;
+  let _ready = false;
+
+  // ===== IN-MEMORY CACHE + INDEXES =====
+  const _cache = {};
+  const _idx = {};
+  function _initCache() {
+    for (const s of STORES) { _cache[s] = []; _idx[s] = {}; }
+    _cache.meta = {};
+  }
+  _initCache();
+
+  // ===== LOCAL CHANGE LISTENERS (LAN sync hook) =====
+  let _localChangeListeners = [];
+
+  function _emitLocalChange(ops) {
+    for (const cb of _localChangeListeners) {
+      try { cb(ops); } catch (e) { console.error('[DB] Change listener error:', e); }
+    }
+  }
+
+  function _emitStoreReplace(store, list) {
+    _emitLocalChange({ [store]: { put: list || [], replace: true } });
+  }
+
+  function _rebuildIndex(store) {
+    _idx[store] = {};
+    const arr = _cache[store] || [];
+    if (store === 'products') {
+      for (const p of arr) {
+        _idx.products[p.id] = p;
+        if (p.barcode) _idx.products['bc:' + p.barcode] = p;
+        if (p.storeId) {
+          if (!_idx.products['sid:' + p.storeId]) _idx.products['sid:' + p.storeId] = [];
+          _idx.products['sid:' + p.storeId].push(p);
+        }
+        if (p.brandId) {
+          if (!_idx.products['br:' + p.brandId]) _idx.products['br:' + p.brandId] = [];
+          _idx.products['br:' + p.brandId].push(p);
+        }
+        if (p.category) {
+          if (!_idx.products['cat:' + p.category.toLowerCase()]) _idx.products['cat:' + p.category.toLowerCase()] = [];
+          _idx.products['cat:' + p.category.toLowerCase()].push(p);
+        }
+      }
+    } else if (store === 'invoices') {
+      for (const inv of arr) {
+        _idx.invoices[inv.id] = inv;
+        if (inv.storeId) {
+          if (!_idx.invoices['sid:' + inv.storeId]) _idx.invoices['sid:' + inv.storeId] = [];
+          _idx.invoices['sid:' + inv.storeId].push(inv);
+        }
+        if (inv.supplierId) {
+          if (!_idx.invoices['sup:' + inv.supplierId]) _idx.invoices['sup:' + inv.supplierId] = [];
+          _idx.invoices['sup:' + inv.supplierId].push(inv);
+        }
+        if (inv.customerId) {
+          if (!_idx.invoices['cust:' + inv.customerId]) _idx.invoices['cust:' + inv.customerId] = [];
+          _idx.invoices['cust:' + inv.customerId].push(inv);
+        }
+        if (inv.invoiceNumber) {
+          _idx.invoices['invno:' + inv.invoiceNumber] = inv;
+        }
+      }
+    } else if (store === 'customers') {
+      for (const c of arr) {
+        _idx.customers[c.id] = c;
+        if (c.name) {
+          const key = 'name:' + c.name.toLowerCase().slice(0, 50);
+          if (!_idx.customers[key]) _idx.customers[key] = [];
+          _idx.customers[key].push(c);
+        }
+        if (c.phone) {
+          const key = 'phone:' + c.phone.replace(/[\s\-\(\)]/g, '');
+          if (!_idx.customers[key]) _idx.customers[key] = [];
+          _idx.customers[key].push(c);
+        }
+      }
+    } else if (store === 'suppliers') {
+      for (const s of arr) {
+        _idx.suppliers[s.id] = s;
+        if (s.name) {
+          const key = 'name:' + s.name.toLowerCase().slice(0, 50);
+          if (!_idx.suppliers[key]) _idx.suppliers[key] = [];
+          _idx.suppliers[key].push(s);
+        }
+        if (s.phone) {
+          const key = 'phone:' + s.phone.replace(/[\s\-\(\)]/g, '');
+          if (!_idx.suppliers[key]) _idx.suppliers[key] = [];
+          _idx.suppliers[key].push(s);
+        }
+      }
+    } else if (store === 'payments') {
+      for (const p of arr) {
+        _idx.payments[p.id] = p;
+        if (p.invoiceId) {
+          if (!_idx.payments['inv:' + p.invoiceId]) _idx.payments['inv:' + p.invoiceId] = [];
+          _idx.payments['inv:' + p.invoiceId].push(p);
+        }
+        if (p.supplierId) {
+          if (!_idx.payments['sup:' + p.supplierId]) _idx.payments['sup:' + p.supplierId] = [];
+          _idx.payments['sup:' + p.supplierId].push(p);
+        }
+        if (p.customerId) {
+          if (!_idx.payments['cust:' + p.customerId]) _idx.payments['cust:' + p.customerId] = [];
+          _idx.payments['cust:' + p.customerId].push(p);
+        }
+      }
+    }
+  }
+
+  function _rebuildAll() {
+    for (const s of STORES) _rebuildIndex(s);
+  }
+
+  function _getStoreId() {
+    if (typeof Auth !== 'undefined' && Auth.isLoggedIn()) return Auth.getUserCode() || '';
+    return localStorage.getItem('zmt_store_code') || '';
+  }
+
+  // ===== IndexedDB Layer =====
+  function openDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = (e) => {
+        const d = e.target.result;
+        for (const s of STORES) {
+          if (!d.objectStoreNames.contains(s)) d.createObjectStore(s, { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = (e) => { db = e.target.result; resolve(db); };
+      req.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  function _idbGetAll(store) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(store, 'readonly');
+      const req = tx.objectStore(store).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  const CHUNK_SIZE = 500;
+
+  async function _idbPut(store, items) {
+    if (!items.length) return;
+    for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+      const chunk = items.slice(i, i + CHUNK_SIZE);
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(store, 'readwrite');
+        const os = tx.objectStore(store);
+        for (const item of chunk) os.put(item);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      if (i + CHUNK_SIZE < items.length) {
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+  }
+
+  function _idbDelete(store, ids) {
+    if (!ids.length) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(store, 'readwrite');
+      const os = tx.objectStore(store);
+      for (const id of ids) os.delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  function _idbClear(store) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  // ===== BATCH WRITE QUEUE =====
+  let _batchQueue = {};
+  let _batchTimer = null;
+
+  function _queueWrite(store, item) {
+    if (!_batchQueue[store]) _batchQueue[store] = { put: [], del: [] };
+    _batchQueue[store].put.push(item);
+    _scheduleFlush();
+  }
+
+  function _queueDelete(store, id) {
+    if (!_batchQueue[store]) _batchQueue[store] = { put: [], del: [] };
+    _batchQueue[store].del.push(id);
+    _scheduleFlush();
+  }
+
+  function _scheduleFlush() {
+    if (_batchTimer) return;
+    _batchTimer = setTimeout(_flushBatch, 50);
+  }
+
+  async function _flushBatch() {
+    _batchTimer = null;
+    const queue = _batchQueue;
+    _batchQueue = {};
+    for (const [store, ops] of Object.entries(queue)) {
+      try {
+        if (ops.put.length) await _idbPut(store, ops.put);
+        if (ops.del.length) await _idbDelete(store, ops.del);
+      } catch (e) { console.error('[DB] Flush error:', store, e); }
+    }
+    debounceAutoBackup();
+    if (typeof CloudService !== 'undefined' && CloudService.isCloudConnected() && CloudService.hasData() && localStorage.getItem('zmt_cloud_autosync') === '1') {
+      CloudService.triggerSync();
+    }
+    _emitLocalChange(queue);
+  }
+
+  async function _immediateFlush() {
+    if (_batchTimer) { clearTimeout(_batchTimer); _batchTimer = null; }
+    const queue = _batchQueue;
+    _batchQueue = {};
+    for (const [store, ops] of Object.entries(queue)) {
+      try {
+        if (ops.put.length) await _idbPut(store, ops.put);
+        if (ops.del.length) await _idbDelete(store, ops.del);
+      } catch (e) { console.error('[DB] Flush error:', store, e); }
+    }
+    _emitLocalChange(queue);
+  }
+
+  // ===== AUTO-BACKUP =====
+  let _autoBackupTimer = 0;
+  function debounceAutoBackup() {
+    if (_autoBackupTimer) clearTimeout(_autoBackupTimer);
+    _autoBackupTimer = setTimeout(tryAutoBackup, 30000);
+  }
+
+  async function tryAutoBackup() {
+    if (!window.electronAPI?.getAppDataPath) return;
+    if (_cache.products.length === 0 && _cache.invoices.length === 0 && _cache.customers.length === 0 && _cache.suppliers.length === 0) return;
+    try {
+      const appPath = await window.electronAPI.getAppDataPath();
+      if (!appPath) return;
+      const backupData = {};
+      for (const s of STORES) backupData[s] = _cache[s];
+      backupData._meta = _cache.meta;
+      const backup = {
+        version: 3,
+        createdAt: new Date().toISOString(),
+        storeName: localStorage.getItem('zmt_store_name') || '',
+        summary: { products: _cache.products.length, invoices: _cache.invoices.length },
+        data: backupData,
+      };
+      const dateStr = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
+      const filePath = `${appPath}\\auto_${dateStr}.zmt-backup`;
+      await window.electronAPI.writeFile(filePath, JSON.stringify(backup));
+      try {
+        const dirResult = await window.electronAPI.readDirectory(appPath);
+        if (dirResult.success) {
+          const autoFiles = dirResult.files.filter(f => f.startsWith('auto_')).sort();
+          while (autoFiles.length > 10) {
+            await window.electronAPI.deleteFile(`${appPath}\\${autoFiles.shift()}`);
+          }
+        }
+      } catch {}
+    } catch {}
+  }
+
+  // ===== OFFLINE AUTO-RESTORE =====
+  // Safety net: when offline and the local database is empty, load the newest
+  // auto_*.zmt-backup from disk so the app is never shown blank.
+  async function tryOfflineRestore() {
+    if (typeof navigator !== 'undefined' && navigator.onLine) return { restored: false, reason: 'online' };
+    if (!window.electronAPI?.getAppDataPath || !window.electronAPI?.readDirectory || !window.electronAPI?.readFile) {
+      return { restored: false, reason: 'no-api' };
+    }
+    const hasData = STORES.some(s => _cache[s] && (Array.isArray(_cache[s]) ? _cache[s].length : Object.keys(_cache[s]).length) > 0);
+    if (hasData) return { restored: false, reason: 'has-data' };
+    try {
+      const appPath = await window.electronAPI.getAppDataPath();
+      if (!appPath) return { restored: false, reason: 'no-path' };
+      const dirResult = await window.electronAPI.readDirectory(appPath);
+      if (!dirResult.success) return { restored: false, reason: 'list-fail' };
+      const autoFiles = dirResult.files.filter(f => f.startsWith('auto_') && f.endsWith('.zmt-backup')).sort();
+      if (!autoFiles.length) return { restored: false, reason: 'no-backup' };
+      const newest = autoFiles[autoFiles.length - 1];
+      const readResult = await window.electronAPI.readFile(appPath + '\\' + newest);
+      if (!readResult.success) return { restored: false, reason: 'read-fail' };
+      const backup = JSON.parse(readResult.data);
+      const data = backup && backup.data ? backup.data : backup;
+      if (data._meta && !data.meta) data.meta = data._meta;
+      await importAll(data);
+      console.log('[DB] Offline restore from', newest);
+      return { restored: true, file: newest };
+    } catch (e) {
+      console.error('[DB] Offline restore error:', e);
+      return { restored: false, reason: 'error' };
+    }
+  }
+
+  // ===== INIT =====
+  async function init() {
+    await openDB();
+    for (const s of STORES) {
+      try { _cache[s] = await _idbGetAll(s); } catch (e) { _cache[s] = []; }
+    }
+    if (Array.isArray(_cache.meta)) {
+      const flat = {};
+      for (const entry of _cache.meta) flat[entry.id] = entry.val;
+      _cache.meta = flat;
+    }
+    if (!_cache.meta.nextBarcode) _cache.meta.nextBarcode = 100000;
+    if (!_cache.meta.nextInvoiceCounter) _cache.meta.nextInvoiceCounter = 0;
+    _rebuildAll();
+    _ready = true;
+  }
+
+  /** Progressive init: loads stores one at a time with progress callbacks */
+  async function initProgressive(onProgress) {
+    await openDB();
+    for (let si = 0; si < STORES.length; si++) {
+      const s = STORES[si];
+      try {
+        _cache[s] = await _idbGetAll(s);
+      } catch (e) {
+        _cache[s] = [];
+      }
+      if (s === 'meta' && Array.isArray(_cache.meta)) {
+        const flat = {};
+        for (const entry of _cache.meta) flat[entry.id] = entry.val;
+        _cache.meta = flat;
+      }
+      _rebuildIndex(s);
+      if (onProgress) onProgress(s, si + 1, STORES.length, _cache[s]?.length || 0);
+      await new Promise(r => setTimeout(r, 0));
+    }
+    if (!_cache.meta.nextBarcode) _cache.meta.nextBarcode = 100000;
+    if (!_cache.meta.nextInvoiceCounter) _cache.meta.nextInvoiceCounter = 0;
+    _ready = true;
+    if (onProgress) onProgress(null, STORES.length, STORES.length, 0);
+  }
+
+  function _genId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2, 8);
+  }
+
+  function _updateMeta(key, val) {
+    _cache.meta[key] = val;
+    _queueWrite('meta', { id: key, val });
+  }
+
+  function _triggerCloudSync() {
+    if (typeof CloudService !== 'undefined' && CloudService.isCloudConnected() && CloudService.hasData() && localStorage.getItem('zmt_cloud_autosync') === '1') {
+      CloudService.triggerSync();
+    }
+  }
+
+  // ===== PUBLIC API =====
+  return {
+    ready() { return _ready; },
+
+    async waitForReady() {
+      if (_ready) return;
+      return new Promise(r => { const t = setInterval(() => { if (_ready) { clearInterval(t); r(); } }, 20); });
+    },
+
+    init,
+    initProgressive,
+    tryOfflineRestore,
+
+    // ===== PRODUCTS =====
+    getProducts() {
+      const sid = _getStoreId();
+      if (!sid) return _cache.products;
+      return _idx.products['sid:' + sid] || _cache.products.filter(p => !p.storeId || p.storeId === sid);
+    },
+
+    getProduct(id) { return _idx.products[id] || null; },
+
+    getProductByBarcode(code) { return _idx.products['bc:' + code] || null; },
+
+    getProductsByBrand(brandId) {
+      const sid = _getStoreId();
+      const pool = sid ? (_idx.products['sid:' + sid] || _cache.products) : _cache.products;
+      return pool.filter(p => p.brandId === brandId && (!sid || !p.storeId || p.storeId === sid));
+    },
+
+    getProductsByBrandCategory(brandId, category) {
+      const sid = _getStoreId();
+      const pool = sid ? (_idx.products['sid:' + sid] || _cache.products) : _cache.products;
+      return pool.filter(p => p.brandId === brandId && p.category === category && (!sid || !p.storeId || p.storeId === sid));
+    },
+
+    addProduct(prod) {
+      prod.id = _genId();
+      prod.createdAt = Date.now();
+      prod.updatedAt = Date.now();
+      const sid = _getStoreId();
+      if (sid) prod.storeId = sid;
+      _cache.products.push(prod);
+      _rebuildIndex('products');
+      _queueWrite('products', prod);
+      return prod;
+    },
+
+    async addProductsBatch(prods, onProgress) {
+      const sid = _getStoreId();
+      const now = Date.now();
+      const added = [];
+      for (const prod of prods) {
+        prod.id = _genId() + Math.random().toString(36).substr(2, 3);
+        prod.createdAt = now;
+        prod.updatedAt = now;
+        if (sid) prod.storeId = sid;
+        _cache.products.push(prod);
+        added.push(prod);
+      }
+      _rebuildIndex('products');
+      const total = added.length;
+      for (let i = 0; i < total; i += CHUNK_SIZE) {
+        const chunk = added.slice(i, i + CHUNK_SIZE);
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction('products', 'readwrite');
+          const os = tx.objectStore('products');
+          for (const item of chunk) os.put(item);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+        if (onProgress) onProgress(Math.min(i + CHUNK_SIZE, total), total);
+        if (i + CHUNK_SIZE < total) await new Promise(r => setTimeout(r, 0));
+      }
+      _triggerCloudSync();
+      debounceAutoBackup();
+      return added;
+    },
+
+    updateProduct(id, changes) {
+      const p = _idx.products[id];
+      if (!p) return null;
+      changes.updatedAt = Date.now();
+      Object.assign(p, changes);
+      _queueWrite('products', p);
+      return p;
+    },
+
+    updateProductsBatch(updates) {
+      const results = [];
+      for (const { id, changes } of updates) {
+        const p = _idx.products[id];
+        if (!p) continue;
+        changes.updatedAt = Date.now();
+        Object.assign(p, changes);
+        results.push(p);
+      }
+      _rebuildIndex('products');
+      _idbPut('products', results).then(() => {
+        _triggerCloudSync();
+        debounceAutoBackup();
+      });
+      return results;
+    },
+
+    deleteProduct(id) {
+      const idx = _cache.products.findIndex(p => p.id === id);
+      if (idx === -1) return false;
+      _cache.products.splice(idx, 1);
+      _rebuildIndex('products');
+      _queueDelete('products', id);
+      return true;
+    },
+
+    // ===== INVOICES =====
+    getInvoices() {
+      const sid = _getStoreId();
+      if (!sid) return _cache.invoices;
+      return _idx.invoices['sid:' + sid] || _cache.invoices.filter(inv => !inv.storeId || inv.storeId === sid);
+    },
+
+    getInvoice(id) { return _idx.invoices[id] || null; },
+
+    getInvoicesBySupplier(supplierId) {
+      const sid = _getStoreId();
+      return _cache.invoices.filter(inv => inv.supplierId === supplierId && (!sid || !inv.storeId || inv.storeId === sid));
+    },
+
+    addInvoice(inv) {
+      inv.id = _genId();
+      inv.createdAt = Date.now();
+      inv.invoiceNumber = this.getNextInvoiceNumber();
+      const sid = _getStoreId();
+      if (sid) inv.storeId = sid;
+      _cache.invoices.push(inv);
+      _rebuildIndex('invoices');
+      _queueWrite('invoices', inv);
+      return inv;
+    },
+
+    getNextInvoiceNumber() {
+      const counter = (_cache.meta.nextInvoiceCounter || 0) + 1;
+      _updateMeta('nextInvoiceCounter', counter);
+      const year = new Date().getFullYear();
+      return `FACT-${year}-${String(counter).padStart(4, '0')}`;
+    },
+
+    updateInvoice(id, changes) {
+      const inv = _idx.invoices[id];
+      if (!inv) return null;
+      Object.assign(inv, changes);
+      _queueWrite('invoices', inv);
+      return inv;
+    },
+
+    deleteInvoice(id) {
+      const idx = _cache.invoices.findIndex(inv => inv.id === id);
+      if (idx === -1) return false;
+      _cache.invoices.splice(idx, 1);
+      _rebuildIndex('invoices');
+      _queueDelete('invoices', id);
+      return true;
+    },
+
+    // ===== BARCODE =====
+    generateBarcode() {
+      const code = String(_cache.meta.nextBarcode || 100000);
+      _updateMeta('nextBarcode', (_cache.meta.nextBarcode || 100000) + 1);
+      return code;
+    },
+
+    // ===== CATEGORIES =====
+    getCategories() {
+      return ['محرك', 'فرامل', 'كشافات', 'ناقل حركة', 'تعليق', 'كهرباء', 'تبريد', 'عوادم', 'داخلية', 'هيكل'];
+    },
+
+    // ===== SUPPLIERS =====
+    getSuppliers() { return _cache.suppliers; },
+
+    saveSuppliers(list) {
+      _cache.suppliers = list;
+      _rebuildIndex('suppliers');
+      _idbClear('suppliers').then(() => _idbPut('suppliers', list));
+      _triggerCloudSync();
+      _emitStoreReplace('suppliers', list);
+    },
+
+    // ===== PAYMENTS =====
+    getPayments() { return _cache.payments; },
+
+    savePayments(list) {
+      _cache.payments = list;
+      _rebuildIndex('payments');
+      _idbClear('payments').then(() => _idbPut('payments', list));
+      _triggerCloudSync();
+      _emitStoreReplace('payments', list);
+    },
+
+    addPayment(pmt) {
+      pmt.id = _genId();
+      pmt.createdAt = Date.now();
+      _cache.payments.push(pmt);
+      _rebuildIndex('payments');
+      _queueWrite('payments', pmt);
+      return pmt;
+    },
+
+    deletePayment(id) {
+      const idx = _cache.payments.findIndex(p => p.id === id);
+      if (idx === -1) return false;
+      _cache.payments.splice(idx, 1);
+      _rebuildIndex('payments');
+      _queueDelete('payments', id);
+      return true;
+    },
+
+    getSupplierPayments(supplierId) {
+      return _cache.payments.filter(p => p.supplierId === supplierId);
+    },
+
+    getInvoicePayments(invoiceId) {
+      return _idx.payments['inv:' + invoiceId] || _cache.payments.filter(p => p.invoiceId === invoiceId);
+    },
+
+    getInvoicePaidAmount(invoiceId) {
+      return this.getInvoicePayments(invoiceId).reduce((sum, p) => sum + p.amount, 0);
+    },
+
+    deletePaymentsByInvoice(invoiceId) {
+      const toDelete = this.getInvoicePayments(invoiceId).map(p => p.id);
+      _cache.payments = _cache.payments.filter(p => p.invoiceId !== invoiceId);
+      _rebuildIndex('payments');
+      for (const id of toDelete) _queueDelete('payments', id);
+    },
+
+    // ===== CUSTOMERS =====
+    getCustomers() { return _cache.customers; },
+
+    saveCustomers(list) {
+      _cache.customers = list;
+      _rebuildIndex('customers');
+      _idbClear('customers').then(() => _idbPut('customers', list));
+      _triggerCloudSync();
+      _emitStoreReplace('customers', list);
+    },
+
+    addCustomer(c) {
+      c.id = _genId();
+      c.createdAt = Date.now();
+      c.balance = 0;
+      c.totalPurchases = 0;
+      _cache.customers.push(c);
+      _rebuildIndex('customers');
+      _queueWrite('customers', c);
+      return c;
+    },
+
+    updateCustomer(id, changes) {
+      const c = _idx.customers[id];
+      if (!c) return null;
+      changes.updatedAt = Date.now();
+      Object.assign(c, changes);
+      _queueWrite('customers', c);
+      return c;
+    },
+
+    deleteCustomer(id) {
+      const idx = _cache.customers.findIndex(c => c.id === id);
+      if (idx === -1) return false;
+      _cache.customers.splice(idx, 1);
+      _rebuildIndex('customers');
+      _queueDelete('customers', id);
+      return true;
+    },
+
+    getCustomer(id) { return _idx.customers[id] || null; },
+
+    getInvoicesByCustomer(customerId) {
+      const sid = _getStoreId();
+      return _cache.invoices.filter(inv => inv.customerId === customerId && (!sid || !inv.storeId || inv.storeId === sid));
+    },
+
+    getCustomerPayments(customerId) {
+      return _cache.payments.filter(p => p.customerId === customerId);
+    },
+
+    // ===== DISCOUNTS =====
+    getDiscounts() { return _cache.discounts; },
+
+    saveDiscounts(list) {
+      _cache.discounts = list;
+      _idbClear('discounts').then(() => _idbPut('discounts', list));
+      _triggerCloudSync();
+      _emitStoreReplace('discounts', list);
+    },
+
+    addDiscount(d) {
+      d.id = _genId();
+      d.createdAt = Date.now();
+      _cache.discounts.push(d);
+      _queueWrite('discounts', d);
+      return d;
+    },
+
+    deleteDiscount(id) {
+      const idx = _cache.discounts.findIndex(d => d.id === id);
+      if (idx === -1) return false;
+      _cache.discounts.splice(idx, 1);
+      _queueDelete('discounts', id);
+      return true;
+    },
+
+    deleteDiscountsByInvoice(invoiceId) {
+      const toDelete = _cache.discounts.filter(d => d.invoiceId === invoiceId).map(d => d.id);
+      _cache.discounts = _cache.discounts.filter(d => d.invoiceId !== invoiceId);
+      for (const id of toDelete) _queueDelete('discounts', id);
+    },
+
+    getInvoiceDiscounts(invoiceId) {
+      return _cache.discounts.filter(d => d.invoiceId === invoiceId);
+    },
+
+    getInvoiceDiscountTotal(invoiceId) {
+      return this.getInvoiceDiscounts(invoiceId).reduce((s, d) => s + (d.amount || 0), 0);
+    },
+
+    // ===== RETURNS =====
+    getReturns() { return _cache.returns; },
+
+    saveReturns(list) {
+      _cache.returns = list;
+      _idbClear('returns').then(() => _idbPut('returns', list));
+      _triggerCloudSync();
+      _emitStoreReplace('returns', list);
+    },
+
+    addReturn(r) {
+      r.id = _genId();
+      r.createdAt = Date.now();
+      _cache.returns.push(r);
+      _queueWrite('returns', r);
+      return r;
+    },
+
+    deleteReturnsByInvoice(invoiceId) {
+      const toDelete = _cache.returns.filter(r => r.invoiceId === invoiceId).map(r => r.id);
+      _cache.returns = _cache.returns.filter(r => r.invoiceId !== invoiceId);
+      for (const id of toDelete) _queueDelete('returns', id);
+    },
+
+    getLowStockProducts(threshold) {
+      const t = threshold || 5;
+      const sid = _getStoreId();
+      return _cache.products.filter(p => p.quantity <= t && p.quantity > 0 && (!sid || !p.storeId || p.storeId === sid));
+    },
+
+    // ===== LOW STOCK THRESHOLD =====
+    getLowStockThreshold() {
+      const v = localStorage.getItem('zmt_low_stock_threshold');
+      return v ? parseInt(v) : 5;
+    },
+
+    saveLowStockThreshold(val) {
+      localStorage.setItem('zmt_low_stock_threshold', String(val));
+    },
+
+    // ===== EXPORT / IMPORT =====
+    exportProductsCSV() {
+      const products = this.getProducts();
+      const brands = [...BRANDS.global, ...BRANDS.chinese];
+      const header = 'name,barcode,brand,category,buyPrice,sellPrice,quantity';
+      const rows = products.map(p => {
+        const brand = brands.find(b => b.id === p.brandId);
+        return [
+          `"${(p.name || '').replace(/"/g, '""')}"`,
+          p.barcode || '',
+          brand ? brand.name : (p.brandId || ''),
+          p.category || '',
+          p.buyPrice || 0,
+          p.sellPrice || 0,
+          p.quantity || 0,
+        ].join(',');
+      });
+      return header + '\n' + rows.join('\n');
+    },
+
+    importProductsCSV(csvText) {
+      const clean = csvText.replace(/^\ufeff/, '').replace(/\r/g, '');
+      const lines = clean.trim().split('\n');
+      if (lines.length < 2) return { count: 0, totalCost: 0 };
+      const header = lines[0].toLowerCase().split(',').map(h => h.trim());
+      const nameIdx = header.indexOf('name');
+      const barIdx = header.indexOf('barcode');
+      const brandIdx = header.indexOf('brand');
+      const catIdx = header.indexOf('category');
+      const buyIdx = header.indexOf('buyprice');
+      const sellIdx = header.indexOf('sellprice');
+      let qtyIdx = header.indexOf('quantity');
+      if (qtyIdx === -1) qtyIdx = header.indexOf('qty');
+      if (qtyIdx === -1) qtyIdx = header.indexOf('stock');
+      if (qtyIdx === -1) qtyIdx = header.indexOf('كمية');
+      if (qtyIdx === -1) qtyIdx = header.indexOf('الكمية');
+      if (nameIdx === -1) return { count: 0, totalCost: 0 };
+
+      const brands = [...BRANDS.global, ...BRANDS.chinese];
+      let count = 0;
+      let totalCost = 0;
+      const batchProducts = [];
+      const productMeta = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        const vals = lines[i].split(',').map(v => v.replace(/^"|"$/g, '').trim());
+        if (!vals[nameIdx]) continue;
+        const brandName = vals[brandIdx] || '';
+        const brand = brands.find(b => b.name.toLowerCase() === brandName.toLowerCase());
+        const qty = parseInt(vals[qtyIdx]) || 1;
+        const buyPrice = parseFloat(vals[buyIdx]) || 0;
+        count++;
+        const sid = _getStoreId();
+        const now = Date.now();
+        const prod = {
+          id: _genId() + Math.random().toString(36).substr(2, 3),
+          name: vals[nameIdx],
+          barcode: vals[barIdx] || this.generateBarcode(),
+          brandId: brand ? brand.id : (brands[0]?.id || 'bmw'),
+          category: vals[catIdx] || 'محرك',
+          buyPrice,
+          sellPrice: parseFloat(vals[sellIdx]) || 0,
+          quantity: qty,
+          createdAt: now,
+          updatedAt: now,
+        };
+        if (sid) prod.storeId = sid;
+        batchProducts.push(prod);
+        productMeta.push({ prod, qty, buyPrice });
+        totalCost += qty * buyPrice;
+      }
+
+      this.addProductsBatch(batchProducts);
+
+      if (totalCost > 0) {
+        const items = productMeta.map(p => ({
+          productId: p.prod.id,
+          barcode: p.prod.barcode,
+          name: p.prod.name,
+          qty: p.qty,
+          price: p.buyPrice,
+          total: p.qty * p.buyPrice,
+        }));
+        const inv = this.addInvoice({
+          type: 'purchase',
+          date: Date.now(),
+          items,
+          totalAmount: totalCost,
+          paidAmount: totalCost,
+          supplierId: null,
+          isProvisional: false,
+        });
+        this.addPayment({
+          invoiceId: inv.id,
+          type: 'stock_purchase',
+          amount: totalCost,
+          note: `شراء مخزون عبر CSV (${count} منتج)`,
+        });
+      }
+
+      return { count, totalCost, products: productMeta.map(p => p.prod) };
+    },
+
+    // ===== TRANSFERS =====
+    getTransfers() { return _cache.transfers; },
+
+    saveTransfers(list) {
+      _cache.transfers = list;
+      _idbClear('transfers').then(() => _idbPut('transfers', list));
+      _triggerCloudSync();
+      _emitStoreReplace('transfers', list);
+    },
+
+    addTransfer(t) {
+      t.id = _genId();
+      t.createdAt = Date.now();
+      _cache.transfers.push(t);
+      _queueWrite('transfers', t);
+      return t;
+    },
+
+    // ===== RAW DB ACCESS =====
+    _getRawData() {
+      return {
+        products: _cache.products,
+        invoices: _cache.invoices,
+        nextBarcode: _cache.meta.nextBarcode || 100000,
+      };
+    },
+
+    async _saveRawData(d) {
+      if (d.products) _cache.products = d.products;
+      if (d.invoices) _cache.invoices = d.invoices;
+      if (d.nextBarcode) _cache.meta.nextBarcode = d.nextBarcode;
+      _rebuildAll();
+      await _idbPut('products', _cache.products);
+      await new Promise(r => setTimeout(r, 0));
+      await _idbPut('invoices', _cache.invoices);
+      await new Promise(r => setTimeout(r, 0));
+      await _idbPut('meta', Object.entries(_cache.meta).map(([id, val]) => ({ id, val })));
+      debounceAutoBackup();
+      _triggerCloudSync();
+      _emitStoreReplace('products', _cache.products);
+      _emitStoreReplace('invoices', _cache.invoices);
+    },
+
+    // ===== LAN SYNC HOOKS =====
+    onLocalChange(cb) {
+      _localChangeListeners.push(cb);
+    },
+
+    // Apply remote changes received via LAN sync. Filters by storeId to
+    // guarantee strict isolation between different stores.
+    async applyRemoteChanges(ops) {
+      if (!ops) return;
+      const sid = _getStoreId();
+      const accepted = [];
+      for (const op of ops) {
+        const store = op.store;
+        if (!_cache[store]) continue;
+        const putItems = Array.isArray(op.put) ? op.put : [];
+        const delIds = Array.isArray(op.del) ? op.del : [];
+        const filtered = putItems.filter(item => {
+          if ((store === 'products' || store === 'invoices') && sid && item.storeId && item.storeId !== sid) return false;
+          return true;
+        });
+        if (store === 'meta') {
+          for (const item of filtered) {
+            if (item && item.id) _cache.meta[item.id] = item.val;
+          }
+          await _idbPut('meta', filtered.map(item => ({ id: item.id, val: item.val })));
+          continue;
+        }
+        let changed = false;
+        if (op.replace && store !== 'products' && store !== 'invoices') {
+          _cache[store] = filtered.slice();
+          _rebuildIndex(store);
+          changed = true;
+        } else {
+          for (const item of filtered) {
+            const idx = _cache[store].findIndex(x => x.id === item.id);
+            if (idx === -1) {
+              _cache[store].push(item);
+              changed = true;
+            } else {
+              const existing = _cache[store][idx];
+              if (existing.updatedAt && item.updatedAt && item.updatedAt < existing.updatedAt) continue;
+              Object.assign(existing, item);
+              changed = true;
+            }
+          }
+          if (delIds.length) {
+            const delSet = new Set(delIds);
+            _cache[store] = _cache[store].filter(x => !delSet.has(x.id));
+            changed = true;
+          }
+        }
+        if (changed) {
+          _rebuildIndex(store);
+          accepted.push({ store, items: filtered, delIds });
+        }
+      }
+      for (const a of accepted) {
+        if (a.items.length) await _idbPut(a.store, a.items);
+        if (a.delIds.length) await _idbDelete(a.store, a.delIds);
+      }
+      if (accepted.length) {
+        debounceAutoBackup();
+        _triggerCloudSync();
+      }
+    },
+
+    // ===== RESET =====
+    async reset() {
+      _cache.products = [];
+      _cache.invoices = [];
+      _cache.payments = [];
+      _cache.customers = [];
+      _cache.suppliers = [];
+      _cache.discounts = [];
+      _cache.returns = [];
+      _cache.transfers = [];
+      _cache.meta = { nextBarcode: 100000, nextInvoiceCounter: 0 };
+      _rebuildAll();
+      for (const s of STORES) await _idbClear(s);
+      await _idbPut('meta', [{ id: 'nextBarcode', val: 100000 }, { id: 'nextInvoiceCounter', val: 0 }]);
+      for (const s of STORES) _emitStoreReplace(s, s === 'meta' ? [{ id: 'nextBarcode', val: 100000 }, { id: 'nextInvoiceCounter', val: 0 }] : []);
+    },
+
+    // ===== BACKUP EXPORT / IMPORT =====
+    exportAll() {
+      return {
+        products: _cache.products.slice(),
+        invoices: _cache.invoices.slice(),
+        payments: _cache.payments.slice(),
+        customers: _cache.customers.slice(),
+        suppliers: _cache.suppliers.slice(),
+        discounts: _cache.discounts.slice(),
+        returns: _cache.returns.slice(),
+        transfers: _cache.transfers.slice(),
+        meta: { ..._cache.meta },
+      };
+    },
+
+    async importAll(data) {
+      if (!data) return;
+      if (!db) await openDB();
+      const mapped = {};
+      if (data.zmt_db) {
+        const dbData = data.zmt_db;
+        if (dbData.products) mapped.products = dbData.products;
+        if (dbData.invoices) mapped.invoices = dbData.invoices;
+        if (dbData.nextBarcode) mapped.meta = { ...(mapped.meta || {}), nextBarcode: dbData.nextBarcode };
+        if (dbData.nextInvoiceCounter) mapped.meta = { ...(mapped.meta || {}), nextInvoiceCounter: dbData.nextInvoiceCounter };
+      }
+      if (data.products) mapped.products = data.products;
+      if (data.invoices) mapped.invoices = data.invoices;
+      if (data.payments) mapped.payments = data.payments;
+      if (data.customers) mapped.customers = data.customers;
+      if (data.suppliers) mapped.suppliers = data.suppliers;
+      if (data.discounts) mapped.discounts = data.discounts;
+      if (data.returns) mapped.returns = data.returns;
+      if (data.transfers) mapped.transfers = data.transfers;
+      if (data.zmt_customers) mapped.customers = data.zmt_customers;
+      if (data.zmt_suppliers) mapped.suppliers = data.zmt_suppliers;
+      if (data.zmt_payments) mapped.payments = data.zmt_payments;
+      if (data.zmt_returns) mapped.returns = data.zmt_returns;
+      if (data.zmt_transfers) mapped.transfers = data.zmt_transfers;
+      if (data.zmt_discounts) mapped.discounts = data.zmt_discounts;
+      if (data.meta) mapped.meta = { ...(mapped.meta || {}), ...data.meta };
+      if (mapped.products) _cache.products = mapped.products;
+      if (mapped.invoices) _cache.invoices = mapped.invoices;
+      if (mapped.payments) _cache.payments = mapped.payments;
+      if (mapped.customers) _cache.customers = mapped.customers;
+      if (mapped.suppliers) _cache.suppliers = mapped.suppliers;
+      if (mapped.discounts) _cache.discounts = mapped.discounts;
+      if (mapped.returns) _cache.returns = mapped.returns;
+      if (mapped.transfers) _cache.transfers = mapped.transfers;
+      if (mapped.meta) Object.assign(_cache.meta, mapped.meta);
+      if (!_cache.meta.nextBarcode) _cache.meta.nextBarcode = 100000;
+      if (!_cache.meta.nextInvoiceCounter) _cache.meta.nextInvoiceCounter = 0;
+      _rebuildAll();
+      if (Array.isArray(_cache.meta)) {
+        const flat = {};
+        for (const entry of _cache.meta) flat[entry.id] = entry.val;
+        _cache.meta = flat;
+      }
+      for (const s of STORES) {
+        const items = s === 'meta' ? Object.entries(_cache.meta).map(([id, val]) => ({ id, val })) : _cache[s];
+        await _idbClear(s);
+        if (items.length) await _idbPut(s, items);
+        await new Promise(r => setTimeout(r, 0));
+      }
+      debounceAutoBackup();
+      _triggerCloudSync();
+      for (const s of STORES) {
+        const items = s === 'meta' ? Object.entries(_cache.meta).map(([id, val]) => ({ id, val })) : _cache[s];
+        _emitStoreReplace(s, items);
+      }
+    },
+
+    getSummary() {
+      return {
+        products: _cache.products.length,
+        invoices: _cache.invoices.length,
+        customers: _cache.customers.length,
+        suppliers: _cache.suppliers.length,
+        payments: _cache.payments.length,
+        returns: _cache.returns.length,
+        discounts: _cache.discounts.length,
+      };
+    },
+
+    // ===== FLUSH (call on app close) =====
+    async flush() {
+      await _immediateFlush();
+    },
+  };
+})();
+
+// DB initialisation handled by app.js for progressive loading

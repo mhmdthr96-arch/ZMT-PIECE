@@ -1,0 +1,74 @@
+<div class="license-overlay" id="licenseOverlay" style="display:none">
+  <div class="license-bg-pattern"></div>
+  <div class="license-card" id="licenseCard">
+    <div class="license-logo-section">
+      <img src="../assets/logo.png" alt="ZMT PIECE" style="width:72px;height:72px;border-radius:14px;object-fit:cover;margin-bottom:12px">
+      <h1 class="license-brand">ZMT <span>PIECE</span></h1>
+      <p class="license-tagline">Car Parts Management System</p>
+    </div>
+
+    <div class="license-form-section" id="licenseFormSection">
+      <div class="license-status" id="licenseStatus" style="display:none"></div>
+      <div class="license-input-group">
+        <label>أدخل مفتاح التفعيل</label>
+        <input type="text" id="licenseKeyInput" class="license-input"
+               placeholder="أدخل المفتاح هنا..." dir="ltr"
+               autocomplete="off" spellcheck="false">
+      </div>
+      <button class="license-activate-btn" id="licenseActivateBtn" onclick="doLicenseActivate()">
+        <i class="fas fa-key"></i> تفعيل البرنامج
+      </button>
+      <div class="license-hint">
+        <i class="fas fa-info-circle"></i>
+        تواصل مع المطور للحصول على مفتاح التفعيل
+      </div>
+    </div>
+
+    <div class="license-success-section" id="licenseSuccessSection" style="display:none">
+      <div class="license-success-icon">
+        <i class="fas fa-check-circle"></i>
+      </div>
+      <h2 style="color:#28a745;margin-bottom:8px">تم التفعيل بنجاح!</h2>
+      <p id="licenseSuccessLabel" style="color:var(--silver-600);margin-bottom:20px"></p>
+      <button class="license-activate-btn" onclick="doLicenseEnterApp()" style="background:#28a745">
+        <i class="fas fa-arrow-left"></i> الدخول للبرنامج
+      </button>
+    </div>
+
+    <div class="license-footer">
+      <span>ZMT SOFTWARE</span>
+    </div>
+  </div>
+</div>
+
+<!-- EXPIRY FREEZE OVERLAY -->
+<div class="freeze-overlay" id="freezeOverlay" style="display:none">
+  <div class="freeze-card">
+    <div class="freeze-icon">
+      <i class="fas fa-lock"></i>
+    </div>
+    <h1>انتهت مدة التفعيل</h1>
+    <p style="color:var(--silver-500);margin-bottom:8px">يرجى إدخال مفتاح تفعيل جديد لاستمرار العمل</p>
+    <p style="color:var(--silver-400);font-size:12px;margin-bottom:20px">بياناتك محفوظة وستعود بعد التفعيل</p>
+    <div class="freeze-input-group">
+      <input type="text" id="freezeKeyInput" class="license-input"
+             placeholder="مفتاح التفعيل الجديد..." dir="ltr"
+             autocomplete="off" spellcheck="false">
+    </div>
+    <div class="license-status" id="freezeStatus" style="display:none"></div>
+    <button class="license-activate-btn" onclick="doFreezeActivate()">
+      <i class="fas fa-key"></i> تفعيل واستمرار
+    </button>
+    <div class="license-footer" style="margin-top:20px">
+      <span>ZMT SOFTWARE — ZERIBIT MOHAMMED TAHAR</span>
+    </div>
+  </div>
+</div>
+
+<!-- WATERMARK COUNTDOWN -->
+<div class="watermark-countdown" id="watermarkCountdown" style="display:none">
+  <div class="watermark-inner">
+    <i class="fas fa-clock"></i>
+    <span id="watermarkText">متبقي 0 يوم</span>
+  </div>
+</div>

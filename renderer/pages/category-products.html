@@ -1,0 +1,160 @@
+<div class="page" id="page-category-products">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1>
+        <button class="btn-back" onclick="window.brandCtx ? navigateTo('brand-categories') : navigateTo('brands')"><i class="fas fa-arrow-right"></i></button>
+        <i class="fas fa-cogs"></i>
+        <span id="catTitle" data-i18n="catProducts.title">المنتجات</span>
+      </h1>
+      <p><span id="catSub" data-i18n="catProducts.sub">المنتجات المتوفرة</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="toolbar">
+      <div class="search-bar">
+        <i class="fas fa-search"></i>
+        <input type="text" placeholder="بحث عن منتج..." data-i18n-placeholder="catProducts.searchPlaceholder" id="prodSearch">
+      </div>
+      <button class="btn btn-primary hide-user" onclick="openAddProduct()">
+        <i class="fas fa-plus"></i> <span data-i18n="catProducts.addProduct">إضافة منتج</span>
+      </button>
+    </div>
+
+    <div id="categoryProducts">
+      <div class="placeholder-box">
+        <i class="fas fa-box-open" style="font-size:48px;color:#555"></i>
+        <p data-i18n="catProducts.empty">لا توجد منتجات في هذا التصنيف</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== ADD PRODUCT MODAL ===== -->
+<div class="modal-overlay" id="addProductModal">
+  <div class="modal" style="max-width:720px">
+    <div class="modal-header">
+      <h3 data-i18n="catProducts.addInvoiceTitle"><i class="fas fa-plus-circle"></i> إضافة منتج للفاتورة</h3>
+      <button class="modal-close" onclick="closeAddProduct()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <!-- Barcode Scanner -->
+      <div class="barcode-scanner-section">
+        <div class="scanner-input-wrap">
+          <i class="fas fa-qrcode scanner-icon"></i>
+          <input type="text" class="form-input scanner-input" id="barcodeScannerInput"
+            placeholder="امسح الباركود ضوئياً..." data-i18n-placeholder="catProducts.scanPlaceholder" dir="ltr" autocomplete="off"
+            onkeydown="handleBarcodeScan(event)">
+          <span class="scanner-status" id="scannerStatus" data-i18n="catProducts.scannerReady">جاهز للمسح</span>
+        </div>
+        <div class="scanner-result" id="scannerResult" style="display:none"></div>
+      </div>
+      <hr>
+
+      <!-- Product selection tabs -->
+      <div class="add-prod-tabs">
+        <button class="tab-btn active" data-tab="search" onclick="switchProdTab('search')">
+          <i class="fas fa-search"></i> <span data-i18n="catProducts.searchProduct">بحث عن منتج</span>
+        </button>
+        <button class="tab-btn" data-tab="new" onclick="switchProdTab('new')">
+          <i class="fas fa-plus"></i> <span data-i18n="catProducts.newProduct">منتج جديد</span>
+        </button>
+      </div>
+
+      <!-- Tab: Search existing product -->
+      <div class="tab-content" id="tabSearch">
+        <div class="form-group">
+          <label data-i18n="catProducts.searchExisting">ابحث بالاسم أو الباركود</label>
+          <input type="text" class="form-input" id="prodSearchInput" placeholder="اسم المنتج أو الباركود..." data-i18n-placeholder="catProducts.searchExistingPlaceholder" oninput="searchExistingProduct(this.value)">
+        </div>
+        <div id="searchResults" class="search-results"></div>
+        <div id="selectedProductInfo" style="display:none" class="selected-prod-info">
+          <div class="sel-prod-row">
+            <span><strong id="selProdName"></strong></span>
+            <span class="text-muted" id="selProdBarcode"></span>
+          </div>
+          <input type="hidden" id="selProdId">
+          <input type="hidden" id="selProdBarcodeVal">
+        </div>
+      </div>
+
+      <!-- Tab: New product -->
+      <div class="tab-content" id="tabNew" style="display:none">
+        <div class="form-group">
+          <label data-i18n="catProducts.name">اسم المنتج <span class="required">*</span></label>
+          <input type="text" class="form-input" id="newProdName" placeholder="اسم القطعة" data-i18n-placeholder="catProducts.namePlaceholder">
+        </div>
+        <div class="form-group">
+          <label data-i18n="catProducts.barcode">الباركود <span class="required">*</span></label>
+          <div class="barcode-row">
+            <input type="text" class="form-input" id="newProdBar" placeholder="أدخل الباركود" data-i18n-placeholder="catProducts.barcodePlaceholder" dir="ltr">
+            <button class="btn btn-sm" onclick="document.getElementById('newProdBar').value=DB.generateBarcode()" data-i18n="catProducts.generate">توليد</button>
+          </div>
+          <div class="error-msg" id="barcodeError"></div>
+        </div>
+      </div>
+
+      <hr>
+
+      <!-- Common fields -->
+      <div class="form-row">
+        <div class="form-group">
+          <label data-i18n="catProducts.qty">الكمية <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="prodQty" value="1" min="1">
+        </div>
+        <div class="form-group">
+          <label data-i18n="catProducts.buyPrice">سعر الشراء <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="prodBuyPrice" value="0" min="0">
+        </div>
+        <div class="form-group">
+          <label data-i18n="catProducts.sellPrice">سعر البيع <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="prodSellPrice" value="0" min="0">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="catProducts.supplier">المورد</label>
+        <div class="barcode-row">
+          <input type="text" class="form-input" id="supplierSearchInput" placeholder="ابحث عن مورد بالاسم..." data-i18n-placeholder="catProducts.supplierPlaceholder" oninput="searchSuppliers(this.value)">
+          <button class="btn btn-sm" onclick="document.getElementById('supplierSearchInput').value='';document.getElementById('supplierResults').innerHTML='';document.getElementById('selectedSupplierInfo').style.display='none'" data-i18n="catProducts.cancel">إلغاء</button>
+        </div>
+        <div id="supplierResults" class="search-results"></div>
+        <div id="selectedSupplierInfo" style="display:none" class="selected-prod-info">
+          <span><strong id="selSupplierName"></strong></span>
+          <span class="text-muted" id="selSupplierPhone"></span>
+          <input type="hidden" id="selSupplierId">
+        </div>
+      </div>
+
+      <button class="btn btn-primary" onclick="addToCart()" style="width:100%;margin-top:8px">
+        <i class="fas fa-cart-plus"></i> <span data-i18n="catProducts.addToCart">إضافة إلى سلة الفاتورة</span>
+      </button>
+
+      <!-- Cart -->
+      <div id="cartSection" style="display:none;margin-top:16px">
+        <hr>
+        <h4 style="display:flex;align-items:center;gap:8px;margin:0 0 10px">
+          <i class="fas fa-shopping-cart" style="color:var(--bmw-blue-1)"></i> <span data-i18n="catProducts.cartTitle">سلة الفاتورة</span>
+          <span style="font-size:12px;color:var(--silver-500);font-weight:400" id="cartCount">(0)</span>
+        </h4>
+        <div id="cartItems"></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--silver-300)">
+          <div>
+            <span style="font-size:13px;color:var(--silver-600)" data-i18n="catProducts.total">الإجمالي:</span>
+            <strong style="font-size:20px;color:var(--bmw-blue-1)" id="cartTotal">DA0</strong>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn" onclick="clearCart()"><i class="fas fa-trash"></i> <span data-i18n="catProducts.clear">تفريغ</span></button>
+            <button class="btn btn-success" onclick="confirmInvoice()"><i class="fas fa-check"></i> <span data-i18n="catProducts.confirmInvoice">تأكيد الفاتورة</span></button>
+          </div>
+        </div>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--silver-300);display:flex;align-items:center;gap:8px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="catTimbreCheck" checked>
+            <i class="fas fa-stamp"></i> <span data-i18n="catProducts.fiscalStamp">طابع جبائي (Timbre Fiscal)</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

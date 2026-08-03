@@ -1,0 +1,164 @@
+<div class="page" id="page-customer-detail">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1>
+        <button class="btn-back" onclick="navigateTo('customers')"><i class="fas fa-arrow-right"></i></button>
+        <i class="fas fa-user"></i> <span id="cdTitle" data-i18n="customers.title">العميل</span>
+      </h1>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <!-- Customer Info Card -->
+    <div class="sd-info-card">
+      <div class="sd-info-avatar" id="cdAvatar" style="background:linear-gradient(135deg,#0066B1,#004080)">
+        <i class="fas fa-user"></i>
+      </div>
+      <div class="sd-info-body">
+        <h2 id="cdName"></h2>
+        <div class="sd-info-details" id="cdDetails"></div>
+        <div style="margin-top:6px;font-size:12px;font-weight:600;color:#e65100" id="cdDiscount"></div>
+      </div>
+      <div class="sd-info-actions">
+        <button class="btn btn-sm" onclick="showCdEditForm()" title="تعديل" data-i18n-title="common.edit"><i class="fas fa-edit"></i></button>
+        <button class="btn btn-sm btn-danger" onclick="confirmCdDelete()" title="حذف" data-i18n-title="common.delete"><i class="fas fa-trash"></i></button>
+      </div>
+    </div>
+
+    <!-- Balance & Stats -->
+    <div class="sd-stats">
+      <div class="sd-stat">
+        <span class="sd-stat-icon" style="background:#e3f2fd;color:#1565c0"><i class="fas fa-file-invoice"></i></span>
+        <div>
+          <div class="sd-stat-label" data-i18n="common.total">إجمالي المشتريات</div>
+          <div class="sd-stat-val" id="cdTotalPurchases">DA0</div>
+        </div>
+      </div>
+      <div class="sd-stat">
+        <span class="sd-stat-icon" style="background:#e8f5e9;color:#2e7d32"><i class="fas fa-money-bill-wave"></i></span>
+        <div>
+          <div class="sd-stat-label" data-i18n="customers.totalPaid">إجمالي المدفوع</div>
+          <div class="sd-stat-val" id="cdTotalPaid">DA0</div>
+        </div>
+      </div>
+      <div class="sd-stat">
+        <span class="sd-stat-icon" style="background:#fff3e0;color:#e65100"><i class="fas fa-balance-scale"></i></span>
+        <div>
+          <div class="sd-stat-label" data-i18n="common.debt">الديون المتبقية</div>
+          <div class="sd-stat-val" id="cdBalance">DA0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="sd-tabs">
+      <button class="sd-tab active" onclick="switchCdTab('invoices')">
+        <i class="fas fa-file-invoice"></i> <span data-i18n="invoices.title">الفواتير</span> <span class="sd-badge" id="cdInvCount">0</span>
+      </button>
+      <button class="sd-tab" onclick="switchCdTab('history')">
+        <i class="fas fa-history"></i> سجل الشراء <span class="sd-badge" id="cdHistCount">0</span>
+      </button>
+      <button class="sd-tab" onclick="switchCdTab('payments')">
+        <i class="fas fa-money-bill-wave"></i> <span data-i18n="debts.payments">الدفعات</span> <span class="sd-badge" id="cdPayCount">0</span>
+      </button>
+    </div>
+
+    <!-- Invoices Tab -->
+    <div id="cdTabInvoices" class="sd-tab-content">
+      <div class="toolbar" style="margin-bottom:12px">
+        <div class="search-bar" style="flex:1">
+          <i class="fas fa-search"></i>
+          <input type="text" placeholder="بحث في الفواتير..." data-i18n-placeholder="invoices.search" id="cdInvSearch" oninput="filterCdInvoices(this.value)">
+        </div>
+      </div>
+      <div id="cdInvoicesList"></div>
+    </div>
+
+    <!-- History Tab -->
+    <div id="cdTabHistory" class="sd-tab-content" style="display:none">
+      <div id="cdHistoryList"></div>
+    </div>
+
+    <!-- Payments Tab -->
+    <div id="cdTabPayments" class="sd-tab-content" style="display:none">
+      <div id="cdPaymentsList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Invoice Detail Modal -->
+<div class="modal-overlay" id="cdInvoiceModal">
+  <div class="modal" style="max-width:650px">
+    <div class="modal-header">
+      <h3><i class="fas fa-file-invoice"></i> <span data-i18n="invoices.title">تفاصيل فاتورة</span> <span id="cdInvModalTitle">#0</span></h3>
+      <button class="modal-close" onclick="document.getElementById('cdInvoiceModal').style.display='none'">&times;</button>
+    </div>
+    <div class="modal-body" id="cdInvoiceBody"></div>
+    <div class="modal-footer" id="cdInvoiceFooter" style="flex-wrap:wrap;gap:8px">
+      <div id="cdPayInvoiceSection" style="display:none;align-items:center;gap:10px;flex:1;min-width:200px">
+        <span style="font-size:13px;color:var(--silver-600);white-space:nowrap" data-i18n="common.total">المبلغ:</span>
+        <input type="number" class="form-input no-spinner" id="cdPayInvoiceAmount"
+          style="flex:1;min-width:100px;padding:7px 10px" min="0" dir="ltr">
+        <button class="btn btn-success" onclick="payInvoiceFromCd()" style="white-space:nowrap">
+          <i class="fas fa-money-bill-wave"></i> <span data-i18n="common.pay">دفع</span>
+        </button>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-primary" onclick="editCdInvoice()" style="white-space:nowrap">
+          <i class="fas fa-edit"></i> <span data-i18n="common.edit">تعديل</span>
+        </button>
+        <button class="btn" onclick="document.getElementById('cdInvoiceModal').style.display='none'"><span data-i18n="common.close">إغلاق</span></button>
+        <button class="btn btn-danger" id="cdDeleteInvoiceBtn" onclick="deleteInvoiceFromCd()" style="display:none">
+          <i class="fas fa-trash"></i> <span data-i18n="common.delete">حذف</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Invoice Modal -->
+<div class="modal-overlay" id="cdEditInvoiceModal">
+  <div class="modal" style="max-width:650px">
+    <div class="modal-header">
+      <h3><i class="fas fa-edit"></i> <span data-i18n="invoices.editTitle">تعديل فاتورة</span> <span id="cdEditInvTitle">#0</span></h3>
+      <button class="modal-close" onclick="closeCdEditModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="cdEditInvoiceBody"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeCdEditModal()"><span data-i18n="common.cancel">إلغاء</span></button>
+      <button class="btn btn-success" onclick="confirmCdEditInvoice()"><i class="fas fa-check"></i> <span data-i18n="invoices.saveEdits">حفظ التعديلات</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Customer Info Modal -->
+<div class="modal-overlay" id="cdEditModal">
+  <div class="modal" style="max-width:450px">
+    <div class="modal-header">
+      <h3><i class="fas fa-edit"></i> <span data-i18n="customers.editModalTitle">تعديل بيانات العميل</span></h3>
+      <button class="modal-close" onclick="document.getElementById('cdEditModal').style.display='none'">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label data-i18n="customers.formName">اسم العميل</label>
+        <input type="text" class="form-input" id="cdEditName">
+      </div>
+      <div class="form-group">
+        <label data-i18n="customers.formPhone">رقم الهاتف</label>
+        <input type="text" class="form-input" id="cdEditPhone" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="customers.formAddress">العنوان</label>
+        <input type="text" class="form-input" id="cdEditAddress">
+      </div>
+      <div class="form-group">
+        <label data-i18n="customers.formDiscount">نسبة الخصم (%)</label>
+        <input type="number" class="form-input no-spinner" id="cdEditDiscount" min="0" max="100" step="0.001">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="document.getElementById('cdEditModal').style.display='none'"><span data-i18n="common.cancel">إلغاء</span></button>
+      <button class="btn btn-success" onclick="confirmCdEdit()"><i class="fas fa-check"></i> <span data-i18n="common.save">حفظ</span></button>
+    </div>
+  </div>
+</div>

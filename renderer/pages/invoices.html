@@ -1,0 +1,516 @@
+<div class="page" id="page-invoices">
+  <div class="page-header">
+    <div class="page-header-content" style="display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <h1><i class="fas fa-file-invoice"></i> <span data-i18n="invoices.title">الفواتير</span></h1>
+        <p><span data-i18n="invoices.sub">إدارة جميع فواتير البيع والمشتريات</span></p>
+      </div>
+      <button class="btn btn-primary hide-user" onclick="showAddInvoiceMenu()" style="display:flex;align-items:center;gap:6px;padding:10px 18px;font-size:14px">
+        <i class="fas fa-plus-circle"></i> <span data-i18n="invoices.newInvoice">إضافة فاتورة</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <!-- Filters -->
+    <div class="inv-filters" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;background:var(--silver-50);border:1px solid var(--silver-300);border-radius:var(--radius);padding:12px 16px">
+      <div class="search-bar" style="flex:1;min-width:180px;margin-bottom:0">
+        <i class="fas fa-search"></i>
+        <input type="text" placeholder="ابحث برقم الفاتورة أو اسم العميل/المورد..." data-i18n-placeholder="invoices.search" id="invSearchInput" oninput="filterInvoices()">
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--silver-600)">
+        <i class="fas fa-calendar-alt"></i>
+        <input type="date" id="invDateFrom" onchange="filterInvoices()" style="border:1px solid var(--silver-300);border-radius:4px;padding:4px 8px;font-size:12px;background:white;color:var(--silver-800);outline:none">
+        <span>—</span>
+        <input type="date" id="invDateTo" onchange="filterInvoices()" style="border:1px solid var(--silver-300);border-radius:4px;padding:4px 8px;font-size:12px;background:white;color:var(--silver-800);outline:none">
+      </div>
+      <select id="invTypeFilter" onchange="filterInvoices()" style="border:1px solid var(--silver-300);border-radius:4px;padding:5px 8px;font-size:12px;background:white;color:var(--silver-800);outline:none">
+        <option value="all" data-i18n="invoices.filterAllTypes">جميع الأنواع</option>
+        <option value="customer" data-i18n="invoices.typeSale">فواتير البيع</option>
+        <option value="supplier" data-i18n="invoices.typeSupplier">فواتير الموردين</option>
+        <option value="purchase" data-i18n="invoices.typePurchase">فواتير الشراء</option>
+        <option value="waybill" data-i18n="invoices.typeWaybill">فواتير الطريق</option>
+        <option value="proforma" data-i18n="invoices.typeProforma">فواتير شكلية</option>
+        <option value="dispatch" data-i18n="invoices.typeDispatch">فواتير إرسال</option>
+      </select>
+      <button class="btn btn-sm" onclick="resetInvoiceFilters()" style="font-size:11px"><i class="fas fa-undo"></i></button>
+    </div>
+
+    <!-- Results info + Add invoice menu -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <span style="font-size:12px;color:var(--silver-500)" id="invResultsInfo">0 فاتورة</span>
+    </div>
+
+    <!-- Invoice List -->
+    <div id="allInvoicesList"></div>
+
+    <!-- Pagination -->
+    <div id="invPagination" style="display:none;align-items:center;justify-content:center;gap:8px;margin-top:16px;padding:12px 0">
+      <button class="btn btn-sm" id="invPrevPage" onclick="changeInvoicePage(-1)" style="font-size:11px"><i class="fas fa-chevron-right"></i> <span data-i18n="invoices.prev">السابق</span></button>
+      <span id="invPageInfo" style="font-size:12px;color:var(--silver-600)" data-i18n="invoices.pageInfo">الصفحة 1 من 1</span>
+      <button class="btn btn-sm" id="invNextPage" onclick="changeInvoicePage(1)" style="font-size:11px"><span data-i18n="invoices.next">التالي</span> <i class="fas fa-chevron-left"></i></button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Invoice Menu Modal -->
+<div id="addInvoiceMenuModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeAddInvoiceMenu()">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3><i class="fas fa-plus-circle"></i> <span data-i18n="invoices.newInvoiceTitle">إضافة فاتورة جديدة</span></h3>
+      <button class="modal-close" onclick="closeAddInvoiceMenu()">&times;</button>
+    </div>
+    <div class="modal-body" style="padding:16px 20px">
+      <p style="font-size:13px;color:var(--silver-600);margin-bottom:14px" data-i18n="invoices.chooseType">اختر نوع الفاتورة:</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <button class="btn" onclick="startNewInvoice('purchase')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 12px;height:auto;border:1px solid var(--silver-300)">
+          <i class="fas fa-shopping-cart" style="font-size:24px;color:var(--bmw-blue-1)"></i>
+          <span style="font-size:13px;font-weight:600" data-i18n="invoices.typePurchase">فاتورة شراء</span>
+          <span style="font-size:10px;color:var(--silver-500)" data-i18n="invoices.typePurchaseDesc">شراء بضائع من مورد</span>
+        </button>
+        <button class="btn" onclick="startNewInvoice('waybill')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 12px;height:auto;border:1px solid var(--silver-300)">
+          <i class="fas fa-truck" style="font-size:24px;color:#e65100"></i>
+          <span style="font-size:13px;font-weight:600" data-i18n="invoices.typeWaybill">فاتورة طريق</span>
+          <span style="font-size:10px;color:var(--silver-500)">Bon de livraison</span>
+        </button>
+        <button class="btn" onclick="startNewInvoice('proforma')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 12px;height:auto;border:1px solid var(--silver-300)">
+          <i class="fas fa-file-alt" style="font-size:24px;color:#28a745"></i>
+          <span style="font-size:13px;font-weight:600" data-i18n="invoices.typeProforma">فاتورة شكلية</span>
+          <span style="font-size:10px;color:var(--silver-500)">Facture proforma</span>
+        </button>
+        <button class="btn" onclick="startNewInvoice('dispatch')" style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 12px;height:auto;border:1px solid var(--silver-300)">
+          <i class="fas fa-share-square" style="font-size:24px;color:#6f42c1"></i>
+          <span style="font-size:13px;font-weight:600" data-i18n="invoices.typeDispatch">فاتورة إرسال</span>
+          <span style="font-size:10px;color:var(--silver-500)">Bon d'envoi</span>
+        </button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeAddInvoiceMenu()" data-i18n="common.cancel">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- Invoice Detail Modal -->
+<div id="invDetailModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeInvDetail()">
+  <div class="modal" style="max-width:800px;width:95%">
+    <div class="modal-header">
+      <h3 id="invDetailTitle"><i class="fas fa-file-invoice"></i> <span data-i18n="invoices.detailTitle">تفاصيل الفاتورة</span></h3>
+      <button class="modal-close" onclick="closeInvDetail()">&times;</button>
+    </div>
+    <div class="modal-body" id="invDetailBody" style="padding:0;max-height:80vh;overflow-y:auto;direction:ltr;text-align:left">
+      <!-- Invoice preview rendered here -->
+    </div>
+    <div class="modal-footer" id="invDetailFooter" style="display:flex;gap:8px;flex-wrap:wrap;direction:ltr">
+      <button class="btn btn-primary" onclick="printInvFromDetail()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-print"></i> <span data-i18n="common.print">طباعة</span></button>
+      <button class="btn" onclick="showInvPaymentSection()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-hand-holding-usd"></i> <span data-i18n="common.pay">دفع</span></button>
+      <button class="btn" onclick="showInvEditSection()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-edit"></i> <span data-i18n="common.edit">تعديل</span></button>
+      <button class="btn btn-danger" onclick="deleteInvoiceFromDetail()" style="display:flex;align-items:center;gap:5px;margin-right:auto"><i class="fas fa-trash"></i> <span data-i18n="common.delete">حذف</span></button>
+      <button class="btn" onclick="closeInvDetail()" data-i18n="common.close">إغلاق</button>
+    </div>
+  </div>
+</div>
+
+<!-- Waybill / Proforma Form Modal -->
+<div id="waybillFormModal" class="modal-overlay" style="display:none;z-index:100000" onclick="if(event.target===this)closeWaybillForm()">
+  <div class="modal" style="max-width:900px;width:95%;max-height:95vh;display:flex;flex-direction:column">
+    <div class="modal-header">
+      <h3 id="wbFormTitle"><i class="fas fa-truck" id="wbFormIcon"></i> <span id="wbFormTitleText" data-i18n="invoices.typeWaybill">فاتورة طريق — Bon de livraison</span></h3>
+      <button class="modal-close" onclick="closeWaybillForm()">&times;</button>
+    </div>
+    <div class="modal-body" style="flex:1;overflow-y:auto;padding:16px 20px;direction:rtl">
+
+      <!-- Customer -->
+      <div class="wb-section">
+        <div class="wb-section-title"><i class="fas fa-user"></i> <span data-i18n="sales.customer">العميل</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div style="flex:2;min-width:180px;position:relative">
+            <input type="text" class="form-input" id="wbCustSearch" placeholder="ابحث عن عميل موجود..." data-i18n-placeholder="sales.customerPlaceholder" style="width:100%" oninput="searchWbCustomer(this.value)">
+            <div id="wbCustResults" class="search-results"></div>
+          </div>
+          <button class="btn btn-sm" onclick="setWbWalkin()" style="font-size:11px"><i class="fas fa-user-plus"></i> <span data-i18n="common.customer">عميل جديد</span></button>
+        </div>
+        <div id="wbCustBadge" style="display:none;margin-top:8px;padding:8px 12px;background:rgba(0,102,177,0.06);border:1px solid rgba(0,102,177,0.2);border-radius:8px">
+          <strong id="wbCustNameLabel"></strong>
+          <span id="wbCustPhoneLabel" style="font-size:12px;color:var(--silver-500);margin-right:8px"></span>
+          <button class="btn btn-sm" onclick="clearWbCustomer()" style="margin-right:8px;font-size:10px"><i class="fas fa-times"></i></button>
+        </div>
+        <!-- Walk-in fields -->
+        <div id="wbWalkinFields" style="display:none;margin-top:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input type="text" class="form-input" id="wbWalkinName" placeholder="اسم العميل *" data-i18n-placeholder="customers.formName" style="flex:2;min-width:150px">
+            <input type="text" class="form-input" id="wbWalkinPhone" placeholder="رقم الهاتف" data-i18n-placeholder="common.phone" style="flex:1;min-width:120px">
+            <input type="text" class="form-input" id="wbWalkinAddress" placeholder="العنوان" data-i18n-placeholder="common.address" style="flex:2;min-width:150px">
+          </div>
+        </div>
+      </div>
+
+      <!-- Products -->
+      <div class="wb-section">
+        <div class="wb-section-title"><i class="fas fa-box"></i> <span data-i18n="inventory.title">المنتجات</span> <span id="wbProdCount" style="font-size:11px;color:var(--silver-500);font-weight:400"></span></div>
+        <div style="display:flex;gap:8px">
+          <div class="search-bar" style="flex:1;margin-bottom:0">
+            <i class="fas fa-search"></i>
+            <input type="text" id="wbProdSearch" placeholder="ابحث عن منتج بالاسم أو الباركود..." data-i18n-placeholder="invoices.scanPlaceholder" oninput="filterWbProducts(this.value)">
+          </div>
+        </div>
+        <div id="wbProductGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;margin-top:8px;max-height:180px;overflow-y:auto;padding:4px"></div>
+      </div>
+
+      <!-- Cart -->
+      <div class="wb-section">
+        <div class="wb-section-title"><i class="fas fa-shopping-cart"></i> <span data-i18n="invoices.cartTitle">سلة الفاتورة</span> <span id="wbCartCount" class="badge badge-primary" style="margin-right:6px;font-size:10px">0</span></div>
+        <div id="wbCartItems" style="max-height:200px;overflow-y:auto"></div>
+        <div id="wbCartEmpty" style="text-align:center;padding:20px;color:var(--silver-400)">
+          <i class="fas fa-cart-plus" style="font-size:28px;display:block;margin-bottom:6px"></i>
+          <span data-i18n="inventory.cartEmpty">اختر منتجات من الأعلى</span>
+        </div>
+      </div>
+
+      <!-- Totals -->
+      <div class="wb-section">
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start">
+          <div style="flex:2;min-width:200px">
+            <div class="setting-row" style="margin:0">
+              <label style="font-size:12px" data-i18n="common.additionalDiscount">تخفيض إضافي</label>
+              <input type="number" class="form-input no-spinner" id="wbExtraDisc" value="0" min="0" style="width:100px;text-align:center" oninput="updateWbTotals()">
+              <span style="font-size:11px;color:var(--silver-500)">DA</span>
+            </div>
+            <div class="setting-row" style="margin:4px 0 0">
+              <label style="font-size:12px">
+                <input type="checkbox" id="wbTimbreCheck" onchange="updateWbTotals()"> <span data-i18n="common.fiscalStamp">الطابع الجبائي</span>
+              </label>
+            </div>
+          </div>
+          <div style="flex:1;min-width:150px;background:var(--silver-50);padding:10px 14px;border-radius:var(--radius-sm)">
+            <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--silver-600)">
+              <span data-i18n="common.subtotal">المجموع</span>
+              <span id="wbSubtotal">DA0</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;color:#e65100" id="wbDiscRow" hidden>
+              <span data-i18n="common.discount">التخفيض</span>
+              <span id="wbDiscAmount">-DA0</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;color:#e65100" id="wbTimbreRow" hidden>
+              <span>Timbre fiscal</span>
+              <span id="wbTimbreAmount">DA0</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:18px;font-weight:800;color:var(--bmw-blue-1);border-top:1px solid var(--silver-300);margin-top:4px;padding-top:4px">
+              <span data-i18n="common.total">الإجمالي</span>
+              <span id="wbTotal">DA0</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Registration mode + Payment -->
+      <div class="wb-section">
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+          <div id="wbRegSection" style="display:flex;align-items:center;gap:10px;background:#f0f7ff;padding:8px 14px;border-radius:var(--radius-sm);border:1px solid #cce5ff">
+            <span style="font-size:12px;font-weight:600;color:var(--bmw-blue-1)" data-i18n="invoices.regMode">نوع التسجيل:</span>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer">
+              <input type="radio" name="wbRegMode" value="real" checked onchange="updateWbTotals()"> <span data-i18n="common.real">حقيقي</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer">
+              <input type="radio" name="wbRegMode" value="provisional" onchange="updateWbTotals()"> <span data-i18n="common.formal">شكلي</span>
+            </label>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:6px;flex:1">
+            <span style="font-size:12px;color:var(--silver-600)" data-i18n="sales.paidLabel">المبلغ المدفوع:</span>
+            <input type="number" class="form-input no-spinner" id="wbPayAmount" value="0" min="0" style="width:120px;text-align:center;font-size:16px;font-weight:700" oninput="updateWbPayRemaining()">
+            <span style="font-size:11px;color:var(--silver-500)">DA</span>
+            <button class="btn btn-sm btn-primary" onclick="setWbFullPay()" style="font-size:11px" data-i18n="common.payFull">دفع كلياً</button>
+            <span id="wbPayRemaining" style="font-size:12px;color:#e65100;font-weight:600"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-start">
+      <button class="btn btn-primary" onclick="confirmWaybill()" style="display:flex;align-items:center;gap:5px;font-size:14px;padding:10px 24px">
+        <i class="fas fa-check"></i> <span id="wbConfirmBtnLabel" data-i18n="invoices.typeSale">تسجيل الفاتورة</span>
+      </button>
+      <button class="btn" onclick="closeWaybillForm()" data-i18n="common.cancel">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== DISPATCH INVOICE MODAL (فاتورة إرسال) ===== -->
+<div class="modal-overlay" id="invDispModal">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-header">
+      <h3><i class="fas fa-share-square"></i> <span data-i18n="invoices.typeDispatch">فاتورة إرسال</span> — Bon d'envoi</h3>
+      <button class="modal-close" onclick="closeInvDispModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+
+      <!-- Recipient type tabs -->
+      <div style="display:flex;gap:4px;margin-bottom:14px;background:var(--silver-100);border-radius:var(--radius);padding:3px">
+        <button class="btn" id="dispTabSupplier" onclick="switchDispTab('supplier')" style="flex:1;font-size:12px;padding:6px;border-radius:4px">
+          <i class="fas fa-truck"></i> <span data-i18n="common.supplier">مورد</span>
+        </button>
+        <button class="btn btn-primary" id="dispTabCustomer" onclick="switchDispTab('customer')" style="flex:1;font-size:12px;padding:6px;border-radius:4px">
+          <i class="fas fa-user"></i> <span data-i18n="common.customer">عميل</span>
+        </button>
+        <button class="btn" id="dispTabWalkin" onclick="switchDispTab('walkin')" style="flex:1;font-size:12px;padding:6px;border-radius:4px">
+          <i class="fas fa-user-plus"></i> <span data-i18n="invoices.walkin">وهمي</span>
+        </button>
+      </div>
+
+      <!-- Supplier section -->
+      <div id="dispSupplierSection" style="display:none">
+        <div class="form-group">
+          <label data-i18n="common.supplier">المورد <span class="required">*</span></label>
+          <input type="text" class="form-input" id="dispSupSearch" placeholder="ابحث عن مورد..." data-i18n-placeholder="suppliers.search" oninput="searchDispSupplier(this.value)">
+          <div id="dispSupResults" class="search-results"></div>
+          <div id="dispSelectedSupplier" style="display:none" class="selected-prod-info">
+            <span><strong id="dispSupName"></strong></span>
+            <input type="hidden" id="dispSupId">
+          </div>
+        </div>
+      </div>
+
+      <!-- Customer section -->
+      <div id="dispCustomerSection" style="display:none">
+        <div class="form-group">
+          <label data-i18n="sales.customer">العميل <span class="required">*</span></label>
+          <input type="text" class="form-input" id="dispCustSearch" placeholder="ابحث عن عميل..." data-i18n-placeholder="sales.customerPlaceholder" oninput="searchDispCustomer(this.value)">
+          <div id="dispCustResults" class="search-results"></div>
+          <div id="dispSelectedCustomer" style="display:none" class="selected-prod-info">
+            <span><strong id="dispCustName"></strong></span>
+            <input type="hidden" id="dispCustId">
+          </div>
+        </div>
+      </div>
+
+      <!-- Walk-in section -->
+      <div id="dispWalkinSection" style="display:none">
+        <div class="form-row">
+          <div class="form-group" style="flex:2">
+            <label data-i18n="common.name">الاسم <span class="required">*</span></label>
+            <input type="text" class="form-input" id="dispWalkinName" placeholder="اسم المرسل إليه" data-i18n-placeholder="invoices.recipientName">
+          </div>
+          <div class="form-group" style="flex:1">
+            <label data-i18n="common.phone">رقم الهاتف</label>
+            <input type="text" class="form-input" id="dispWalkinPhone" placeholder="رقم الهاتف" data-i18n-placeholder="common.phone" dir="ltr">
+          </div>
+        </div>
+        <div class="form-group">
+          <label data-i18n="common.address">العنوان</label>
+          <input type="text" class="form-input" id="dispWalkinAddress" placeholder="العنوان (اختياري)" data-i18n-placeholder="invoices.addressOptional">
+        </div>
+      </div>
+
+      <hr>
+
+      <!-- Amount -->
+      <div class="form-row">
+        <div class="form-group" style="flex:2">
+          <label data-i18n="common.pay">المبلغ <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="dispAmount" value="0" min="0" step="0.01" style="font-size:20px;font-weight:700;text-align:center">
+        </div>
+        <div class="form-group" style="flex:1;display:flex;align-items:flex-end;padding-bottom:6px">
+          <span style="font-size:16px;font-weight:700;color:var(--bmw-blue-1)">DA</span>
+        </div>
+      </div>
+
+      <!-- Timbre Fiscal -->
+      <div style="display:flex;align-items:center;gap:8px;margin-top:4px;padding:8px 0">
+        <label class="switch" style="margin:0">
+          <input type="checkbox" id="dispTimbreCheck" onchange="dispRecalcTotal()">
+          <span class="slider round"></span>
+        </label>
+        <label style="font-size:12px;color:var(--silver-600);cursor:pointer;user-select:none" for="dispTimbreCheck">
+          <i class="fas fa-stamp" style="color:var(--bmw-orange)"></i> <span data-i18n="common.fiscalStamp">الطابع الجبائي</span> (Timbre Fiscal)
+        </label>
+        <span id="dispTimbreAmount" style="font-size:12px;font-weight:600;color:#e65100;display:none">DA0</span>
+      </div>
+
+      <!-- Payment section (for customer dispatch) -->
+      <div id="dispPaySection" style="display:none;margin-top:8px;padding:12px;background:var(--silver-50);border-radius:var(--radius-sm)">
+        <label style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px">
+          <i class="fas fa-hand-holding-usd" style="color:var(--bmw-blue-1)"></i> <span data-i18n="invoices.firstPayment">دفعة أولى (اختياري)</span>
+        </label>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+          <input type="number" class="form-input no-spinner" id="dispPayAmount" value="0" min="0" step="0.01" style="flex:2;font-size:16px;font-weight:600;text-align:center">
+          <span style="font-size:13px;font-weight:700;color:var(--silver-600)">DA</span>
+        </div>
+        <div style="font-size:10px;color:var(--silver-400);margin-top:2px" data-i18n="invoices.payHint">
+          أدخل المبلغ المدفوع الآن (إن وجد). الباقي يسجل كدين على العميل.
+        </div>
+      </div>
+
+      <hr>
+
+      <!-- Total -->
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
+        <span style="font-size:14px;color:var(--silver-600)" data-i18n="common.total">الإجمالي النهائي:</span>
+        <strong style="font-size:22px;color:var(--bmw-blue-1)" id="dispTotal">DA0</strong>
+      </div>
+
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-start">
+      <button class="btn btn-primary" onclick="confirmDispatchInvoice()" style="font-size:14px;padding:10px 24px">
+        <i class="fas fa-check"></i> <span data-i18n="invoices.confirmDispatch">تأكيد فاتورة الإرسال</span>
+      </button>
+      <button class="btn" onclick="closeInvDispModal()" data-i18n="common.cancel">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== PURCHASE INVOICE MODAL (مثل إضافة مخزون + Timbre Fiscal) ===== -->
+<div class="modal-overlay" id="invPurModal">
+  <div class="modal" style="max-width:780px">
+    <div class="modal-header">
+      <h3><i class="fas fa-plus-circle"></i> <span data-i18n="invoices.typePurchase">فاتورة شراء</span> — Facture d'achat</h3>
+      <button class="modal-close" onclick="closeInvPurModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="barcode-scanner-section">
+        <div class="scanner-input-wrap">
+          <i class="fas fa-qrcode scanner-icon"></i>
+          <input type="text" class="form-input scanner-input" id="purBarcodeScanner"
+            placeholder="امسح الباركود ضوئياً..." data-i18n-placeholder="sales.scanPlaceholder" dir="ltr" autocomplete="off"
+            onkeydown="handlePurBarcodeScan(event)">
+          <span class="scanner-status" id="purScannerStatus" data-i18n="inventory.scannerReady">جاهز للمسح</span>
+        </div>
+        <div class="scanner-result" id="purScannerResult" style="display:none"></div>
+      </div>
+      <hr>
+
+      <div class="form-group">
+        <label data-i18n="inventory.search">ابحث عن منتج موجود (بالاسم أو الباركود)</label>
+        <input type="text" class="form-input" id="purProdSearch" placeholder="اسم المنتج أو الباركود..." data-i18n-placeholder="inventory.search" oninput="searchPurProduct(this.value)">
+      </div>
+      <div id="purSearchResults" class="search-results"></div>
+      <div id="purSelectedProduct" style="display:none" class="selected-prod-info">
+        <div class="sel-prod-row">
+          <span><strong id="purSelName"></strong></span>
+          <span class="text-muted" id="purSelBarcode"></span>
+        </div>
+      </div>
+      <hr>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label data-i18n="common.brand">العلامة التجارية <span class="required">*</span></label>
+          <select class="form-input" id="purBrand"></select>
+        </div>
+        <div class="form-group">
+          <label data-i18n="common.category">التصنيف <span class="required">*</span></label>
+          <select class="form-input" id="purCategory"></select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group" style="flex:2">
+          <label data-i18n="inventory.editLabelName">اسم المنتج <span class="required">*</span></label>
+          <input type="text" class="form-input" id="purProdName" placeholder="اسم القطعة" data-i18n-placeholder="inventory.editLabelName">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label data-i18n="common.barcode">الباركود <span class="required">*</span></label>
+          <div class="barcode-row">
+            <input type="text" class="form-input" id="purProdBar" placeholder="الباركود" data-i18n-placeholder="common.barcode" dir="ltr">
+            <button class="btn btn-sm" onclick="document.getElementById('purProdBar').value=DB.generateBarcode()" data-i18n="common.generate">توليد</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label data-i18n="common.qty">الكمية <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="purQty" value="1" min="1">
+        </div>
+        <div class="form-group">
+          <label data-i18n="inventory.col5">سعر الشراء <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="purBuyPrice" value="0" min="0">
+        </div>
+        <div class="form-group">
+          <label data-i18n="inventory.col6">سعر البيع <span class="required">*</span></label>
+          <input type="number" class="form-input no-spinner" id="purSellPrice" value="0" min="0">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="common.supplier">المورد (اختياري)</label>
+        <input type="text" class="form-input" id="purSupSearch" placeholder="ابحث عن مورد..." data-i18n-placeholder="suppliers.search" oninput="searchPurSupplier(this.value)">
+        <div id="purSupResults" class="search-results"></div>
+        <div id="purSelectedSupplier" style="display:none" class="selected-prod-info">
+          <span><strong id="purSupName"></strong></span>
+          <input type="hidden" id="purSupId">
+        </div>
+      </div>
+
+      <button class="btn btn-primary" onclick="purAddToCart()" style="width:100%;margin-top:8px">
+        <i class="fas fa-cart-plus"></i> <span data-i18n="inventory.cartEmpty">إضافة إلى سلة الفاتورة</span>
+      </button>
+
+      <div id="purCartSection" style="display:none;margin-top:16px">
+        <hr>
+        <h4 style="display:flex;align-items:center;gap:8px;margin:0 0 10px">
+          <i class="fas fa-shopping-cart" style="color:var(--bmw-blue-1)"></i> <span data-i18n="invoices.cartTitle">سلة الفاتورة</span>
+          <span style="font-size:12px;color:var(--silver-500);font-weight:400" id="purCartCount">(0)</span>
+        </h4>
+        <div id="purCartItems"></div>
+
+        <!-- Timbre Fiscal -->
+        <div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 0;border-top:1px solid var(--silver-100)">
+          <label class="switch" style="margin:0">
+            <input type="checkbox" id="purTimbreCheck" onchange="purRecalcTotal()">
+            <span class="slider round"></span>
+          </label>
+          <label style="font-size:12px;color:var(--silver-600);cursor:pointer;user-select:none" for="purTimbreCheck">
+            <i class="fas fa-stamp" style="color:var(--bmw-orange)"></i> <span data-i18n="common.fiscalStamp">الطابع الجبائي</span> (Timbre Fiscal)
+          </label>
+          <span id="purTimbreAmount" style="font-size:12px;font-weight:600;color:#e65100;display:none">DA0</span>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--silver-300)">
+          <div>
+            <span style="font-size:13px;color:var(--silver-600)" data-i18n="common.total">الإجمالي:</span>
+            <strong style="font-size:20px;color:var(--bmw-blue-1)" id="purCartTotal">DA0</strong>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn" onclick="purClearCart()"><i class="fas fa-trash"></i> <span data-i18n="common.clear">تفريغ</span></button>
+            <button class="btn btn-success" onclick="purConfirmInvoice()"><i class="fas fa-check"></i> <span data-i18n="invoices.confirmDispatch">تأكيد الفاتورة</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Payment sub-modal -->
+<div id="invPayModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeInvPay()">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <h3><i class="fas fa-hand-holding-usd"></i> <span data-i18n="invoices.payModalTitle">تسديد دفعة</span></h3>
+      <button class="modal-close" onclick="closeInvPay()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;padding:4px 0">
+          <span style="color:var(--silver-600)" data-i18n="common.total">الإجمالي:</span>
+          <strong id="invPayTotal">DA0</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0">
+          <span style="color:var(--silver-600)" data-i18n="invoices.paidPreviously">المدفوع سابقاً:</span>
+          <strong id="invPayPaid" style="color:#28a745">DA0</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--silver-200);margin-top:4px;padding-top:6px">
+          <span style="color:var(--silver-600)" data-i18n="common.remaining">المتبقي:</span>
+          <strong id="invPayRemaining" style="color:#e65100">DA0</strong>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label style="font-size:13px;font-weight:600" data-i18n="invoices.payAmount">مبلغ الدفعة</label>
+        <input type="number" class="form-input no-spinner" id="invPayAmount" value="0" min="0" style="width:150px;font-size:18px;font-weight:700;text-align:center">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeInvPay()" data-i18n="common.cancel">إلغاء</button>
+      <button class="btn btn-primary" onclick="confirmInvPayment()"><i class="fas fa-check"></i> <span data-i18n="common.confirmPay">تأكيد الدفع</span></button>
+    </div>
+  </div>
+</div>

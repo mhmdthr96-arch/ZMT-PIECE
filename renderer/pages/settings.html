@@ -1,0 +1,273 @@
+<div class="page" id="page-settings">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-cog"></i> <span data-i18n="settings.title">الاعدادات</span></h1>
+      <p><span data-i18n="settings.sub">إعدادات البرنامج</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="card">
+      <div class="card-header"><i class="fas fa-sliders-h"></i> <span data-i18n="settings.general">الإعدادات العامة</span></div>
+      <div class="card-body">
+        <div class="settings-group">
+          <div class="setting-row">
+            <label data-i18n="settings.storeName">اسم المتجر</label>
+            <input type="text" class="form-input" id="settingsStoreName" value="ZMT PIECE" style="width:300px">
+          </div>
+          <div class="setting-row">
+            <label data-i18n="settings.storeAddress">عنوان المحل</label>
+            <input type="text" class="form-input" id="settingsStoreAddress" value="" style="width:300px" placeholder="مثال: 15 Rue Didouche Mourad, Alger">
+          </div>
+          <div class="setting-row">
+            <label data-i18n="settings.phoneNumber">رقم الهاتف</label>
+            <input type="text" class="form-input" id="settingsStorePhone" value="" style="width:200px" placeholder="مثال: 0555 12 34 56">
+          </div>
+          <div class="setting-row">
+            <label data-i18n="settings.language">اللغة</label>
+            <select class="form-input" id="settingsLang" style="width:150px">
+              <option value="ar">العربية</option>
+              <option value="en">English</option>
+              <option value="fr">Français</option>
+              <option value="zh">中文</option>
+            </select>
+          </div>
+          <div class="setting-row" style="border-top:1px solid var(--silver-300);padding-top:12px;margin-top:4px">
+            <label data-i18n="settings.fiscalStampLabel">الطابع الجبائي (Timbre Fiscal)</label>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px">
+              <input type="checkbox" id="settingsTimbreEnabled"> <span data-i18n="settings.enableFiscalStamp">تفعيل الطابع الجبائي في الفواتير</span>
+            </label>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+              <span style="font-size:12px;color:var(--silver-600)" data-i18n="settings.fiscalRatio">النسبة:</span>
+              <select class="form-input" id="settingsTimbreRate" style="width:80px">
+                <option value="1">1%</option>
+                <option value="2">2%</option>
+              </select>
+              <span style="font-size:11px;color:var(--silver-500)" data-i18n="settings.fiscalMin">الحد الأدنى 5 دج - الحد الأقصى 10,000 دج</span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <label>TVA</label>
+            <div style="display:flex;align-items:center;gap:6px">
+              <input type="number" class="form-input no-spinner" id="settingsTvaRate" value="0" min="0" max="100" style="width:70px">
+              <span style="font-size:12px;color:var(--silver-500)" data-i18n="settings.fiscalPercent">% (0% للأنظمة المبسطة)</span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <label data-i18n="settings.lowStockThreshold">حد المخزون المنخفض</label>
+            <input type="number" class="form-input no-spinner" id="settingsLowStock" value="5" min="1" style="width:80px">
+            <span style="font-size:11px;color:var(--silver-500)" data-i18n="settings.lowStockHint">أقل من هذا الرقم يُعتبر مخزون منخفض</span>
+          </div>
+          <div class="setting-row">
+            <button class="btn btn-primary" onclick="saveSettings()"><i class="fas fa-save"></i> <span data-i18n="settings.saveSettings">حفظ الإعدادات</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><i class="fas fa-network-wired"></i> <span data-i18n="settings.lanCard">مزامنة الشبكة المحلية (LAN)</span></div>
+      <div class="card-body">
+        <div class="settings-group">
+          <p class="settings-hint" data-i18n="settings.lanDesc">اربط هذا الجهاز بجهاز آخر في نفس المحل عبر الراوتر لمزامنة فورية لكل عمليات البيع والإدخال والتعديل.</p>
+
+          <div class="setting-row">
+            <label data-i18n="settings.lanRole">دور هذا الجهاز</label>
+            <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px">
+                <input type="radio" name="lanRole" value="" id="lanRoleOff"> <span data-i18n="settings.lanOff">معطل</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px">
+                <input type="radio" name="lanRole" value="main" id="lanRoleMain"> <span data-i18n="settings.lanMain">سيرفر رئيسي (الجهاز الذي يملك IP ثابت)</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px">
+                <input type="radio" name="lanRole" value="sub" id="lanRoleSub"> <span data-i18n="settings.lanSub">سيرفر فرعي (جهاز الكاشير الثاني)</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="lanMainSection" style="display:none">
+            <div class="setting-row">
+              <label data-i18n="settings.lanLocalIps">عناوين IP هذا الجهاز</label>
+              <span id="lanLocalIps" style="color:var(--silver-600);font-family:monospace" dir="ltr">-</span>
+            </div>
+            <div class="setting-row">
+              <label data-i18n="settings.lanLocalIpHint">ثبّت أحد هذه العناوين كعنوان IP ثابت في إعدادات Windows/الراوتر، وأدخل نفس العنوان في الجهاز الفرعي.</label>
+            </div>
+            <div class="setting-row">
+              <label data-i18n="settings.lanFirewallHint">إن لم يتصل الجهاز الفرعي، اسمح لهذا البرنامج عبر جدار حماية Windows (شبكة خاصة) من الإعدادات ← السماح لتطبيق عبر جدار الحماية.</label>
+            </div>
+          </div>
+
+          <div id="lanSubSection" style="display:none">
+            <div class="setting-row">
+              <label data-i18n="settings.lanServerIp">عنوان IP السيرفر الرئيسي</label>
+              <input type="text" class="form-input" id="lanServerIp" placeholder="مثال: 192.168.1.10" style="width:220px;direction:ltr;font-family:monospace">
+            </div>
+            <div class="setting-row">
+              <button class="btn btn-secondary" onclick="settingsTestLan()" id="lanTestBtn"><i class="fas fa-plug"></i> <span data-i18n="settings.lanTest">اختبار الاتصال</span></button>
+              <span id="lanTestResult" style="font-size:13px;margin-left:12px"></span>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label data-i18n="settings.lanPort">المنفذ</label>
+            <input type="number" class="form-input no-spinner" id="lanPort" value="4512" style="width:90px;direction:ltr">
+            <span style="font-size:11px;color:var(--silver-500)" data-i18n="settings.lanPortHint">يبدأ بـ 4512 ويتغيّر تلقائيًا إن كان مشغولًا</span>
+          </div>
+
+          <div class="setting-row">
+            <button class="btn btn-primary" onclick="settingsSaveLan()"><i class="fas fa-save"></i> <span data-i18n="settings.saveSettings">حفظ الإعدادات</span></button>
+          </div>
+
+          <div class="setting-row" style="border-top:1px solid var(--silver-300);padding-top:12px;margin-top:4px">
+            <label data-i18n="settings.lanStatus">حالة المزامنة</label>
+            <div id="lanStatusBox" style="font-size:13px;color:var(--silver-600)">-</div>
+          </div>
+          <div class="settings-result" id="lanResult"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><i class="fas fa-info-circle"></i> <span data-i18n="settings.info">معلومات البرنامج</span></div>
+      <div class="card-body">
+        <div class="settings-group">
+          <div class="setting-row">
+            <label data-i18n="settings.version">الإصدار</label>
+            <span style="color:var(--silver-600)">2.0.0</span>
+          </div>
+          <div class="setting-row">
+            <label data-i18n="settings.developer">مطور البرنامج</label>
+            <span style="color:var(--silver-600)">ZERIBIT MOHAMMED TAHAR</span>
+          </div>
+          <div class="setting-row">
+            <label data-i18n="settings.company">الشركة المطورة</label>
+            <span style="color:var(--silver-600)">ZMT SOFTWARE</span>
+          </div>
+          <div class="setting-row">
+            <label data-i18n="settings.lastUpdate">آخر تحديث</label>
+            <span style="color:var(--silver-600)">2026</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STORE PASSWORD -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><i class="fas fa-lock"></i> <span data-i18n="settings.storePasswordCard">كلمة مرور المحل</span></div>
+      <div class="card-body">
+        <div class="settings-group">
+          <p class="settings-hint" data-i18n="settings.storePasswordDesc">لحماية المحل، أنشئ كلمة مرور. لا يمكن الدخول كمدير بدونها.</p>
+          <div class="setting-row">
+            <label data-i18n="settings.currentPassword">كلمة المرور الحالية</label>
+            <input type="password" class="form-input" id="settingsCurrentPass" data-i18n-placeholder="settings.currentPasswordPlaceholder" placeholder="اتركها فارغة إذا جديدة" style="width:250px">
+          </div>
+          <div class="setting-row">
+            <label data-i18n="settings.newPassword">كلمة المرور الجديدة</label>
+            <input type="password" class="form-input" id="settingsNewPass" data-i18n-placeholder="settings.newPasswordPlaceholder" placeholder="كلمة مرور المحل" style="width:250px">
+          </div>
+          <div class="setting-row">
+            <label data-i18n="settings.confirmPassword">تأكيد كلمة المرور</label>
+            <input type="password" class="form-input" id="settingsConfirmPass" data-i18n-placeholder="settings.confirmPasswordPlaceholder" placeholder="أعد إدخال كلمة المرور" style="width:250px">
+          </div>
+          <div class="setting-row">
+            <button class="btn btn-primary" onclick="settingsSavePassword()"><i class="fas fa-save"></i> <span data-i18n="settings.savePassword">حفظ كلمة المرور</span></button>
+          </div>
+          <div class="settings-result" id="settingsPassResult"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI / MULTI-PROVIDER -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><i class="fas fa-robot"></i> <span data-i18n="settings.aiCard">الذكاء الاصطناعي (AI Agent)</span></div>
+      <div class="card-body">
+        <div class="settings-group">
+          <p class="settings-hint" data-i18n="settings.aiDesc">اختر مزود الخدمة وأدخل مفتاح API الخاص بك لتحليل البيانات واستيرادها بذكاء.</p>
+          <div class="setting-row">
+            <label data-i18n="settings.aiProvider">مزود AI</label>
+              <select class="form-input" id="settingsAiProvider" onchange="settingsChangeProvider()" style="width:300px">
+                <option value="gemini">Google Gemini (Default)</option>
+                <option value="openai">OpenAI (ChatGPT)</option>
+                <option value="kimi">Kimi (Moonshot AI)</option>
+                <option value="groq">Groq (LPU Inference)</option>
+                <option value="custom">Custom / Other API</option>
+              </select>
+          </div>
+          <div class="setting-row" id="settingsBaseUrlRow" style="display:none">
+            <label data-i18n="settings.aiBaseUrl">Base URL</label>
+            <input type="text" class="form-input" id="settingsAiBaseUrl" placeholder="https://api.example.com/v1/" style="width:350px;direction:ltr;font-family:monospace">
+          </div>
+          <div class="setting-row">
+            <label id="settingsAiKeyLabel">مفتاح API</label>
+            <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+              <input type="password" class="form-input" id="settingsAiKey" placeholder="..." style="width:350px;direction:ltr;font-family:monospace">
+              <button class="btn btn-sm" onclick="settingsToggleKeyVisibility()"><i class="fas fa-eye" id="settingsKeyEye"></i></button>
+            </div>
+          </div>
+          <div class="setting-row" id="settingsAiHelpRow">
+            <label></label>
+            <div style="font-size:12px;color:var(--silver-500)" id="settingsAiHelpText">
+              <span>اختر مزوداً من القائمة أعلاه للحصول على تعليمات المفتاح</span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <label></label>
+            <div style="font-size:12px;color:var(--silver-500)">
+              <span id="settingsKeyStatus" data-i18n="settings.aiKeyNotSet">لم يتم تعيين المفتاح بعد</span>
+              <button class="btn btn-sm" onclick="settingsTestAiKey()" style="margin-right:12px"><i class="fas fa-plug"></i> <span data-i18n="settings.aiTestKey">اختبار الاتصال</span></button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <button class="btn btn-primary" onclick="settingsSaveAiKey()"><i class="fas fa-save"></i> <span data-i18n="settings.saveApiKey">حفظ المفتاح</span></button>
+            <button class="btn" onclick="settingsClearAiKey()" style="background:#dc3545;color:#fff;border:none"><i class="fas fa-trash"></i> <span data-i18n="settings.clearApiKey">مسح المفتاح</span></button>
+          </div>
+          <div class="settings-result" id="settingsAiResult"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- USERS MANAGEMENT -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><i class="fas fa-users-cog"></i> <span data-i18n="settings.usersCard">إدارة المستخدمين</span></div>
+      <div class="card-body">
+        <div class="settings-group">
+          <p class="settings-hint" data-i18n="settings.usersDesc">أنشئ مستخدمين وحدد صلاحياتهم للProgram.</p>
+          <div class="setting-row" style="margin-bottom:16px">
+            <button class="btn btn-primary" onclick="settingsShowAddUser()"><i class="fas fa-plus"></i> <span data-i18n="settings.addUser">إضافة مستخدم</span></button>
+          </div>
+
+          <!-- Add User Form -->
+          <div id="settingsAddUserForm" style="display:none;margin-bottom:16px;padding:16px;background:var(--silver-50);border-radius:var(--radius);border:1px solid var(--silver-300);">
+            <h4 style="margin-bottom:12px;color:var(--bmw-blue-1);"><i class="fas fa-user-plus"></i> <span data-i18n="settings.newUser">مستخدم جديد</span></h4>
+            <div class="setting-row">
+              <label data-i18n="settings.userName">اسم المستخدم</label>
+              <input type="text" class="form-input" id="settingsNewUsername" data-i18n-placeholder="settings.userNamePlaceholder" placeholder="اسم المستخدم" style="width:200px">
+            </div>
+            <div class="setting-row">
+              <label data-i18n="settings.userPassword">كلمة المرور</label>
+              <input type="password" class="form-input" id="settingsNewUserPass" data-i18n-placeholder="settings.userPasswordPlaceholder" placeholder="كلمة المرور" style="width:200px">
+            </div>
+            <div class="setting-row" style="flex-direction:column;align-items:flex-start;">
+              <label style="margin-bottom:8px;" data-i18n="settings.permissions">الصلاحيات</label>
+              <div class="settings-permissions-grid" id="settingsPermissionsGrid"></div>
+            </div>
+            <div class="setting-row">
+              <button class="btn btn-primary" onclick="settingsSaveUser()"><i class="fas fa-save"></i> <span data-i18n="common.save">حفظ</span></button>
+              <button class="btn" onclick="settingsCancelAddUser()"><i class="fas fa-times"></i> <span data-i18n="common.cancel">إلغاء</span></button>
+            </div>
+            <div class="settings-result" id="settingsUserResult"></div>
+          </div>
+
+          <!-- Users List -->
+          <div id="settingsUsersList"></div>
+          <div id="settingsUsersEmpty" class="settings-empty" style="display:none;">
+            <i class="fas fa-users"></i>
+            <p data-i18n="settings.noUsers">لا يوجد مستخدمون بعد</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

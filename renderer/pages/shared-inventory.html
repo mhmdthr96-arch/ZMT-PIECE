@@ -1,0 +1,49 @@
+<div class="page" id="page-shared-inventory">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-eye"></i> <span data-i18n="sharedInventory.title">المخزون المشترك</span></h1>
+      <p data-i18n="sharedInventory.sub">عرض مخزون المحل الرئيسي والفروع المرتبطة</p>
+    </div>
+  </div>
+
+  <div class="page-body">
+
+    <!-- CROSS-STORE SEARCH -->
+    <div style="margin-bottom:20px;padding:16px;background:var(--card-bg);border-radius:12px;border:1px solid var(--border-color);box-shadow:var(--shadow-sm)">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <i class="fas fa-search" style="font-size:18px;color:var(--bmw-blue-1)"></i>
+        <h3 style="margin:0;font-size:15px;color:var(--silver-800)" data-i18n="sharedInventory.searchAll">بحث في جميع المحلات</h3>
+      </div>
+      <div style="position:relative">
+        <input type="text" id="siGlobalSearch" placeholder="ابحث بالاسم أو الباركود لمعرفة أي محل فيه المنتج..." data-i18n-placeholder="sharedInventory.searchAllPlaceholder"
+          dir="auto" style="width:100%;padding:10px 14px;border:1px solid var(--silver-300);border-radius:8px;font-size:14px;background:var(--card-bg);color:var(--silver-800)"
+          oninput="siSearchProduct(this.value)">
+      </div>
+      <div id="siSearchResults" style="display:none;max-height:350px;overflow-y:auto;margin-top:8px;background:var(--card-bg);border:1px solid var(--border-color);border-radius:8px"></div>
+    </div>
+
+    <!-- LOADING -->
+    <div id="siLoading" class="conn-empty-state">
+      <i class="fas fa-spinner fa-spin"></i>
+      <p data-i18n="sharedInventory.loading">جاري تحميل البيانات...</p>
+    </div>
+
+    <!-- STORES LIST -->
+    <div id="siStoresList" style="display:none;"></div>
+
+    <!-- STORE DETAIL -->
+    <div id="siStoreDetail" style="display:none;">
+      <div class="bm-detail-header">
+        <button class="btn" onclick="siBackToList()">
+          <i class="fas fa-arrow-right"></i> <span data-i18n="sharedInventory.backToList">رجوع للقائمة</span>
+        </button>
+        <div>
+          <h3 id="siDetailName">-</h3>
+          <span class="bm-detail-code" id="siDetailCode" dir="ltr">-</span>
+        </div>
+      </div>
+      <div id="siInventoryContent"></div>
+    </div>
+
+  </div>
+</div>

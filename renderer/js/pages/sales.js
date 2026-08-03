@@ -1,0 +1,834 @@
+var _salesCart = [];
+var _salesCustomerId = null;
+var _salesProducts = [];
+var _salesPage = 0;
+var _salesPerPage = 50;
+
+// Settings helpers (also defined in settings.js — duplicated here for availability in sales page)
+function getStoreInfo() {
+  return {
+    name: localStorage.getItem('zmt_store_name') || 'ZMT PIECE',
+    address: localStorage.getItem('zmt_store_address') || '',
+    phone: localStorage.getItem('zmt_store_phone') || '',
+  };
+}
+function getTimbreConfig() {
+  return {
+    enabled: localStorage.getItem('zmt_timbre_enabled') === '1',
+    rate: parseFloat(localStorage.getItem('zmt_timbre_rate') || '1'),
+  };
+}
+function getTvaRate() {
+  return parseFloat(localStorage.getItem('zmt_tva_rate') || '0');
+}
+
+function init_sales() {
+  _salesProducts = DB.getProducts();
+  _salesPage = 0;
+  renderSalesProducts();
+  setupSalesBarcode();
+}
+
+function escHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ===== PRODUCT GRID =====
+
+function renderSalesProducts(filter) {
+  const grid = document.getElementById('salesProductGrid');
+  let list = _salesProducts;
+  if (filter) {
+    const q = filter.toLowerCase();
+    list = list.filter(p => p.name.toLowerCase().includes(q) || p.barcode.includes(q));
+  }
+
+  const count = document.getElementById('salesProdCount');
+  if (count) count.textContent = `${list.length} ${t('common.product')}`;
+
+  if (list.length === 0) {
+    grid.innerHTML = `<div class="sales-grid-empty">
+      <i class="fas fa-box-open"></i>
+      <p>${filter ? t('sales.emptyResults') : t('sales.emptyProducts')}</p>
+    </div>`;
+    return;
+  }
+
+  const start = _salesPage * _salesPerPage;
+  const end = Math.min(start + _salesPerPage, list.length);
+  const pageItems = list.slice(start, end);
+
+  grid.innerHTML = pageItems.map(p => {
+    const outOfStock = p.quantity <= 0;
+    const lowStock = p.quantity > 0 && p.quantity <= 5;
+    return `<div class="sp-card ${outOfStock ? 'sp-card-oos' : ''}"
+      onclick="${outOfStock ? '' : `addToSalesCart('${p.id}')`}"
+      ${outOfStock ? `title="${t('sales.unavailable')}"` : ''}>
+      <div class="sp-card-top">
+        <span class="sp-card-name">${escHtml(p.name)}</span>
+        ${lowStock ? `<span class="sp-card-low" title="${t('sales.lowStockTip')}">!</span>` : ''}
+      </div>
+      <div class="sp-card-bar" dir="ltr">${p.barcode}</div>
+      <div class="sp-card-footer">
+        <span class="sp-card-price">DA${p.sellPrice.toFixed(2)}</span>
+        <span class="sp-card-qty ${lowStock ? 'sp-card-qty-low' : ''}">${p.quantity}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  if (list.length > _salesPerPage) {
+    const totalPages = Math.ceil(list.length / _salesPerPage);
+    grid.insertAdjacentHTML('afterend', `<div id="salesPager" style="display:flex;justify-content:center;align-items:center;gap:12px;padding:12px 0;grid-column:1/-1">
+      <button class="btn btn-sm" onclick="salesPrevPage()" ${_salesPage <= 0 ? 'disabled' : ''}>&laquo; ${t('common.back')}</button>
+      <span style="font-size:12px;color:var(--silver-500)">${t('common.page')} ${_salesPage + 1} ${t('common.of')} ${totalPages}</span>
+      <button class="btn btn-sm" onclick="salesNextPage()" ${_salesPage >= totalPages - 1 ? 'disabled' : ''}>${t('common.forward')} &raquo;</button>
+    </div>`);
+  }
+}
+
+function salesPrevPage() { if (_salesPage > 0) { _salesPage--; renderSalesProducts(document.getElementById('salesSearch')?.value); } }
+function salesNextPage() { _salesPage++; renderSalesProducts(document.getElementById('salesSearch')?.value); }
+
+function filterSalesProducts(q) {
+  _salesPage = 0;
+  renderSalesProducts(q);
+}
+
+// ===== BARCODE SCANNER =====
+
+function setupSalesBarcode() {
+  const input = document.getElementById('salesBarcodeScan');
+  if (!input) return;
+  const newInput = input.cloneNode(true);
+  input.parentNode.replaceChild(newInput, input);
+  newInput.addEventListener('keydown', handleSalesBarcodeScan);
+  newInput.focus();
+}
+
+function handleSalesBarcodeScan(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const input = document.getElementById('salesBarcodeScan');
+    const code = input.value.trim();
+    if (!code) return;
+
+    const beam = document.getElementById('salesScannerBeam');
+    if (beam) beam.classList.add('active');
+
+    document.getElementById('salesBarcodeStatus').textContent = '...';
+    document.getElementById('salesBarcodeStatus').style.color = '#0066B1';
+
+    const prod = DB.getProductByBarcode(code);
+    if (prod) {
+      if (prod.quantity <= 0) {
+        document.getElementById('salesBarcodeStatus').textContent = t('sales.unavailable');
+        document.getElementById('salesBarcodeStatus').style.color = '#dc3545';
+        input.value = '';
+        if (beam) setTimeout(() => beam.classList.remove('active'), 400);
+        return;
+      }
+      addToSalesCart(prod.id);
+      document.getElementById('salesBarcodeStatus').textContent = t('sales.scannerDone');
+      document.getElementById('salesBarcodeStatus').style.color = '#28a745';
+      setTimeout(() => {
+        const idx = _salesCart.length - 1;
+        const qtyInput = document.getElementById(`scqty_${idx}`);
+        if (qtyInput) { qtyInput.focus(); qtyInput.select(); }
+      }, 100);
+    } else {
+      document.getElementById('salesBarcodeStatus').textContent = t('sales.scannerNotFound');
+      document.getElementById('salesBarcodeStatus').style.color = '#e65100';
+    }
+    input.value = '';
+    if (beam) setTimeout(() => beam.classList.remove('active'), 400);
+    setTimeout(() => {
+      const s = document.getElementById('salesBarcodeStatus');
+      if (s) { s.textContent = t('sales.scannerReady'); s.style.color = '#888'; }
+    }, 2000);
+  }
+}
+
+// ===== CUSTOMER =====
+
+function searchSalesCustomer(q) {
+  const results = document.getElementById('salesCustResults');
+  if (!q || q.length < 1) { results.innerHTML = ''; return; }
+  const matches = DB.getCustomers().filter(c =>
+    c.name.toLowerCase().includes(q.toLowerCase()) || (c.phone && c.phone.includes(q))
+  ).slice(0, 10);
+  results.innerHTML = matches.length === 0
+    ? `<div class="search-result-item disabled">${t('sales.noCustResults')}</div>`
+    : matches.map(c => `<div class="search-result-item" onclick="selectSalesCustomer('${c.id}')">
+        <strong>${escHtml(c.name)}</strong>
+        <span class="text-muted">${c.phone || ''} ${c.discount > 0 ? `| ${t('sales.discount')} ${c.discount}%` : ''}</span>
+      </div>`).join('');
+}
+
+function selectSalesCustomer(id) {
+  const c = DB.getCustomer(id);
+  if (!c) return;
+  _salesCustomerId = c.id;
+  document.getElementById('salesCustSearch').value = c.name;
+  document.getElementById('salesCustResults').innerHTML = '';
+  document.getElementById('salesSelectedCust').style.display = 'flex';
+  document.getElementById('salesSelCustName').textContent = c.name;
+  document.getElementById('salesWalkinLabel').style.display = 'none';
+  if (c.discount > 0) {
+    document.getElementById('salesSelCustDiscount').textContent = `${t('sales.discount')} ${c.discount}%`;
+    document.getElementById('salesSelCustDiscount').style.display = '';
+  } else {
+    document.getElementById('salesSelCustDiscount').style.display = 'none';
+  }
+  updateSalesTotals();
+}
+
+function setSalesWalkin() {
+  _salesCustomerId = null;
+  document.getElementById('salesCustSearch').value = '';
+  document.getElementById('salesCustResults').innerHTML = '';
+  document.getElementById('salesSelectedCust').style.display = 'none';
+  document.getElementById('salesWalkinLabel').style.display = 'flex';
+  updateSalesTotals();
+}
+
+function clearSalesCustomer() {
+  _salesCustomerId = null;
+  document.getElementById('salesSelectedCust').style.display = 'none';
+  document.getElementById('salesWalkinLabel').style.display = 'none';
+  document.getElementById('salesCustSearch').value = '';
+  document.getElementById('salesCustResults').innerHTML = '';
+  updateSalesTotals();
+}
+
+// ===== CART =====
+
+function addToSalesCart(productId) {
+  const prod = DB.getProduct(productId);
+  if (!prod || prod.quantity <= 0) return;
+
+  _salesCart.push({
+    productId: prod.id,
+    name: prod.name,
+    barcode: prod.barcode,
+    qty: 1,
+    price: prod.sellPrice,
+    total: prod.sellPrice,
+  });
+
+  renderSalesCart();
+  document.getElementById('salesEmptyCart').style.display = 'none';
+  document.getElementById('salesSearch').value = '';
+  renderSalesProducts();
+}
+
+function renderSalesCart() {
+  const section = document.getElementById('salesCartSection');
+  const items = document.getElementById('salesCartItems');
+  const count = document.getElementById('salesCartCount');
+  const empty = document.getElementById('salesEmptyCart');
+
+  if (_salesCart.length === 0) {
+    section.style.display = 'none';
+    empty.style.display = '';
+    document.getElementById('salesPaySection').style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  empty.style.display = 'none';
+  if (count) count.textContent = _salesCart.length;
+
+  items.innerHTML = _salesCart.map((item, i) => {
+    const prod = DB.getProduct(item.productId);
+    const maxQty = prod ? prod.quantity : 99;
+    return `<div class="sc-item">
+      <div class="sc-item-info">
+        <div class="sc-item-name">${escHtml(item.name)}</div>
+        <div class="sc-item-bar" dir="ltr">${item.barcode}</div>
+      </div>
+      <div class="sc-item-controls">
+        <button class="sc-qty-btn" onclick="decSalesCartQty(${i})" ${item.qty <= 1 ? 'disabled' : ''}>−</button>
+        <input type="number" class="no-spinner sc-qty-input" id="scqty_${i}"
+          value="${item.qty}" min="1" max="${maxQty}"
+          onchange="updateSalesCartQty(${i}, this.value)">
+        <button class="sc-qty-btn" onclick="incSalesCartQty(${i})" ${item.qty >= maxQty ? 'disabled' : ''}>+</button>
+        <span class="sc-item-price">DA${item.price.toFixed(2)}</span>
+      </div>
+      <div class="sc-item-right">
+        <span class="sc-item-total">DA${(item.qty * item.price).toFixed(2)}</span>
+        <button class="sc-item-remove" onclick="removeFromSalesCart(${i})" title="${t('sales.del')}"><i class="fas fa-times"></i></button>
+      </div>
+    </div>`;
+  }).join('');
+
+  updateSalesTotals();
+}
+
+function incSalesCartQty(idx) {
+  const prod = DB.getProduct(_salesCart[idx].productId);
+  const maxQty = prod ? prod.quantity : 99;
+  if (_salesCart[idx].qty < maxQty) {
+    _salesCart[idx].qty++;
+    _salesCart[idx].total = _salesCart[idx].qty * _salesCart[idx].price;
+    renderSalesCart();
+  }
+}
+
+function decSalesCartQty(idx) {
+  if (_salesCart[idx].qty > 1) {
+    _salesCart[idx].qty--;
+    _salesCart[idx].total = _salesCart[idx].qty * _salesCart[idx].price;
+    renderSalesCart();
+  }
+}
+
+function updateSalesCartQty(idx, val) {
+  const qty = parseInt(val) || 1;
+  const prod = DB.getProduct(_salesCart[idx].productId);
+  const maxQty = prod ? prod.quantity : 99;
+  _salesCart[idx].qty = Math.min(Math.max(1, qty), maxQty);
+  _salesCart[idx].total = _salesCart[idx].qty * _salesCart[idx].price;
+  renderSalesCart();
+}
+
+function removeFromSalesCart(idx) {
+  _salesCart.splice(idx, 1);
+  renderSalesCart();
+  if (_salesCart.length === 0) {
+    document.getElementById('salesPaySection').style.display = 'none';
+    document.getElementById('salesBarcodeScan').focus();
+  }
+}
+
+// ===== TOTALS & DISCOUNTS =====
+
+function updateSalesTotals() {
+  const subTotal = _salesCart.reduce((s, item) => s + item.total, 0);
+
+  let custDiscPct = 0;
+  if (_salesCustomerId) {
+    const c = DB.getCustomer(_salesCustomerId);
+    if (c && c.discount > 0) custDiscPct = c.discount;
+  }
+  const custDiscAmount = subTotal * (custDiscPct / 100);
+  const afterCustDisc = subTotal - custDiscAmount;
+
+  const rawExtra = parseFloat(document.getElementById('salesExtraDisc').value) || 0;
+  const extraDisc = Math.min(rawExtra, afterCustDisc);
+
+  const total = afterCustDisc - extraDisc;
+
+  document.getElementById('salesCartSubtotal').textContent = `DA${subTotal.toFixed(2)}`;
+
+  const cdEl = document.getElementById('salesCartCustDiscount');
+  if (custDiscPct > 0) {
+    cdEl.style.display = 'flex';
+    document.getElementById('salesCartCustDiscVal').textContent = `-DA${custDiscAmount.toFixed(2)} (${custDiscPct}%)`;
+  } else {
+    cdEl.style.display = 'none';
+  }
+
+  document.getElementById('salesCartTotal').textContent = `DA${total.toFixed(2)}`;
+
+  if (_salesCart.length > 0) {
+    document.getElementById('salesPaySection').style.display = '';
+    const payInput = document.getElementById('salesPaidAmount');
+    payInput.max = total;
+    const currVal = parseFloat(payInput.value) || 0;
+    if (currVal === 0 || currVal > total) {
+      payInput.value = total.toFixed(2);
+    }
+    updateSalesRemaining();
+  }
+}
+
+function clampExtraDisc() {
+  const subTotal = _salesCart.reduce((s, item) => s + item.total, 0);
+  let custDiscPct = 0;
+  if (_salesCustomerId) {
+    const c = DB.getCustomer(_salesCustomerId);
+    if (c && c.discount > 0) custDiscPct = c.discount;
+  }
+  const afterCustDisc = subTotal - (subTotal * (custDiscPct / 100));
+  const val = parseFloat(document.getElementById('salesExtraDisc').value) || 0;
+  const clamped = Math.min(Math.max(0, val), afterCustDisc);
+  document.getElementById('salesExtraDisc').value = clamped.toFixed(2);
+  updateSalesTotals();
+}
+
+function updateSalesRemaining() {
+  const total = parseFloat(document.getElementById('salesCartTotal').textContent.replace('DA', '')) || 0;
+  const paid = parseFloat(document.getElementById('salesPaidAmount').value) || 0;
+  const remaining = Math.max(0, total - paid);
+
+  document.getElementById('salesRemainingVal').textContent = `DA${remaining.toFixed(2)}`;
+
+  const remDisplay = document.getElementById('salesRemainingDisplay');
+  const payStatus = document.getElementById('salesPayStatus');
+  const statusText = document.getElementById('salesPayStatusText');
+
+  if (paid >= total) {
+    remDisplay.style.display = 'none';
+    payStatus.className = 'sales-pay-status status-paid';
+    statusText.innerHTML = `<i class="fas fa-check-circle"></i> ${t('sales.fullyPaid')}`;
+  } else if (paid > 0) {
+    remDisplay.style.display = 'flex';
+    payStatus.className = 'sales-pay-status status-partial';
+    statusText.innerHTML = `<i class="fas fa-hourglass-half"></i> ${t('sales.partialPay')}`;
+  } else {
+    remDisplay.style.display = 'none';
+    payStatus.className = 'sales-pay-status status-unpaid';
+    statusText.innerHTML = `<i class="fas fa-info-circle"></i> ${t('sales.enterPaid')}`;
+  }
+}
+
+function setSalesFullPayment() {
+  const total = parseFloat(document.getElementById('salesCartTotal').textContent.replace('DA', '')) || 0;
+  document.getElementById('salesPaidAmount').value = total.toFixed(2);
+  updateSalesRemaining();
+  document.getElementById('salesPaidAmount').focus();
+}
+
+// ===== CHECKOUT =====
+
+// ===== TIMBRE FISCAL =====
+
+function calcTimbreFiscal(ttc) {
+  const cfg = getTimbreConfig();
+  if (!cfg.enabled) return 0;
+  let amount = ttc * (cfg.rate / 100);
+  if (amount < 5) amount = 5;
+  if (amount > 10000) amount = 10000;
+  return amount;
+}
+
+// ===== INVOICE PREVIEW =====
+
+function showInvoicePreview(inv) {
+  const existing = document.getElementById('invoicePreviewModal');
+  if (existing) existing.remove();
+
+  const store = getStoreInfo();
+  const tvaRate = getTvaRate();
+  const montantHT = inv.totalAmount / (1 + tvaRate / 100);
+  const tvaAmount = inv.totalAmount - montantHT;
+  const timbreFiscal = calcTimbreFiscal(inv.totalAmount);
+  const netAPayer = inv.totalAmount + timbreFiscal;
+  const paidAmount = DB.getInvoicePaidAmount(inv.id);
+
+  const customer = inv.customerId ? DB.getCustomer(inv.customerId) : null;
+  const date = new Date(inv.createdAt);
+  const dateStr = date.toLocaleDateString('fr-DZ', { day: '2-digit', month: 'long', year: 'numeric' });
+  const timeStr = date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const totalQty = inv.items.reduce((s, it) => s + it.qty, 0);
+  const originalSubtotal = inv.items.reduce((s, it) => s + (it.originalPrice || it.price) * it.qty, 0);
+  const custDiscAmount = originalSubtotal * ((inv.customerDiscount || 0) / 100);
+  const extraDiscAmount = inv.extraDiscount || 0;
+
+  const modal = document.createElement('div');
+  modal.id = 'invoicePreviewModal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;padding:20px';
+
+  modal.innerHTML = `
+    <div style="background:white;border-radius:12px;max-width:750px;width:100%;max-height:95vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+      <!-- Toolbar -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #e0e0e0;background:#f8f9fa;border-radius:12px 12px 0 0;position:sticky;top:0;z-index:2" dir="ltr">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:14px;font-weight:700;color:#333">Aperçu de la facture</span>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button onclick="printInvoicePreview('color')" style="padding:7px 14px;background:#0066B1;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px">
+            <i class="fas fa-print"></i> Couleur
+          </button>
+          <button onclick="printInvoicePreview('bw')" style="padding:7px 14px;background:#333;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px">
+            <i class="fas fa-adjust"></i> N&amp;B
+          </button>
+          <button onclick="closeInvoicePreview()" style="padding:7px 14px;background:#e0e0e0;color:#555;border:none;border-radius:6px;cursor:pointer;font-size:12px">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Invoice Content -->
+      <div id="invoicePrintArea" style="padding:30px 35px;font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;color:#222;direction:ltr;text-align:left" dir="ltr">
+
+        <!-- Header -->
+        <table style="width:100%;border-collapse:collapse" dir="ltr">
+          <tr>
+            <td style="vertical-align:top;width:60%">
+              <div style="font-size:20px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:1px">${escHtml(store.name)}</div>
+              <div style="font-size:10px;color:#999;margin-top:1px;text-transform:uppercase;letter-spacing:0.5px">Document commercial</div>
+              ${store.address ? `<div style="font-size:11px;color:#555;margin-top:4px">${escHtml(store.address)}</div>` : ''}
+              ${store.phone ? `<div style="font-size:11px;color:#555">Tél: ${escHtml(store.phone)}</div>` : ''}
+              <div style="font-size:10px;color:#999;margin-top:2px">NIF: — &nbsp;|&nbsp; RC: —</div>
+            </td>
+            <td style="vertical-align:top;text-align:right;width:40%">
+              <div style="font-size:30px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:3px">FACTURE</div>
+              <div style="font-size:11px;font-weight:700;color:#0066B1;margin-top:-2px;text-transform:uppercase;letter-spacing:1.5px">DE VENTE</div>
+              <div style="font-size:10px;font-weight:600;color:#888;margin-top:1px;text-transform:uppercase;letter-spacing:1px">Original</div>
+              <div style="font-size:14px;font-weight:700;color:#333;margin-top:6px">N° ${inv.invoiceNumber}</div>
+              <div style="font-size:11px;color:#555;margin-top:4px;line-height:1.6">
+                <div>Date: ${dateStr}</div>
+                <div>Heure: ${timeStr}</div>
+              </div>
+            </td>
+          </tr>
+        </table>
+
+        <!-- Separator -->
+        <div style="border-top:2px solid #1a1a1a;margin:16px 0 14px"></div>
+        <div style="height:1px;background:#ddd;margin-bottom:16px"></div>
+
+        <!-- Customer Info -->
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px" dir="ltr">
+          <tr>
+            <td style="vertical-align:top;width:50%">
+              <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:1px">Client</div>
+              ${customer
+                ? `<div style="font-size:14px;font-weight:600;color:#1a1a1a;margin-top:2px">${escHtml(customer.name)}</div>
+                   ${customer.phone ? `<div style="font-size:11px;color:#666">Tél: ${escHtml(customer.phone)}</div>` : ''}
+                   ${customer.address ? `<div style="font-size:11px;color:#666">Adresse: ${escHtml(customer.address)}</div>` : ''}`
+                : `<div style="font-size:14px;color:#888">Client non enregistré</div>`
+              }
+            </td>
+            <td style="vertical-align:top;text-align:right;width:50%">
+              ${paidAmount < inv.totalAmount
+                ? `<div style="display:inline-block;padding:4px 14px;background:#fff3e0;color:#e65100;border:1px solid #ffcc80;border-radius:4px;font-size:11px;font-weight:700">NON SOLDÉE</div>`
+                : `<div style="display:inline-block;padding:4px 14px;background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;border-radius:4px;font-size:11px;font-weight:700">SOLDÉE</div>`
+              }
+            </td>
+          </tr>
+        </table>
+
+        <!-- Items Table -->
+        <table style="width:100%;border-collapse:collapse;font-size:12px" dir="ltr">
+          <thead>
+            <tr style="background:#f2f2f2;border-bottom:2px solid #1a1a1a">
+              <th style="padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd">Désignation</th>
+              <th style="padding:8px 10px;text-align:center;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:60px">Qté</th>
+              <th style="padding:8px 10px;text-align:right;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:100px">Prix unitaire</th>
+              <th style="padding:8px 10px;text-align:right;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:100px">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${inv.items.map((item, i) => `
+              <tr style="${i % 2 === 0 ? 'background:#fafafa' : ''}">
+                <td style="padding:7px 10px;border:1px solid #eee;font-size:12px;color:#333">${escHtml(item.name)}</td>
+                <td style="padding:7px 10px;border:1px solid #eee;text-align:center;font-size:12px;color:#333">${item.qty}</td>
+                <td style="padding:7px 10px;border:1px solid #eee;text-align:right;font-size:12px;color:#333">
+                  ${(item.originalPrice && item.originalPrice !== item.price) ? `<span style="text-decoration:line-through;color:#999;font-size:10px">${item.originalPrice.toFixed(2)}</span> ` : ''}
+                  ${item.price.toFixed(2)} DA</td>
+                <td style="padding:7px 10px;border:1px solid #eee;text-align:right;font-size:12px;font-weight:600;color:#333">${(item.price * item.qty).toFixed(2)} DA</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+
+        <!-- Totals -->
+        <table style="width:100%;border-collapse:collapse;margin-top:10px" dir="ltr">
+          <tr>
+            <td style="width:60%"></td>
+            <td style="width:40%">
+              <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <tr>
+                  <td style="padding:4px 10px;text-align:left;color:#666">Montant HT</td>
+                  <td style="padding:4px 10px;text-align:right;font-weight:600;color:#333">${montantHT.toFixed(2)} DA</td>
+                </tr>
+                ${tvaRate > 0 ? `
+                <tr>
+                  <td style="padding:4px 10px;text-align:left;color:#666">TVA (${tvaRate}%)</td>
+                  <td style="padding:4px 10px;text-align:right;font-weight:600;color:#333">${tvaAmount.toFixed(2)} DA</td>
+                </tr>` : ''}
+                <tr>
+                  <td style="padding:4px 10px;text-align:left;color:#666">Montant TTC</td>
+                  <td style="padding:4px 10px;text-align:right;font-weight:700;color:#1a1a1a;font-size:15px">${inv.totalAmount.toFixed(2)} DA</td>
+                </tr>
+                ${timbreFiscal > 0 ? `
+                <tr>
+                  <td style="padding:4px 10px;text-align:left;color:#e65100">Timbre Fiscal</td>
+                  <td style="padding:4px 10px;text-align:right;font-weight:600;color:#e65100;font-size:13px">${timbreFiscal.toFixed(2)} DA</td>
+                </tr>
+                <tr style="border-top:2px solid #1a1a1a">
+                  <td style="padding:6px 10px;text-align:left;font-weight:800;font-size:16px;color:#1a1a1a">Net à payer</td>
+                  <td style="padding:6px 10px;text-align:right;font-weight:900;font-size:18px;color:#0066B1">${netAPayer.toFixed(2)} DA</td>
+                </tr>` : `
+                <tr style="border-top:2px solid #1a1a1a">
+                  <td style="padding:6px 10px;text-align:left;font-weight:800;font-size:16px;color:#1a1a1a">Net à payer</td>
+                  <td style="padding:6px 10px;text-align:right;font-weight:900;font-size:18px;color:#0066B1">${inv.totalAmount.toFixed(2)} DA</td>
+                </tr>`}
+              </table>
+            </td>
+          </tr>
+        </table>
+
+        <!-- Paid / Remaining -->
+        ${paidAmount < inv.totalAmount ? `
+        <div style="margin-top:14px;padding:10px 14px;background:#fff3e0;border:1px solid #ffcc80;border-radius:6px;font-size:12px;color:#e65100" dir="ltr">
+          <strong>Montant payé:</strong> ${paidAmount.toFixed(2)} DA &nbsp;|&nbsp;
+          <strong>Reste à payer:</strong> ${(inv.totalAmount - paidAmount).toFixed(2)} DA
+        </div>` : `
+        <div style="margin-top:14px;padding:10px 14px;background:#e8f5e9;border:1px solid #a5d6a7;border-radius:6px;font-size:12px;color:#2e7d32" dir="ltr">
+          <strong>Payée intégralement</strong> — ${paidAmount.toFixed(2)} DA
+        </div>`}
+
+        <!-- Discounts detailed -->
+        ${(custDiscAmount > 0 || extraDiscAmount > 0) ? `
+        <div style="margin-top:12px;padding:10px 14px;background:#fafafa;border:1px solid #eee;border-radius:6px;font-size:11px;color:#555" dir="ltr">
+          <div style="font-weight:700;color:#e65100;margin-bottom:6px"><i class="fas fa-tags"></i> Remises appliquées</div>
+          <div style="display:flex;justify-content:space-between;padding:2px 0">
+            <span>Sous-total avant remise</span>
+            <span style="font-weight:600">${originalSubtotal.toFixed(2)} DA</span>
+          </div>
+          ${custDiscAmount > 0 ? `
+          <div style="display:flex;justify-content:space-between;padding:2px 0">
+            <span>Remise client (${inv.customerDiscount}%)</span>
+            <span style="font-weight:600;color:#e65100">-${custDiscAmount.toFixed(2)} DA</span>
+          </div>` : ''}
+          ${extraDiscAmount > 0 ? `
+          <div style="display:flex;justify-content:space-between;padding:2px 0">
+            <span>Remise supplémentaire</span>
+            <span style="font-weight:600;color:#e65100">-${extraDiscAmount.toFixed(2)} DA</span>
+          </div>` : ''}
+          <div style="display:flex;justify-content:space-between;padding:4px 0 0;margin-top:4px;border-top:1px dashed #ddd;font-weight:700;color:#333">
+            <span>Total des remises</span>
+            <span style="color:#e65100">-${(custDiscAmount + extraDiscAmount).toFixed(2)} DA</span>
+          </div>
+        </div>` : ''}
+
+        <!-- Footer with stamp & signature -->
+        <div style="border-top:2px solid #1a1a1a;margin-top:24px;padding-top:14px">
+          <table style="width:100%;border-collapse:collapse" dir="ltr">
+            <tr>
+              <td style="width:50%;vertical-align:bottom">
+                <div style="font-size:10px;color:#888;margin-bottom:4px">${escHtml(store.name)}</div>
+                <div style="font-size:9px;color:#999">${store.address ? escHtml(store.address) + '<br>' : ''}Tél: ${store.phone || '—'}</div>
+                <div style="font-size:9px;color:#999;margin-top:2px">NIF: — &nbsp;|&nbsp; Facture N° ${inv.invoiceNumber}</div>
+              </td>
+              <td style="width:50%;text-align:right;vertical-align:bottom">
+                <div style="font-size:10px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:1px">Cachet &amp; signature</div>
+                <div style="height:50px;margin-top:6px;border-bottom:1px solid #ccc;width:180px;margin-left:auto"></div>
+                <div style="font-size:9px;color:#999;margin-top:2px">Lu et approuvé</div>
+              </td>
+            </tr>
+          </table>
+        </div>
+        <div style="text-align:center;margin-top:12px;font-size:9px;color:#bbb;letter-spacing:0.5px">
+          ${escHtml(store.name)} · ${dateStr} · ${inv.invoiceNumber}
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+}
+
+function printInvoicePreview(mode) {
+  const content = document.getElementById('invoicePrintArea');
+  if (!content) return;
+
+  const store = getStoreInfo();
+  const win = window.open('', '', 'width=800,height=600');
+  if (!win) { alert('Veuillez autoriser les popups pour imprimer'); return; }
+
+  const styles = document.querySelectorAll('link[rel="stylesheet"], style');
+  let styleHtml = '';
+  styles.forEach(s => styleHtml += s.outerHTML);
+
+  const isBw = mode === 'bw';
+
+  win.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>Facture</title>
+      ${styleHtml}
+      <style>
+        @page { margin: 10mm; size: A4; }
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
+        * { box-sizing: border-box; }
+        #invoicePrintArea { padding: 30px 35px; }
+        @media print {
+          body { margin: 0; padding: 0; }
+          #invoicePrintArea { padding: 0; }
+        }
+        ${isBw ? `
+        #invoicePrintArea, #invoicePrintArea * {
+          color: #000 !important;
+          background: #fff !important;
+          background-color: #fff !important;
+          border-color: #000 !important;
+          text-shadow: none !important;
+          box-shadow: none !important;
+        }
+        #invoicePrintArea table th,
+        #invoicePrintArea table td {
+          border-color: #000 !important;
+        }
+        #invoicePrintArea table thead tr {
+          background: #eee !important;
+          background-color: #eee !important;
+        }
+        #invoicePrintArea tbody tr:nth-child(even) {
+          background: #f5f5f5 !important;
+          background-color: #f5f5f5 !important;
+        }
+        ` : ''}
+      </style>
+    </head>
+    <body>
+      ${content.outerHTML}
+      <script>window.print();window.close();<\/script>
+    </body>
+    </html>
+  `);
+  win.document.close();
+}
+
+function closeInvoicePreview() {
+  const modal = document.getElementById('invoicePreviewModal');
+  if (modal) modal.remove();
+}
+
+// ===== CHECKOUT =====
+
+function confirmSalesCheckout() {
+  if (_salesCart.length === 0) { alert(t('sales.cartEmptyAlert')); return; }
+
+  let totalAmount = 0;
+  let custDiscPct = 0;
+  let extraDiscAmount = 0;
+  const invoiceItems = [];
+  let totalProfit = 0;
+
+  if (_salesCustomerId) {
+    const c = DB.getCustomer(_salesCustomerId);
+    if (c && c.discount > 0) custDiscPct = c.discount;
+  }
+
+  const subTotal = _salesCart.reduce((s, item) => s + item.total, 0);
+  const custDiscAmount = subTotal * (custDiscPct / 100);
+  const afterCustDisc = subTotal - custDiscAmount;
+  extraDiscAmount = parseFloat(document.getElementById('salesExtraDisc').value) || 0;
+  if (extraDiscAmount > afterCustDisc) extraDiscAmount = afterCustDisc;
+  totalAmount = afterCustDisc - extraDiscAmount;
+
+  const productUpdates = [];
+  for (const item of _salesCart) {
+    const prod = DB.getProduct(item.productId);
+    if (!prod || prod.quantity < item.qty) {
+      alert(`"${item.name}" ${t('sales.notAvailableQty')}\n${t('sales.available')} ${prod ? prod.quantity : 0}`);
+      return;
+    }
+
+    const itemRatio = item.total / subTotal;
+    const itemDisc = custDiscAmount * itemRatio;
+    const itemExtraDisc = extraDiscAmount * itemRatio;
+    const finalPrice = item.price - (itemDisc / item.qty) - (itemExtraDisc / item.qty);
+    const itemTotal = finalPrice * item.qty;
+
+    const buyPrice = prod.buyPrice || 0;
+    totalProfit += (finalPrice - buyPrice) * item.qty;
+
+    productUpdates.push({ id: item.productId, changes: { quantity: prod.quantity - item.qty } });
+
+    invoiceItems.push({
+      productId: item.productId,
+      barcode: item.barcode,
+      name: item.name,
+      qty: item.qty,
+      price: finalPrice,
+      total: itemTotal,
+      originalPrice: item.price,
+      discount: itemDisc + itemExtraDisc,
+    });
+  }
+
+  const paidAmount = Math.min(parseFloat(document.getElementById('salesPaidAmount').value) || 0, totalAmount);
+  if (paidAmount > totalAmount) { alert(t('sales.paidExceedsTotal')); return; }
+
+  // Batch update all product quantities at once
+  DB.updateProductsBatch(productUpdates);
+
+  const inv = DB.addInvoice({
+    customerId: _salesCustomerId,
+    type: 'customer',
+    date: Date.now(),
+    items: invoiceItems,
+    totalAmount,
+    customerDiscount: custDiscPct,
+    extraDiscount: extraDiscAmount,
+    profit: totalProfit,
+  });
+
+  if (paidAmount > 0) {
+    DB.addPayment({
+      customerId: _salesCustomerId,
+      invoiceId: inv.id,
+      amount: paidAmount,
+      note: paidAmount >= totalAmount ? t('sales.fullPaymentNote') : t('sales.partialPaymentNote'),
+    });
+  }
+
+  if (custDiscAmount > 0) {
+    DB.addDiscount({
+      invoiceId: inv.id,
+      customerId: _salesCustomerId,
+      customerName: _salesCustomerId ? (DB.getCustomer(_salesCustomerId)?.name || '') : '',
+      type: t('sales.discountType'),
+      amount: custDiscAmount,
+      percentage: custDiscPct,
+      originalTotal: subTotal,
+      finalTotal: afterCustDisc,
+    });
+  }
+  if (extraDiscAmount > 0) {
+    DB.addDiscount({
+      invoiceId: inv.id,
+      customerId: _salesCustomerId,
+      customerName: _salesCustomerId ? (DB.getCustomer(_salesCustomerId)?.name || '') : '',
+      type: t('sales.discountManual'),
+      amount: extraDiscAmount,
+      percentage: 0,
+      originalTotal: afterCustDisc,
+      finalTotal: totalAmount,
+    });
+  }
+
+  if (_salesCustomerId) {
+    const customers = DB.getCustomers();
+    const cIdx = customers.findIndex(c => c.id === _salesCustomerId);
+    if (cIdx !== -1) {
+      customers[cIdx].balance = (parseFloat(customers[cIdx].balance) || 0) + (totalAmount - paidAmount);
+      DB.saveCustomers(customers);
+    }
+  }
+
+  _salesCart = [];
+  _salesCustomerId = null;
+  document.getElementById('salesSelectedCust').style.display = 'none';
+  document.getElementById('salesWalkinLabel').style.display = 'none';
+  document.getElementById('salesCustSearch').value = '';
+  document.getElementById('salesPaySection').style.display = 'none';
+  document.getElementById('salesExtraDisc').value = '0';
+  renderSalesCart();
+  renderSalesProducts();
+
+  showInvoicePreview(inv);
+  document.getElementById('salesBarcodeScan').focus();
+}
+
+function clearSalesCart() {
+  if (_salesCart.length === 0) return;
+  if (!confirm(t('sales.clearCartConfirm'))) return;
+  _salesCart = [];
+  _salesCustomerId = null;
+  document.getElementById('salesSelectedCust').style.display = 'none';
+  document.getElementById('salesWalkinLabel').style.display = 'none';
+  document.getElementById('salesCustSearch').value = '';
+  document.getElementById('salesPaySection').style.display = 'none';
+  document.getElementById('salesExtraDisc').value = '0';
+  renderSalesCart();
+  renderSalesProducts();
+  document.getElementById('salesBarcodeScan').focus();
+}

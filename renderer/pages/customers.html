@@ -1,0 +1,87 @@
+<div class="page" id="page-customers">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-users"></i> <span data-i18n="customers.title">العملاء</span></h1>
+      <p><span data-i18n="customers.sub">إدارة العملاء</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <!-- Total Debts -->
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#e3f2fd;color:#1565c0"><i class="fas fa-users"></i></div>
+        <div class="stat-info">
+          <div class="stat-value" id="custTotalCount">0</div>
+          <div class="stat-label" data-i18n="customers.totalCount">إجمالي العملاء</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#fff3e0;color:#e65100"><i class="fas fa-hand-holding-usd"></i></div>
+        <div class="stat-info">
+          <div class="stat-value" id="custTotalDebts">DA0</div>
+          <div class="stat-label" data-i18n="customers.totalDebts">إجمالي الديون على العملاء</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#e8f5e9;color:#2e7d32"><i class="fas fa-money-bill-wave"></i></div>
+        <div class="stat-info">
+          <div class="stat-value" id="custTotalPaid">DA0</div>
+          <div class="stat-label" data-i18n="customers.totalPaid">إجمالي المدفوع</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="search-bar">
+        <i class="fas fa-search"></i>
+        <input type="text" data-i18n-placeholder="customers.search" placeholder="بحث عن عميل..." id="custSearch">
+      </div>
+      <button class="btn btn-primary" onclick="openAddCustomerModal()"><i class="fas fa-user-plus"></i> <span data-i18n="customers.add">إضافة عميل</span></button>
+    </div>
+
+    <div id="customersList"></div>
+  </div>
+</div>
+
+<!-- Add Customer Modal -->
+<div class="modal-overlay" id="addCustomerModal">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-header">
+      <h3><i class="fas fa-user-plus"></i> <span data-i18n="customers.addModalTitle">إضافة عميل جديد</span></h3>
+      <button class="modal-close" onclick="closeAddCustomerModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label data-i18n="customers.formName">اسم العميل</label> <span class="required">*</span>
+        <input type="text" class="form-input" id="custName" data-i18n-placeholder="customers.formNamePl" placeholder="مثال: أحمد علي">
+      </div>
+      <div class="form-group">
+        <label data-i18n="customers.formPhone">رقم الهاتف</label>
+        <input type="text" class="form-input" id="custPhone" placeholder="مثال: 0555123456" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="customers.formAddress">العنوان</label>
+        <input type="text" class="form-input" id="custAddress" placeholder="مثال: الجزائر العاصمة">
+      </div>
+      <div class="form-group">
+        <label data-i18n="customers.formDiscount">نسبة الخصم (%)</label>
+        <input type="number" class="form-input no-spinner" id="custDiscount" value="0" min="0" max="100" step="0.001">
+        <small style="color:var(--silver-500);font-size:11px" data-i18n="customers.formDiscountHelp">من 0.001% إلى 100% - اختياري</small>
+      </div>
+      <div class="form-group">
+        <label data-i18n="customers.formPhoto">الصورة الشخصية (اختياري)</label>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div id="custPhotoPreview" style="width:64px;height:64px;border-radius:50%;background:var(--silver-200);display:flex;align-items:center;justify-content:center;overflow:hidden;border:2px solid var(--silver-300);flex-shrink:0">
+            <i class="fas fa-user" style="font-size:24px;color:var(--silver-400)"></i>
+          </div>
+          <input type="file" accept="image/*" id="custPhotoInput" style="font-size:12px">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeAddCustomerModal()"><span data-i18n="common.cancel">إلغاء</span></button>
+      <button class="btn btn-success" onclick="confirmAddCustomer()"><i class="fas fa-check"></i> <span data-i18n="common.save">حفظ</span></button>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,264 @@
+<div class="page" id="page-connection">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-cloud"></i> <span data-i18n="connection.title">اعدادات الاتصال</span></h1>
+      <p><span data-i18n="connection.sub">إعدادات الاتصال السحابي وإدارة المحلات</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+
+    <!-- USER INFO CARD -->
+    <div class="conn-section" id="connUserInfo" style="display:none;">
+      <div class="conn-section-header">
+        <i class="fas fa-user"></i>
+        <h3 data-i18n="connection.userInfoTitle">معلومات المستخدم</h3>
+      </div>
+      <div class="conn-store-body">
+        <div class="conn-store-row" id="connEmailRow">
+          <div class="conn-store-label" data-i18n="connection.emailLabel">البريد الإلكتروني</div>
+          <div class="conn-store-value" id="connUserEmail">-</div>
+        </div>
+        <div class="conn-store-row">
+          <div class="conn-store-label" data-i18n="connection.codeLabel">الرمز الخاص</div>
+          <div class="conn-store-code" id="connUserCode">-</div>
+        </div>
+        <div class="conn-store-row">
+          <div class="conn-store-label" data-i18n="connection.storeTypeLabel">نوع المحل</div>
+          <div class="conn-store-value" id="connUserStoreType">-</div>
+        </div>
+        <div class="conn-store-row" id="connUserParentRow" style="display:none;">
+          <div class="conn-store-label" data-i18n="connection.mainCodeLabel">الرمز الرئيسي</div>
+          <div class="conn-store-code" id="connUserParentCode">-</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONNECTION STATUS -->
+    <div class="conn-status-card" id="connStatusCard">
+      <div class="conn-status-icon" id="connStatusIcon"><i class="fas fa-cloud"></i></div>
+      <div class="conn-status-info">
+        <div class="conn-status-title" id="connStatusTitle" data-i18n="connection.statusTitle">غير متصل</div>
+        <div class="conn-status-desc" id="connStatusDesc" data-i18n="connection.statusDesc">أدخل بيانات الاتصال للبدء</div>
+      </div>
+      <div class="conn-status-badge" id="connStatusBadge" data-i18n="connection.statusBadge">غير متصل</div>
+    </div>
+
+    <!-- TABS -->
+    <div class="conn-tabs">
+      <button class="conn-tab active" data-tab="setup" onclick="connSwitchTab('setup')">
+        <i class="fas fa-plug"></i> <span data-i18n="connection.connTab">الاتصال</span>
+      </button>
+      <button class="conn-tab" data-tab="sync" onclick="connSwitchTab('sync')" id="connTabSyncBtn">
+        <i class="fas fa-sync-alt"></i> <span data-i18n="connection.backupTab">النسخ الاحتياطي</span>
+      </button>
+      <button class="conn-tab" data-tab="branches" onclick="connSwitchTab('branches')">
+        <i class="fas fa-code-branch"></i> <span data-i18n="connection.branchesTab">الفروع</span>
+      </button>
+      <button class="conn-tab" data-tab="recover" onclick="connSwitchTab('recover')" id="connTabRecoverBtn">
+        <i class="fas fa-key"></i> <span data-i18n="connection.recoveryTab">استرداد الحساب</span>
+      </button>
+    </div>
+
+    <!-- TAB: SETUP -->
+    <div class="conn-tab-content active" id="connTabSetup">
+      <!-- Cloud Status -->
+      <div class="conn-card">
+        <div class="conn-card-header">
+          <i class="fas fa-cloud"></i> <span data-i18n="connection.cloudStatusCard">حالة الاتصال السحابي</span>
+        </div>
+        <div class="conn-card-body">
+          <p class="conn-info-text" data-i18n="connection.cloudStatusDesc">الاتصال بالسحابة تلقائي. جميع بياناتك محفوظة بأمان.</p>
+          <div class="conn-actions">
+            <button class="btn btn-danger btn-lg" onclick="connLogout()" style="margin-right:auto;">
+              <i class="fas fa-sign-out-alt"></i> <span data-i18n="connection.logoutBtn">تسجيل خروج</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: SYNC -->
+    <div class="conn-tab-content" id="connTabSync">
+      <div class="conn-card">
+        <div class="conn-card-header">
+          <i class="fas fa-cloud-upload-alt"></i> <span data-i18n="connection.uploadCard">رفع نسخة احتياطية</span>
+        </div>
+        <div class="conn-card-body">
+          <p class="conn-info-text" data-i18n="connection.uploadDesc">سيتم استبدال النسخة الموجودة في السحابة بالنسخة الحالية لضمان عدم امتلاء المساحة.</p>
+          <div class="conn-auto-toggle">
+            <label class="switch">
+              <input type="checkbox" id="connAutoSync" onchange="connToggleAutoSync()">
+              <span class="slider"></span>
+            </label>
+            <span data-i18n="connection.autoBackup">النسخ الاحتياطي التلقائي</span>
+          </div>
+          <div id="connAutoSyncSettings" style="display:none;">
+            <div class="form-group">
+              <label data-i18n="connection.backupInterval">الفترة (بالدقائق)</label>
+              <select class="form-input" id="connSyncInterval" onchange="connUpdateSyncInterval()">
+                <option value="60000" data-i18n="connection.min1">1 دقيقة</option>
+                <option value="120000" selected data-i18n="connection.min2">2 دقيقة</option>
+                <option value="300000" data-i18n="connection.min5">5 دقائق</option>
+                <option value="600000" data-i18n="connection.min10">10 دقائق</option>
+                <option value="1800000" data-i18n="connection.min30">30 دقيقة</option>
+              </select>
+            </div>
+          </div>
+          <div class="conn-sync-actions">
+            <button class="btn btn-primary" onclick="connUploadBackup()" id="connUploadBtn">
+              <i class="fas fa-cloud-upload-alt"></i> <span data-i18n="connection.uploadBtn">رفع نسخة احتياطية</span>
+            </button>
+            <button class="btn btn-danger" onclick="connDownloadBackup()" id="connDownloadBtn">
+              <i class="fas fa-cloud-download-alt"></i> <span data-i18n="connection.restoreBtn">استرداد نسخة احتياطية</span>
+            </button>
+          </div>
+          <div class="conn-sync-result" id="connSyncResult"></div>
+          <div class="conn-last-sync" id="connLastSyncInfo"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: BRANCHES -->
+    <div class="conn-tab-content" id="connTabBranches">
+      <div class="conn-card">
+        <div class="conn-card-header">
+          <i class="fas fa-code-branch"></i> <span data-i18n="connection.branchesCard">الفروع</span>
+        </div>
+        <div class="conn-card-body">
+          <div id="connBranchesNotMain" style="display:none;">
+            <p class="conn-info-text text-muted" data-i18n="connection.branchesDesc">إدارة الفروع متاحة فقط للمحل الرئيسي.</p>
+          </div>
+          <div id="connBranchesMain">
+            <!-- Add Branch Form -->
+            <div id="connAddBranchForm" style="display:none;margin-bottom:20px;">
+              <div class="conn-branch-form">
+                <h4 style="margin-bottom:12px;"><i class="fas fa-plus-circle"></i> <span data-i18n="connection.addBranch">إضافة فرع جديد</span></h4>
+                <div class="form-group">
+                  <label data-i18n="connection.branchName">اسم الفرع</label>
+                  <input type="text" class="form-input" id="connBranchName" placeholder="مثال: فرع وسط المدينة" data-i18n-placeholder="connection.branchNamePlaceholder">
+                </div>
+                <div class="form-group">
+                  <label data-i18n="connection.branchPassword">كلمة المرور</label>
+                  <input type="text" class="form-input" id="connBranchPassword" placeholder="كلمة مرور الفرع" data-i18n-placeholder="connection.branchPasswordPlaceholder">
+                </div>
+                <div class="conn-actions">
+                  <button class="btn btn-primary" onclick="connSaveBranch()">
+                    <i class="fas fa-save"></i> <span data-i18n="connection.saveBranch">حفظ الفرع</span>
+                  </button>
+                  <button class="btn" onclick="connCancelAddBranch()">
+                    <i class="fas fa-times"></i> <span data-i18n="common.cancel">إلغاء</span>
+                  </button>
+                </div>
+                <div class="conn-sync-result" id="connAddBranchResult"></div>
+              </div>
+            </div>
+
+            <div class="conn-actions" style="margin-bottom:16px;">
+              <button class="btn btn-primary" onclick="connShowAddBranch()">
+                <i class="fas fa-plus"></i> <span data-i18n="connection.addNewBranch">اضافة فرع جديد</span>
+              </button>
+              <button class="btn" onclick="connRefreshBranches()">
+                <i class="fas fa-sync"></i> <span data-i18n="connection.refreshBtn">تحديث</span>
+              </button>
+            </div>
+            <div id="connBranchesList"></div>
+            <div id="connBranchesEmpty" class="conn-empty-state">
+              <i class="fas fa-code-branch"></i>
+              <p data-i18n="connection.noBranches">لا توجد فروع مسجلة</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Branch Inventory View -->
+      <div class="conn-card" id="connBranchInvCard" style="display:none;">
+        <div class="conn-card-header">
+          <i class="fas fa-warehouse"></i>
+          <span data-i18n="connection.branchStock">مخزون الفرع: </span><span id="connBranchInvTitle"></span>
+          <button class="btn btn-sm" style="margin-right:auto;margin-left:0;" onclick="connCloseBranchInv()">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="conn-card-body">
+          <div id="connBranchInvContent"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: RECOVER (Direct lookup by email) -->
+    <div class="conn-tab-content" id="connTabRecover">
+      <div class="conn-card">
+        <div class="conn-card-header">
+          <i class="fas fa-key"></i> <span data-i18n="connection.recoveryCard">استرداد الحساب / كلمة المرور</span>
+        </div>
+        <div class="conn-card-body">
+          <p class="conn-info-text" data-i18n="connection.recoveryDesc">أدخل البريد الإلكتروني المرتبط بالحساب لعرض الرمز وكلمة المرور.</p>
+
+          <!-- Step 1: Email input -->
+          <div id="connRecStep1">
+            <div class="form-group">
+              <label data-i18n="connection.emailLabel">البريد الإلكتروني</label>
+              <input type="email" class="form-input" id="connRecEmail" placeholder="example@email.com">
+            </div>
+            <button class="btn btn-primary" onclick="connRecLookup()" id="connRecLookupBtn">
+              <i class="fas fa-search"></i> <span data-i18n="connection.searchBtn">بحث</span>
+            </button>
+            <div class="conn-sync-result" id="connRecEmailStatus"></div>
+          </div>
+
+          <!-- Step 2: Show result -->
+          <div id="connRecStep2" style="display:none;">
+            <div class="conn-card" style="background:#f0f7ff;border:1px solid #0066B1;">
+              <div class="conn-card-body">
+                <div class="conn-store-row">
+                  <div class="conn-store-label" data-i18n="connection.storeNameLabel">اسم المحل</div>
+                  <div class="conn-store-value" id="connRecStoreName" style="font-weight:bold;">-</div>
+                </div>
+                <div class="conn-store-row">
+                  <div class="conn-store-label" data-i18n="connection.codeResult">الرمز</div>
+                  <div class="conn-store-code" id="connRecCode" dir="ltr" style="font-size:18px;">-</div>
+                </div>
+                <div class="conn-store-row">
+                  <div class="conn-store-label" data-i18n="connection.passwordResult">كلمة المرور</div>
+                  <div class="conn-store-value" id="connRecPassword" style="font-size:18px;font-weight:bold;color:#dc3545;">-</div>
+                </div>
+              </div>
+            </div>
+            <div class="conn-actions" style="margin-top:16px;gap:12px;">
+              <button class="btn btn-primary" onclick="connRecShowResetForm()">
+                <i class="fas fa-lock"></i> <span data-i18n="connection.changePassword">تغيير كلمة المرور</span>
+              </button>
+              <button class="btn" onclick="connRecBackToStep1()">
+                <i class="fas fa-arrow-right"></i> <span data-i18n="connection.searchAgain">بحث مرة أخرى</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Step 3: Reset password -->
+          <div id="connRecStep3" style="display:none;">
+            <div class="form-group">
+              <label data-i18n="connection.newPasswordLabel">كلمة المرور الجديدة</label>
+              <input type="password" class="form-input" id="connRecNewPass" placeholder="4 أحرف على الأقل" data-i18n-placeholder="connection.newPasswordPlaceholder">
+            </div>
+            <div class="form-group">
+              <label data-i18n="connection.confirmPasswordLabel">تأكيد كلمة المرور</label>
+              <input type="password" class="form-input" id="connRecConfirmPass" placeholder="أعد إدخال كلمة المرور" data-i18n-placeholder="connection.confirmPasswordPlaceholder">
+            </div>
+            <div class="conn-actions">
+              <button class="btn btn-primary" onclick="connRecDoReset()" id="connRecResetBtn">
+                <i class="fas fa-save"></i> <span data-i18n="connection.saveNewPassword">حفظ كلمة المرور الجديدة</span>
+              </button>
+              <button class="btn" onclick="connRecBackToStep2()">
+                <i class="fas fa-arrow-right"></i> <span data-i18n="connection.backBtn">رجوع</span>
+              </button>
+            </div>
+            <div class="conn-sync-result" id="connRecResetStatus"></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
