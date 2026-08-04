@@ -34,20 +34,90 @@ function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ===== PRODUCT GROUPS (merge same name+barcode, FIFO) =====
+
+var _salesGroupList = [];
+
+function salesGroupKey(p) {
+  return (p.name || '') + '\u0001' + (p.barcode || '');
+}
+
+function getSalesGroups() {
+  const map = new Map();
+  const groups = [];
+  for (const p of _salesProducts) {
+    const key = salesGroupKey(p);
+    let g = map.get(key);
+    if (!g) {
+      g = { key, name: p.name, barcode: p.barcode, records: [] };
+      map.set(key, g);
+      groups.push(g);
+    }
+    g.records.push(p);
+  }
+  for (const g of groups) {
+    g.records.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  }
+  return groups;
+}
+
+function getSalesGroupByKey(key) {
+  for (const g of getSalesGroups()) {
+    if (g.key === key) return g;
+  }
+  return null;
+}
+
+function getGroupAvailableQty(group) {
+  return group.records.reduce((s, r) => s + (r.quantity || 0), 0);
+}
+
+function getGroupActivePrice(group) {
+  const r = group.records.find(r => (r.quantity || 0) > 0);
+  return r ? (r.sellPrice || 0) : 0;
+}
+
+function allocateSalesLine(line, key) {
+  const g = getSalesGroupByKey(key);
+  if (!g) {
+    line.entries = [];
+    line.qty = 0;
+    line.price = 0;
+    line.total = 0;
+    return;
+  }
+  const entries = [];
+  let remaining = line.qty;
+  let latestPrice = 0;
+  for (const r of g.records) {
+    if (remaining <= 0) break;
+    const take = Math.min(r.quantity || 0, remaining);
+    if (take > 0) {
+      entries.push({ productId: r.id, qty: take, price: r.sellPrice || 0, total: take * (r.sellPrice || 0) });
+      latestPrice = r.sellPrice || 0;
+      remaining -= take;
+    }
+  }
+  line.entries = entries;
+  line.price = latestPrice;
+  line.total = entries.reduce((s, e) => s + e.total, 0);
+}
+
 // ===== PRODUCT GRID =====
 
 function renderSalesProducts(filter) {
   const grid = document.getElementById('salesProductGrid');
-  let list = _salesProducts;
+  let groups = getSalesGroups();
   if (filter) {
     const q = filter.toLowerCase();
-    list = list.filter(p => p.name.toLowerCase().includes(q) || p.barcode.includes(q));
+    groups = groups.filter(g => g.name.toLowerCase().includes(q) || g.barcode.includes(q));
   }
+  _salesGroupList = groups;
 
   const count = document.getElementById('salesProdCount');
-  if (count) count.textContent = `${list.length} ${t('common.product')}`;
+  if (count) count.textContent = `${groups.length} ${t('common.product')}`;
 
-  if (list.length === 0) {
+  if (groups.length === 0) {
     grid.innerHTML = `<div class="sales-grid-empty">
       <i class="fas fa-box-open"></i>
       <p>${filter ? t('sales.emptyResults') : t('sales.emptyProducts')}</p>
@@ -56,29 +126,36 @@ function renderSalesProducts(filter) {
   }
 
   const start = _salesPage * _salesPerPage;
-  const end = Math.min(start + _salesPerPage, list.length);
-  const pageItems = list.slice(start, end);
+  const end = Math.min(start + _salesPerPage, groups.length);
+  const pageItems = groups.slice(start, end);
 
-  grid.innerHTML = pageItems.map(p => {
-    const outOfStock = p.quantity <= 0;
-    const lowStock = p.quantity > 0 && p.quantity <= 5;
+  grid.innerHTML = pageItems.map((g, pi) => {
+    const gi = start + pi;
+    const totalQty = getGroupAvailableQty(g);
+    const price = getGroupActivePrice(g);
+    const outOfStock = totalQty <= 0;
+    const lowStock = totalQty > 0 && totalQty <= 5;
+    const multi = g.records.length > 1;
     return `<div class="sp-card ${outOfStock ? 'sp-card-oos' : ''}"
-      onclick="${outOfStock ? '' : `addToSalesCart('${p.id}')`}"
+      onclick="${outOfStock ? '' : `addSalesGroupToCart(${gi})`}"
       ${outOfStock ? `title="${t('sales.unavailable')}"` : ''}>
       <div class="sp-card-top">
-        <span class="sp-card-name">${escHtml(p.name)}</span>
+        <span class="sp-card-name">${escHtml(g.name)}</span>
         ${lowStock ? `<span class="sp-card-low" title="${t('sales.lowStockTip')}">!</span>` : ''}
       </div>
-      <div class="sp-card-bar" dir="ltr">${p.barcode}</div>
+      <div class="sp-card-bar" dir="ltr">${escHtml(g.barcode)}</div>
       <div class="sp-card-footer">
-        <span class="sp-card-price">DA${p.sellPrice.toFixed(2)}</span>
-        <span class="sp-card-qty ${lowStock ? 'sp-card-qty-low' : ''}">${p.quantity}</span>
+        <span class="sp-card-price">DA${price.toFixed(2)}</span>
+        <span style="display:flex;align-items:center;gap:6px">
+          ${multi ? `<span class="sp-card-batches" title="${t('sales.multiBatches')}"><i class="fas fa-layer-group"></i>${g.records.length}</span>` : ''}
+          <span class="sp-card-qty ${lowStock ? 'sp-card-qty-low' : ''}">${totalQty}</span>
+        </span>
       </div>
     </div>`;
   }).join('');
 
-  if (list.length > _salesPerPage) {
-    const totalPages = Math.ceil(list.length / _salesPerPage);
+  if (groups.length > _salesPerPage) {
+    const totalPages = Math.ceil(groups.length / _salesPerPage);
     grid.insertAdjacentHTML('afterend', `<div id="salesPager" style="display:flex;justify-content:center;align-items:center;gap:12px;padding:12px 0;grid-column:1/-1">
       <button class="btn btn-sm" onclick="salesPrevPage()" ${_salesPage <= 0 ? 'disabled' : ''}>&laquo; ${t('common.back')}</button>
       <span style="font-size:12px;color:var(--silver-500)">${t('common.page')} ${_salesPage + 1} ${t('common.of')} ${totalPages}</span>
@@ -121,18 +198,21 @@ function handleSalesBarcodeScan(e) {
 
     const prod = DB.getProductByBarcode(code);
     if (prod) {
-      if (prod.quantity <= 0) {
+      const gKey = salesGroupKey(prod);
+      const g = getSalesGroupByKey(gKey);
+      const avail = g ? getGroupAvailableQty(g) : (prod.quantity || 0);
+      if (avail <= 0) {
         document.getElementById('salesBarcodeStatus').textContent = t('sales.unavailable');
         document.getElementById('salesBarcodeStatus').style.color = '#dc3545';
         input.value = '';
         if (beam) setTimeout(() => beam.classList.remove('active'), 400);
         return;
       }
-      addToSalesCart(prod.id);
+      addSalesLine(gKey);
       document.getElementById('salesBarcodeStatus').textContent = t('sales.scannerDone');
       document.getElementById('salesBarcodeStatus').style.color = '#28a745';
       setTimeout(() => {
-        const idx = _salesCart.length - 1;
+        const idx = _salesCart.findIndex(c => c.key === gKey);
         const qtyInput = document.getElementById(`scqty_${idx}`);
         if (qtyInput) { qtyInput.focus(); qtyInput.select(); }
       }, 100);
@@ -206,15 +286,31 @@ function clearSalesCustomer() {
 function addToSalesCart(productId) {
   const prod = DB.getProduct(productId);
   if (!prod || prod.quantity <= 0) return;
+  addSalesLine(salesGroupKey(prod));
+}
 
-  _salesCart.push({
-    productId: prod.id,
-    name: prod.name,
-    barcode: prod.barcode,
-    qty: 1,
-    price: prod.sellPrice,
-    total: prod.sellPrice,
-  });
+function addSalesGroupToCart(idx) {
+  const g = _salesGroupList[idx];
+  if (!g) return;
+  addSalesLine(g.key);
+}
+
+function addSalesLine(key) {
+  const g = getSalesGroupByKey(key);
+  if (!g) return;
+  const avail = getGroupAvailableQty(g);
+  if (avail <= 0) return;
+
+  let line = _salesCart.find(c => c.key === key);
+  if (line) {
+    if (line.qty >= avail) return;
+    line.qty++;
+    allocateSalesLine(line, key);
+  } else {
+    line = { key, name: g.name, barcode: g.barcode, qty: 1, price: 0, total: 0, entries: [] };
+    allocateSalesLine(line, key);
+    _salesCart.push(line);
+  }
 
   renderSalesCart();
   document.getElementById('salesEmptyCart').style.display = 'none';
@@ -238,24 +334,25 @@ function renderSalesCart() {
   empty.style.display = 'none';
   if (count) count.textContent = _salesCart.length;
 
-  items.innerHTML = _salesCart.map((item, i) => {
-    const prod = DB.getProduct(item.productId);
-    const maxQty = prod ? prod.quantity : 99;
+  items.innerHTML = _salesCart.map((line, i) => {
+    const g = getSalesGroupByKey(line.key);
+    const maxQty = g ? getGroupAvailableQty(g) : 99;
+    const mixed = line.entries.length > 1;
     return `<div class="sc-item">
       <div class="sc-item-info">
-        <div class="sc-item-name">${escHtml(item.name)}</div>
-        <div class="sc-item-bar" dir="ltr">${item.barcode}</div>
+        <div class="sc-item-name">${escHtml(line.name)}${mixed ? `<span class="sc-mixed-badge" title="${t('sales.mixedPrice')}"><i class="fas fa-layer-group"></i> ${t('sales.mixedPrice')}</span>` : ''}</div>
+        <div class="sc-item-bar" dir="ltr">${escHtml(line.barcode)}</div>
       </div>
       <div class="sc-item-controls">
-        <button class="sc-qty-btn" onclick="decSalesCartQty(${i})" ${item.qty <= 1 ? 'disabled' : ''}>−</button>
+        <button class="sc-qty-btn" onclick="decSalesCartQty(${i})" ${line.qty <= 1 ? 'disabled' : ''}>−</button>
         <input type="number" class="no-spinner sc-qty-input" id="scqty_${i}"
-          value="${item.qty}" min="1" max="${maxQty}"
+          value="${line.qty}" min="1" max="${maxQty}"
           onchange="updateSalesCartQty(${i}, this.value)">
-        <button class="sc-qty-btn" onclick="incSalesCartQty(${i})" ${item.qty >= maxQty ? 'disabled' : ''}>+</button>
-        <span class="sc-item-price">DA${item.price.toFixed(2)}</span>
+        <button class="sc-qty-btn" onclick="incSalesCartQty(${i})" ${line.qty >= maxQty ? 'disabled' : ''}>+</button>
+        <span class="sc-item-price">DA${line.price.toFixed(2)}</span>
       </div>
       <div class="sc-item-right">
-        <span class="sc-item-total">DA${(item.qty * item.price).toFixed(2)}</span>
+        <span class="sc-item-total">DA${line.total.toFixed(2)}</span>
         <button class="sc-item-remove" onclick="removeFromSalesCart(${i})" title="${t('sales.del')}"><i class="fas fa-times"></i></button>
       </div>
     </div>`;
@@ -265,29 +362,35 @@ function renderSalesCart() {
 }
 
 function incSalesCartQty(idx) {
-  const prod = DB.getProduct(_salesCart[idx].productId);
-  const maxQty = prod ? prod.quantity : 99;
-  if (_salesCart[idx].qty < maxQty) {
-    _salesCart[idx].qty++;
-    _salesCart[idx].total = _salesCart[idx].qty * _salesCart[idx].price;
+  const line = _salesCart[idx];
+  if (!line) return;
+  const g = getSalesGroupByKey(line.key);
+  const maxQty = g ? getGroupAvailableQty(g) : 0;
+  if (line.qty < maxQty) {
+    line.qty++;
+    allocateSalesLine(line, line.key);
     renderSalesCart();
   }
 }
 
 function decSalesCartQty(idx) {
-  if (_salesCart[idx].qty > 1) {
-    _salesCart[idx].qty--;
-    _salesCart[idx].total = _salesCart[idx].qty * _salesCart[idx].price;
+  const line = _salesCart[idx];
+  if (!line) return;
+  if (line.qty > 1) {
+    line.qty--;
+    allocateSalesLine(line, line.key);
     renderSalesCart();
   }
 }
 
 function updateSalesCartQty(idx, val) {
+  const line = _salesCart[idx];
+  if (!line) return;
   const qty = parseInt(val) || 1;
-  const prod = DB.getProduct(_salesCart[idx].productId);
-  const maxQty = prod ? prod.quantity : 99;
-  _salesCart[idx].qty = Math.min(Math.max(1, qty), maxQty);
-  _salesCart[idx].total = _salesCart[idx].qty * _salesCart[idx].price;
+  const g = getSalesGroupByKey(line.key);
+  const maxQty = g ? getGroupAvailableQty(g) : 99;
+  line.qty = Math.min(Math.max(1, qty), maxQty);
+  allocateSalesLine(line, line.key);
   renderSalesCart();
 }
 
@@ -714,34 +817,40 @@ function confirmSalesCheckout() {
   totalAmount = afterCustDisc - extraDiscAmount;
 
   const productUpdates = [];
-  for (const item of _salesCart) {
-    const prod = DB.getProduct(item.productId);
-    if (!prod || prod.quantity < item.qty) {
-      alert(`"${item.name}" ${t('sales.notAvailableQty')}\n${t('sales.available')} ${prod ? prod.quantity : 0}`);
-      return;
+  for (const line of _salesCart) {
+    for (const entry of line.entries) {
+      const prod = DB.getProduct(entry.productId);
+      if (!prod || prod.quantity < entry.qty) {
+        alert(`"${line.name}" ${t('sales.notAvailableQty')}\n${t('sales.available')} ${prod ? prod.quantity : 0}`);
+        return;
+      }
     }
+  }
+  for (const line of _salesCart) {
+    for (const entry of line.entries) {
+      const prod = DB.getProduct(entry.productId);
+      const entryRatio = subTotal > 0 ? entry.total / subTotal : 0;
+      const entryDisc = custDiscAmount * entryRatio;
+      const entryExtraDisc = extraDiscAmount * entryRatio;
+      const finalPrice = entry.price - (entryDisc / entry.qty) - (entryExtraDisc / entry.qty);
+      const itemTotal = finalPrice * entry.qty;
 
-    const itemRatio = item.total / subTotal;
-    const itemDisc = custDiscAmount * itemRatio;
-    const itemExtraDisc = extraDiscAmount * itemRatio;
-    const finalPrice = item.price - (itemDisc / item.qty) - (itemExtraDisc / item.qty);
-    const itemTotal = finalPrice * item.qty;
+      const buyPrice = prod.buyPrice || 0;
+      totalProfit += (finalPrice - buyPrice) * entry.qty;
 
-    const buyPrice = prod.buyPrice || 0;
-    totalProfit += (finalPrice - buyPrice) * item.qty;
+      productUpdates.push({ id: entry.productId, changes: { quantity: prod.quantity - entry.qty } });
 
-    productUpdates.push({ id: item.productId, changes: { quantity: prod.quantity - item.qty } });
-
-    invoiceItems.push({
-      productId: item.productId,
-      barcode: item.barcode,
-      name: item.name,
-      qty: item.qty,
-      price: finalPrice,
-      total: itemTotal,
-      originalPrice: item.price,
-      discount: itemDisc + itemExtraDisc,
-    });
+      invoiceItems.push({
+        productId: entry.productId,
+        barcode: line.barcode,
+        name: line.name,
+        qty: entry.qty,
+        price: finalPrice,
+        total: itemTotal,
+        originalPrice: entry.price,
+        discount: entryDisc + entryExtraDisc,
+      });
+    }
   }
 
   const paidAmount = Math.min(parseFloat(document.getElementById('salesPaidAmount').value) || 0, totalAmount);

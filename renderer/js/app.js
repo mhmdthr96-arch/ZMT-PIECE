@@ -657,7 +657,7 @@ const LANG = {
       cartTitle: 'سلة المشتريات', subtotal: 'المجموع الفرعي', customerDiscount: 'خصم العميل', additionalDiscount: 'تخفيض إضافي',
       totalLabel: 'الإجمالي', paidLabel: 'المبلغ المدفوع', payFull: 'دفع كلياً', remainingLabel: 'الباقي',
       clear: 'تفريغ', checkout: 'إتمام البيع', emptyCartTitle: 'السلة فارغة', emptyCartHint: 'امسح باركود القطعة أو اخترها من قائمة المنتجات',
-      scanPlaceholder: 'امسح الباركود ضوئياً...', searchPlaceholder2: 'ابحث باسم القطعة أو الباركود...', productsCount: '0 منتج',
+      scanPlaceholder: 'امسح الباركود ضوئياً...', searchPlaceholder2: 'ابحث باسم القطعة أو الباركود...', productsCount: '0 منتج', multiBatches: 'دفعات متعددة', mixedPrice: 'أسعار متعددة',
     },
     invoices: {
       title: 'الفواتير', sub: 'جميع فواتير البيع والمشتريات',
@@ -1260,7 +1260,7 @@ const LANG = {
       cartTitle: 'Shopping Cart', subtotal: 'Subtotal', customerDiscount: 'Customer Discount', additionalDiscount: 'Additional Discount',
       totalLabel: 'Total', paidLabel: 'Amount Paid', payFull: 'Pay Full', remainingLabel: 'Remaining',
       clear: 'Clear', checkout: 'Checkout', emptyCartTitle: 'Cart is Empty', emptyCartHint: 'Scan item barcode or select from product list',
-      scanPlaceholder: 'Scan barcode...', searchPlaceholder2: 'Search by part name or barcode...', productsCount: '0 products',
+      scanPlaceholder: 'Scan barcode...', searchPlaceholder2: 'Search by part name or barcode...', productsCount: '0 products', multiBatches: 'Multiple batches', mixedPrice: 'Mixed price',
     },
     invoices: {
       title: 'Invoices', sub: 'All Sales & Purchase Invoices',
@@ -1858,7 +1858,7 @@ const LANG = {
       cartTitle: 'Panier', subtotal: 'Sous-total', customerDiscount: 'Remise Client', additionalDiscount: 'Remise Supplémentaire',
       totalLabel: 'Total', paidLabel: 'Montant Payé', payFull: 'Payer Tout', remainingLabel: 'Reste',
       clear: 'Vider', checkout: 'Finaliser', emptyCartTitle: 'Le Panier est Vide', emptyCartHint: 'Scannez le code-barres ou sélectionnez dans la liste',
-      scanPlaceholder: 'Scannez le code-barres...', searchPlaceholder2: 'Rechercher par nom ou code-barres...', productsCount: '0 produits',
+      scanPlaceholder: 'Scannez le code-barres...', searchPlaceholder2: 'Rechercher par nom ou code-barres...', productsCount: '0 produits', multiBatches: 'Plusieurs lots', mixedPrice: 'Prix mixte',
     },
     invoices: {
       title: 'Factures', sub: 'Toutes les Factures',
@@ -2456,7 +2456,7 @@ const LANG = {
       cartTitle: '购物车', subtotal: '小计', customerDiscount: '客户折扣', additionalDiscount: '额外折扣',
       totalLabel: '总计', paidLabel: '已付金额', payFull: '全额付款', remainingLabel: '剩余',
       clear: '清空', checkout: '结账', emptyCartTitle: '购物车为空', emptyCartHint: '扫描商品条码或从产品列表选择',
-      scanPlaceholder: '扫描条码...', searchPlaceholder2: '按名称或条码搜索...', productsCount: '0 件产品',
+      scanPlaceholder: '扫描条码...', searchPlaceholder2: '按名称或条码搜索...', productsCount: '0 件产品', multiBatches: '多批次', mixedPrice: '混合价格',
     },
     invoices: {
       title: '发票', sub: '所有销售和采购发票',
