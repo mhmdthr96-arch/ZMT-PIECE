@@ -29,7 +29,7 @@ window.FileDetector = {
       'sql': 'sql',
       'db': 'sqlite', 'sqlite': 'sqlite', 'sqlite3': 'sqlite',
       'mdb': 'access', 'accdb': 'access',
-      'gdb': 'firebird', 'fdb': 'firebird',
+      'gdb': 'firebird', 'fdb': 'firebird', 'fbk': 'firebird',
       'dbf': 'dbf',
     };
     return map[ext] || 'unknown';

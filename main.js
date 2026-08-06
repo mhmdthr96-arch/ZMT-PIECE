@@ -248,10 +248,10 @@ ipcMain.handle('open-file-import', async (event) => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     filters: [
-      { name: 'All Supported', extensions: ['csv','tsv','txt','xlsx','xls','json','xml','sql','db','sqlite','sqlite3','mdb','accdb','gdb','fdb','dbf'] },
+      { name: 'All Supported', extensions: ['csv','tsv','txt','xlsx','xls','json','xml','sql','db','sqlite','sqlite3','mdb','accdb','gdb','fdb','fbk','dbf'] },
       { name: 'CSV/Text', extensions: ['csv','tsv','txt'] },
       { name: 'Excel', extensions: ['xlsx','xls'] },
-      { name: 'Database', extensions: ['db','sqlite','sqlite3','mdb','accdb','gdb','fdb'] },
+      { name: 'Database', extensions: ['db','sqlite','sqlite3','mdb','accdb','gdb','fdb','fbk'] },
       { name: 'SQL Dump', extensions: ['sql'] },
       { name: 'dBASE', extensions: ['dbf'] },
       { name: 'JSON/XML', extensions: ['json','xml'] },
@@ -298,6 +298,15 @@ ipcMain.handle('firebird-count', async (event, dbPath, table, options) => {
 ipcMain.handle('firebird-query', async (event, dbPath, table, columns, from, to, options) => {
   try {
     return { success: true, data: await Firebird.queryTable(dbPath, table, columns, from, to, options) };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('firebird-restore', async (event, backupPath, options) => {
+  try {
+    const target = await Firebird.restoreBackup(backupPath, options);
+    return { success: true, data: { path: target } };
   } catch (err) {
     return { success: false, error: err.message };
   }

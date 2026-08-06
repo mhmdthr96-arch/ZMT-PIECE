@@ -37,6 +37,8 @@ function openMigration() {
   document.getElementById('migrationStep1').style.display = 'none';
   document.getElementById('migrationNextBtn').disabled = true;
   document.getElementById('migrationBackBtn').style.display = 'none';
+  document.getElementById('migrationFullImportPanel').style.display = 'none';
+  document.getElementById('migrationFullBrandPopup').style.display = 'none';
   migrationUpdateStatus('', '');
   migrationAttachListeners();
 }
@@ -536,19 +538,30 @@ async function migrationParseFirebird() {
   }
   const opts = { charset: 'WIN1252' };
   try {
-    const det = await window.electronAPI.firebirdDetect(dbPath, opts);
+    const ext = String(dbPath).split('.').pop().toLowerCase();
+    let openPath = dbPath;
+    if (ext === 'fbk') {
+      migrationUpdateStatus(t('migration.restoringBackup') || 'جاري استرجاع النسخة الاحتياطية (gbak)...', 'info');
+      const res = await window.electronAPI.firebirdRestore(dbPath, { charset: 'WIN1252' });
+      if (!res.success) throw new Error(res.error);
+      openPath = res.data.path;
+    }
+    const det = await window.electronAPI.firebirdDetect(openPath, opts);
     if (!det.success) throw new Error(det.error);
-    const tablesRes = await window.electronAPI.firebirdTables(dbPath, opts);
+    const tablesRes = await window.electronAPI.firebirdTables(openPath, opts);
     if (!tablesRes.success) throw new Error(tablesRes.error);
     const tables = tablesRes.data || [];
     if (!tables.length) {
       migrationUpdateStatus(t('migration.firebirdNoTables') || 'لا توجد جداول قابلة للقراءة في قاعدة البيانات', 'warning');
       return false;
     }
-    _migrationState.firebird = { dbPath, options: opts, ods: det.data.odsVersion + '.' + det.data.odsMinor };
+    _migrationState.firebird = { dbPath: openPath, sourcePath: dbPath, isBackup: ext === 'fbk', options: opts, ods: det.data.odsVersion + '.' + det.data.odsMinor };
     document.getElementById('migrationFileType').textContent =
       (document.getElementById('migrationFileType').textContent || '') + ' • Firebird ' + det.data.odsVersion + '.' + det.data.odsMinor;
     renderMigrationTableSelect(tables.map(t => t.name));
+    if (detectGestionStockSchema(tables.map(t => t.name))) {
+      renderGestionStockFullImportPanel();
+    }
     return true;
   } catch (err) {
     migrationUpdateStatus(t('migration.firebirdOpenError') + ': ' + err.message, 'error');
@@ -1591,4 +1604,511 @@ function migrationUpdateStatus(msg, type) {
   el.style.display = 'block';
   el.style.backgroundColor = type === 'error' ? '#f8d7da' : type === 'success' ? '#d4edda' : type === 'warning' ? '#fff3cd' : '#d1ecf1';
   el.style.color = '#333';
+}
+
+// ===========================================================================
+// FULL GESTION STOCK IMPORT (Sable Stock / Gestion Stock Firebird databases)
+// ===========================================================================
+
+function detectGestionStockSchema(tableNames) {
+  const up = new Set((tableNames || []).map(n => String(n).toUpperCase()));
+  return ['FACTURE_CLIENT', 'DETAIL_FACTURE_CLIENT', 'CLIENT', 'FOURNISSEUR', 'ARTICLES'].every(t => up.has(t));
+}
+
+function renderGestionStockFullImportPanel() {
+  const panel = document.getElementById('migrationFullImportPanel');
+  if (!panel) return;
+  panel.style.display = 'block';
+}
+
+async function startGestionStockFullImport() {
+  const popup = document.getElementById('migrationFullBrandPopup');
+  if (!popup) return;
+  const list = document.getElementById('migrationFullBrandList');
+  migrationUpdateStatus(t('migration.loadingBrands') || 'جاري قراءة العلامات التجارية...', 'info');
+  try {
+    const { dbPath, options } = _migrationState.firebird;
+    const cntRes = await window.electronAPI.firebirdCount(dbPath, 'ARTICLES', options);
+    const total = cntRes.success ? (cntRes.data || 0) : 0;
+    let counts = {};
+    if (total > 0) {
+      const qRes = await window.electronAPI.firebirdQuery(dbPath, 'ARTICLES', ['MARQUE'], 0, total, options);
+      const rows = qRes.success ? (qRes.data || []) : [];
+      for (const r of rows) {
+        const m = String(r['MARQUE'] || '').trim();
+        if (!m) { counts['__empty__'] = (counts['__empty__'] || 0) + 1; continue; }
+        counts[m] = (counts[m] || 0) + 1;
+      }
+    } else {
+      counts = { __empty__: 0 };
+    }
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    if (!entries.length) entries.push(['__empty__', 0]);
+    list.innerHTML = entries.map(([m, c]) => {
+      const isEmpty = m === '__empty__';
+      const label = isEmpty ? (t('migration.brandEmpty') || 'بدون علامة') : escapeHtml(m);
+      return `<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;color:var(--silver-700);background:#e3f2fd;border:1px solid var(--primary)">
+        <input type="checkbox" value="${escapeHtml(m)}" checked onchange="toggleFullBrand(this)" style="accent-color:var(--primary)">
+        <span style="font-weight:600">${label}</span>
+        <span style="font-size:11px;color:var(--silver-500)">(${c})</span>
+      </label>`;
+    }).join('');
+    popup.style.display = 'block';
+    migrationUpdateStatus('', '');
+  } catch (err) {
+    migrationUpdateStatus(t('migration.firebirdTableError') + ': ' + err.message, 'error');
+  }
+}
+
+function toggleFullBrand(cb) {
+  const label = cb.closest('label');
+  if (!label) return;
+  if (cb.checked) {
+    label.style.background = '#e3f2fd';
+    label.style.borderColor = 'var(--primary)';
+  } else {
+    label.style.background = 'transparent';
+    label.style.borderColor = 'var(--silver-200)';
+  }
+}
+
+function selectAllFullBrands(checked) {
+  document.querySelectorAll('#migrationFullBrandList input').forEach(cb => {
+    cb.checked = !!checked;
+    const label = cb.closest('label');
+    if (label) {
+      label.style.background = checked ? '#e3f2fd' : 'transparent';
+      label.style.borderColor = checked ? 'var(--primary)' : 'var(--silver-200)';
+    }
+  });
+}
+
+function confirmGestionStockFullImport() {
+  const selected = new Set();
+  document.querySelectorAll('#migrationFullBrandList input:checked').forEach(cb => selected.add(cb.value));
+  document.getElementById('migrationFullBrandPopup').style.display = 'none';
+  importGestionStockFull(selected);
+}
+
+async function createPreImportBackup() {
+  if (!window.electronAPI?.getAppDataPath || !window.electronAPI?.writeFile) return null;
+  const appPath = await window.electronAPI.getAppDataPath();
+  if (!appPath) return null;
+  const dbExport = DB.exportAll();
+  const backup = {
+    version: 3,
+    createdAt: new Date().toISOString(),
+    storeName: localStorage.getItem('zmt_store_name') || '',
+    summary: {
+      products: dbExport.products.length,
+      invoices: dbExport.invoices.length,
+      customers: dbExport.customers.length,
+      suppliers: dbExport.suppliers.length,
+      payments: dbExport.payments.length,
+      returns: dbExport.returns.length,
+      discounts: dbExport.discounts.length,
+    },
+    data: dbExport,
+    note: 'pre-import-auto-backup',
+  };
+  const dateStr = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
+  const filePath = appPath + '\\pre_import_' + dateStr + '.zmt-backup';
+  await window.electronAPI.writeFile(filePath, JSON.stringify(backup));
+  return filePath;
+}
+
+async function importGestionStockInvoices(ctx) {
+  const { dbPath, options, load, num, txt, parseDate, custCodeToId, supCodeToId, prodByRef, prodByBar, ensureProduct, results } = ctx;
+
+  // ===== 4) PURCHASE INVOICES =====
+  ctx.migrationUpdateStatus((t('migration.rolePurchaseInvoices') || 'فواتير الشراء') + '...', 'info');
+  const purHeaders = await load('FACTURE_FOURNISSEUR');
+  const purDetails = await load('DETAIL_FACTURE_FOURNISSEUR');
+  const purByNum = new Map();
+  for (const r of purHeaders) {
+    const n = txt(r['N_FACTURE']);
+    if (!n) continue;
+    purByNum.set(n, {
+      supCode: txt(r['CODE_FOURNISSEUR']),
+      date: parseDate(r['DATE_FACTURE']),
+      paid: num(r['VERSEMENT']),
+    });
+  }
+  const purItems = new Map();
+  for (const r of purDetails) {
+    const n = txt(r['N_FACTURE']);
+    const ref = txt(r['REFERENCE_ARTICLE']);
+    if (!n || !ref) continue;
+    if (!purItems.has(n)) purItems.set(n, []);
+    purItems.get(n).push({ ref, qty: num(r['QUANTITE']) || 1, price: num(r['PRIX_ACHAT']) || num(r['PRIX1']) });
+  }
+
+  for (const [n, items] of purItems) {
+    const hdr = purByNum.get(n);
+    const invItems = [];
+    for (const it of items) {
+      const p = await ensureProduct(it.ref, it.ref, '', it.price);
+      if (!p) continue;
+      invItems.push({ productId: p.id, barcode: p.barcode, name: p.name || it.ref, qty: it.qty, price: it.price, total: it.qty * it.price });
+    }
+    if (!invItems.length) continue;
+    const totalAmount = invItems.reduce((s, it) => s + it.total, 0);
+    let supplierId = '';
+    if (hdr) supplierId = supCodeToId[hdr.supCode] || '';
+    if (!supplierId) supplierId = (DB.getSuppliers()[0] || {}).id || '';
+    const invData = { type: 'supplier', date: hdr ? hdr.date : Date.now(), items: invItems, totalAmount, extraDiscount: 0, supplierId, note: (t('migration.oldInvoiceNote') || 'فاتورة مستوردة') + ' — ' + n };
+    const inv = DB.addInvoice(invData);
+    if (hdr && hdr.paid > 0) DB.addPayment({ amount: hdr.paid, invoiceId: inv.id, supplierId, note: t('migration.oldPaymentNote') || 'مدفوعات مستوردة' });
+    for (const it of invItems) {
+      const p = DB.getProductByBarcode(it.barcode);
+      if (p) DB.updateProduct(p.id, { quantity: (p.quantity || 0) + it.qty });
+    }
+    if (supplierId) {
+      const list = DB.getSuppliers();
+      const si = list.findIndex(s => s.id === supplierId);
+      if (si >= 0) { list[si].balance = (parseFloat(list[si].balance) || 0) + totalAmount; DB.saveSuppliers(list); }
+    }
+    results.buyInvoices++;
+    if (results.buyInvoices % 25 === 0) {
+      ctx.setImportStatus((t('migration.rolePurchaseInvoices') || 'فواتير الشراء') + ': ' + results.buyInvoices);
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  // ===== 5) SALES INVOICES =====
+  ctx.migrationUpdateStatus((t('migration.roleSalesInvoices') || 'فواتير البيع') + '...', 'info');
+  const cliHeaders = await load('FACTURE_CLIENT');
+  const cliDetails = await load('DETAIL_FACTURE_CLIENT');
+  const cliByNum = new Map();
+  for (const r of cliHeaders) {
+    const n = txt(r['N_FACTURE']);
+    if (!n) continue;
+    cliByNum.set(n, {
+      custCode: txt(r['CODE_CLIENT']),
+      date: parseDate(r['DATE_FACTURE']),
+      paid: num(r['VERSEMENT']),
+      discount: num(r['TOTAL_REMISE']),
+    });
+  }
+  const cliItems = new Map();
+  for (const r of cliDetails) {
+    const n = txt(r['N_FACTURE']);
+    const ref = txt(r['REFERENCE_ARTICLE']);
+    if (!n || !ref) continue;
+    if (!cliItems.has(n)) cliItems.set(n, []);
+    cliItems.get(n).push({ ref, qty: num(r['QUANTITE']) || 1, price: num(r['PUV']) });
+  }
+
+  for (const [n, items] of cliItems) {
+    const hdr = cliByNum.get(n);
+    const invItems = [];
+    for (const it of items) {
+      const p = await ensureProduct(it.ref, it.ref, '', it.price);
+      if (!p) continue;
+      invItems.push({ productId: p.id, barcode: p.barcode, name: p.name || it.ref, qty: it.qty, price: it.price, total: it.qty * it.price });
+    }
+    if (!invItems.length) continue;
+    const totalAmount = invItems.reduce((s, it) => s + it.total, 0);
+    const paid = hdr ? hdr.paid : 0;
+    const discount = hdr ? hdr.discount : 0;
+    const invData = { type: 'customer', date: hdr ? hdr.date : Date.now(), items: invItems, totalAmount, extraDiscount: discount, note: (t('migration.oldInvoiceNote') || 'فاتورة مستوردة') + ' — ' + n };
+    const customerId = hdr ? custCodeToId[hdr.custCode] : '';
+    if (customerId) {
+      invData.customerId = customerId;
+    } else {
+      invData.walkinName = (t('migration.walkin') || 'عميل عابر') + ' — ' + (hdr ? hdr.custCode : n);
+      invData.walkinPhone = '';
+      invData.walkinAddress = '';
+    }
+    invData.profit = invItems.reduce((sum, it) => {
+      const p = DB.getProductByBarcode(it.barcode);
+      return sum + it.total - (p ? it.qty * (p.buyPrice || 0) : 0);
+    }, 0);
+    const inv = DB.addInvoice(invData);
+    if (paid > 0) DB.addPayment({ amount: paid, invoiceId: inv.id, customerId: customerId || undefined, note: t('migration.oldPaymentNote') || 'مدفوعات مستوردة' });
+    for (const it of invItems) {
+      const p = DB.getProductByBarcode(it.barcode);
+      if (p) DB.updateProduct(p.id, { quantity: Math.max(0, (p.quantity || 0) - it.qty) });
+    }
+    if (customerId) {
+      const list = DB.getCustomers();
+      const ci = list.findIndex(c => c.id === customerId);
+      if (ci >= 0) { list[ci].balance = (parseFloat(list[ci].balance) || 0) + (totalAmount - paid - discount); DB.saveCustomers(list); }
+    }
+    results.saleInvoices++;
+    if (results.saleInvoices % 25 === 0) {
+      ctx.setImportStatus((t('migration.roleSalesInvoices') || 'فواتير البيع') + ': ' + results.saleInvoices);
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  // ===== 6) AVOIRS (returns) =====
+  ctx.migrationUpdateStatus((t('migration.returnsCount') || 'المرتجعات') + '...', 'info');
+  const avoirHeaders = await load('AVOIR_CLIENT');
+  const avoirDetails = await load('DETAIL_AVOIR_CLIENT');
+  const avoirByNum = new Map();
+  for (const r of avoirHeaders) {
+    const n = txt(r['N_AVOIR']);
+    if (!n) continue;
+    avoirByNum.set(n, {
+      custCode: txt(r['CODE_CLIENT']),
+      date: parseDate(r['DATE_AVOIR']),
+      total: num(r['TOTAL_TTC']),
+    });
+  }
+  const avoirItems = new Map();
+  for (const r of avoirDetails) {
+    const n = txt(r['N_AVOIR']);
+    const ref = txt(r['REFERENCE_ARTICLE']);
+    if (!n || !ref) continue;
+    if (!avoirItems.has(n)) avoirItems.set(n, []);
+    avoirItems.get(n).push({ ref, qty: num(r['QUANTITE']) || num(r['NBR']) || 1, price: num(r['PUV']) });
+  }
+
+  const returnsList = DB.getReturns();
+  let returnsSaved = false;
+  for (const [n, items] of avoirItems) {
+    const hdr = avoirByNum.get(n);
+    const customerId = hdr ? custCodeToId[hdr.custCode] : '';
+    for (const it of items) {
+      const p = await ensureProduct(it.ref, it.ref, '', it.price);
+      if (!p) continue;
+      returnsList.push({
+        id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5) + results.returns,
+        createdAt: hdr ? hdr.date : Date.now(),
+        invoiceId: '',
+        relatedTo: customerId,
+        customerId: customerId || '',
+        productId: p.id,
+        productName: p.name || it.ref,
+        qty: it.qty,
+        reason: (t('migration.avoirReason') || 'مرتجع (Avoir)') + ' — ' + n,
+        totalAmount: it.qty * it.price,
+      });
+      DB.updateProduct(p.id, { quantity: (p.quantity || 0) + it.qty });
+      results.returns++;
+    }
+    if (customerId && hdr && hdr.total > 0) {
+      const list = DB.getCustomers();
+      const ci = list.findIndex(c => c.id === customerId);
+      if (ci >= 0) { list[ci].balance = Math.max(0, (parseFloat(list[ci].balance) || 0) - hdr.total); DB.saveCustomers(list); }
+    }
+    if (results.returns % 25 === 0) {
+      ctx.setImportStatus((t('migration.returnsCount') || 'المرتجعات') + ': ' + results.returns);
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+  if (returnsList.length && !returnsSaved) {
+    DB.saveReturns(returnsList);
+    returnsSaved = true;
+  }
+}
+
+async function importGestionStockFull(selectedBrands) {
+  if (!_migrationState.firebird) return;
+  const { dbPath, options } = _migrationState.firebird;
+
+  migrationUpdateStatus(t('migration.creatingBackup') || 'جاري إنشاء نسخة احتياطية قبل الاستيراد...', 'info');
+  const backupPath = await createPreImportBackup();
+  if (backupPath) console.log('[Migration] Pre-import backup saved:', backupPath);
+
+  const num = (v) => { const n = parseFloat(String(v === undefined || v === null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; };
+  const txt = (v) => String(v === undefined || v === null ? '' : v).trim();
+
+  const parseDate = (v) => {
+    const s = txt(v);
+    if (!s) return Date.now();
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) { const d = new Date(+m[1], +m[2] - 1, +m[3]); return isNaN(d.getTime()) ? Date.now() : d.getTime(); }
+    m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (m) { const d = new Date(+m[3], +m[2] - 1, +m[1]); return isNaN(d.getTime()) ? Date.now() : d.getTime(); }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? Date.now() : d.getTime();
+  };
+
+  const load = async (tbl) => {
+    try {
+      const colsRes = await window.electronAPI.firebirdColumns(dbPath, tbl, options);
+      if (!colsRes.success) return [];
+      const cols = (colsRes.data || []).map(c => c.name);
+      const cntRes = await window.electronAPI.firebirdCount(dbPath, tbl, options);
+      const total = cntRes.success ? (cntRes.data || 0) : 0;
+      if (!cols.length || total <= 0) return [];
+      const q = await window.electronAPI.firebirdQuery(dbPath, tbl, cols, 0, total, options);
+      return q.success ? (q.data || []) : [];
+    } catch (err) {
+      console.warn('[Migration] load ' + tbl + ' failed:', err);
+      return [];
+    }
+  };
+
+  const allBrands = [...BRANDS.global, ...BRANDS.chinese];
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const resolveBrand = (name) => {
+    if (!name) return '';
+    const n = norm(name);
+    const exact = allBrands.find(b => norm(b.name) === n);
+    if (exact) return exact.id;
+    const partial = allBrands.find(b => norm(b.name).indexOf(n) >= 0 || n.indexOf(norm(b.name)) >= 0);
+    return partial ? partial.id : '';
+  };
+
+  // ===== resolve price columns from LIBELLE_PRIX =====
+  let sellCol = 'PRIX2';
+  let wholeCol = 'PRIX1';
+  const lp = await load('LIBELLE_PRIX');
+  const priceRows = lp.map(r => ({ id: num(r['ID_PRIX'] ?? r['ID']), label: txt(r['LIBELLE_PRIX']) }));
+  const det = priceRows.find(r => /d.tail|detail|vente|retail/i.test(r.label));
+  const gros = priceRows.find(r => /gros|gross|wholesale/i.test(r.label));
+  if (det) sellCol = 'PRIX' + det.id;
+  if (gros) wholeCol = 'PRIX' + gros.id;
+  console.log('[Migration] Price columns: sell=' + sellCol + ' whole=' + wholeCol);
+
+  const results = { customers: 0, suppliers: 0, products: 0, buyInvoices: 0, saleInvoices: 0, returns: 0 };
+
+  // ===== 1) CUSTOMERS =====
+  migrationUpdateStatus((t('migration.roleCustomers') || 'العملاء') + '...', 'info');
+  const clientRows = await load('CLIENT');
+  const existingCust = new Set(DB.getCustomers().map(c => norm(c.name)));
+  const custCodeToId = {};
+  for (const r of clientRows) {
+    const name = txt(r['NOM_CLIENT']);
+    if (!name || /vente\s*a\s*comptoir|a\s*comptoir/i.test(name)) continue;
+    const key = norm(name);
+    if (existingCust.has(key)) {
+      const ex = DB.getCustomers().find(c => norm(c.name) === key);
+      if (ex) custCodeToId[txt(r['CODE_CLIENT'])] = ex.id;
+      continue;
+    }
+    const c = DB.addCustomer({
+      name: name.trim(),
+      phone: txt(r['TEL']) || txt(r['MOBILE']),
+      address: txt(r['ADRESSE']) || txt(r['VILLE']),
+      discount: 0,
+    });
+    custCodeToId[txt(r['CODE_CLIENT'])] = c.id;
+    results.customers++;
+  }
+  migrationUpdateStatus((t('migration.roleCustomers') || 'العملاء') + ': ' + results.customers, 'info');
+  await new Promise(r => setTimeout(r, 0));
+
+  // ===== 2) SUPPLIERS =====
+  migrationUpdateStatus((t('migration.roleSuppliers') || 'الموردون') + '...', 'info');
+  const fourRows = await load('FOURNISSEUR');
+  const existingSup = new Set(DB.getSuppliers().map(s => norm(s.name)));
+  const supCodeToId = {};
+  const newSuppliers = [];
+  for (const r of fourRows) {
+    const name = txt(r['NOM_FOURNISSEUR']);
+    if (!name) continue;
+    const key = norm(name);
+    if (existingSup.has(key)) continue;
+    const s = {
+      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+      name: name.trim(),
+      phone: txt(r['TEL']) || txt(r['MOBILE']),
+      address: txt(r['ADRESSE']) || txt(r['VILLE']),
+      balance: 0,
+    };
+    newSuppliers.push(s);
+    supCodeToId[txt(r['CODE_FOURNISSEUR'])] = s.id;
+  }
+  if (newSuppliers.length) {
+    const all = DB.getSuppliers();
+    for (const s of newSuppliers) all.push(s);
+    DB.saveSuppliers(all);
+  }
+  results.suppliers = newSuppliers.length;
+  migrationUpdateStatus((t('migration.roleSuppliers') || 'الموردون') + ': ' + results.suppliers, 'info');
+  await new Promise(r => setTimeout(r, 0));
+
+  // ===== 3) PRODUCTS =====
+  migrationUpdateStatus((t('migration.roleProducts') || 'المنتجات') + '...', 'info');
+  const articleRows = await load('ARTICLES');
+  const keepMarques = selectedBrands || new Set();
+  const productMap = new Map();
+  for (const r of articleRows) {
+    const marque = txt(r['MARQUE']);
+    if (marque && !keepMarques.has(marque)) continue;
+    const ref = txt(r['REFERENCE']);
+    const bar = txt(r['CODE_BAR']) || ref;
+    if (!ref && !bar) continue;
+    const barcode = bar || ('REF-' + ref);
+    if (productMap.has(barcode) || DB.getProductByBarcode(barcode)) continue;
+    const designation = txt(r['DESIGNATION']) || ref || barcode;
+    const qty = num(r['QUANTITE']);
+    productMap.set(barcode, {
+      name: designation,
+      barcode,
+      brandId: resolveBrand(marque),
+      category: '',
+      buyPrice: num(r['PRIX_ACHAT']),
+      sellPrice: num(r[sellCol]) || num(r['PRIX2']),
+      wholesalePrice: num(r[wholeCol]) || num(r['PRIX1']),
+      quantity: qty,
+      supplierId: '',
+      notes: (marque ? 'Sable: ' + marque : ''),
+    });
+  }
+  const productsToAdd = [...productMap.values()];
+  let productsCreated = [];
+  for (let i = 0; i < productsToAdd.length; i += 200) {
+    const chunk = productsToAdd.slice(i, i + 200);
+    const created = await DB.addProductsBatch(chunk);
+    productsCreated.push(...created);
+    results.products += chunk.length;
+    migrationUpdateStatus((t('migration.roleProducts') || 'المنتجات') + ': ' + results.products + '/' + productsToAdd.length, 'info');
+    await new Promise(r => setTimeout(r, 0));
+  }
+  if (results.products === 0) {
+    migrationUpdateStatus((t('migration.productsNone') || 'لم يتم استيراد أي منتج (تأكد من تحديد العلامات)'), 'warning');
+  }
+
+  // Maps for invoice import
+  const prodByRef = {};
+  const prodByBar = {};
+  for (const p of productsCreated) {
+    if (p.barcode) prodByBar[p.barcode] = p;
+  }
+  for (const r of articleRows) {
+    const marque = txt(r['MARQUE']);
+    if (marque && !keepMarques.has(marque)) continue;
+    const ref = txt(r['REFERENCE']);
+    const bar = txt(r['CODE_BAR']) || ref;
+    const found = prodByBar[bar || ('REF-' + ref)];
+    if (found && ref) prodByRef[ref] = found;
+  }
+
+  const ensureProduct = async (barcode, ref, name, price) => {
+    const bc = barcode || ref;
+    if (!bc) return null;
+    const existing = DB.getProductByBarcode(bc);
+    if (existing) return existing;
+    if (prodByBar[bc]) return prodByBar[bc];
+    if (ref && prodByRef[ref]) return prodByRef[ref];
+    const created = await DB.addProductsBatch([{
+      name: name || ref || bc,
+      barcode: bc,
+      brandId: '',
+      category: '',
+      buyPrice: 0,
+      sellPrice: price || 0,
+      wholesalePrice: 0,
+      quantity: 0,
+      supplierId: '',
+      notes: 'Sable',
+    }]);
+    const p = created[0];
+    if (p) { prodByBar[bc] = p; if (ref) prodByRef[ref] = p; }
+    return p || null;
+  };
+
+  await importGestionStockInvoices({ dbPath, options, load, num, txt, parseDate, custCodeToId, supCodeToId, prodByRef, prodByBar, ensureProduct, results, migrationUpdateStatus, setImportStatus, t });
+  migrationUpdateStatus('', '');
+  if (migrationUpdateStatus && (t('migration.fullImportDone') || 'اكتمل الاستيراد الشامل').length) {
+    migrationUpdateStatus(`✓ ${t('migration.fullImportDone') || 'اكتمل الاستيراد الشامل'}: ` +
+      `${results.products} ${t('migration.roleProducts') || 'منتج'} • ${results.customers} ${t('migration.roleCustomers') || 'عميل'} • ` +
+      `${results.suppliers} ${t('migration.roleSuppliers') || 'مورد'} • ${results.saleInvoices} ${t('migration.roleSalesInvoices') || 'فاتورة بيع'} • ` +
+      `${results.buyInvoices} ${t('migration.rolePurchaseInvoices') || 'فاتورة شراء'} • ${results.returns} ${t('migration.returnsCount') || 'مرتجع'}`, 'success');
+  }
 }

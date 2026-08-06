@@ -216,6 +216,73 @@ async function getRowCount(dbPath, table, options) {
   return isNaN(n) ? 0 : n;
 }
 
+// ---------------------------------------------------------------------------
+// gbak restore (.fbk -> .fdb)
+// ---------------------------------------------------------------------------
+
+async function restoreBackup(backupPath, options = {}) {
+  const dir = getRuntimeDir();
+  const exe = path.join(dir, 'gbak.exe');
+  if (!fs.existsSync(exe)) {
+    throw new Error('أداة gbak غير موجودة في ' + exe);
+  }
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const base = path.basename(String(backupPath), path.extname(String(backupPath)));
+  const targetDir = options.targetDir || path.join(os.tmpdir(), 'zmtfb_restore_' + id);
+  if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+  const targetPath = options.targetPath || path.join(targetDir, base + '.fdb');
+  if (fs.existsSync(targetPath)) {
+    try { fs.unlinkSync(targetPath); } catch (e) {}
+  }
+
+  const args = [
+    '-rep', '-r',
+    '-user', options.user || 'SYSDBA',
+    '-password', options.password || 'masterkey',
+    String(backupPath),
+    targetPath,
+  ];
+
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(exe, args, {
+        cwd: dir,
+        env: {
+          ...process.env,
+          FIREBIRD: dir,
+          PATH: dir + path.delimiter + (process.env.PATH || ''),
+        },
+        windowsHide: true,
+      });
+    } catch (err) {
+      return reject(err);
+    }
+
+    let stderr = '';
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch (e) {}
+      reject(new Error('فشل استرجاع النسخة الاحتياطية (انتهت المهلة)'));
+    }, options.timeout || 300000);
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0 && fs.existsSync(targetPath)) {
+        resolve(targetPath);
+      } else {
+        reject(new Error(cleanError(stderr) || 'فشل استرجاع النسخة الاحتياطية (رمز ' + code + ')'));
+      }
+    });
+  });
+}
+
 async function queryTable(dbPath, table, columns, from, to, options) {
   const cols = columns.map((c, i) => quote(c) + ' as c' + i);
   const range = (from > 0) ? (' rows ' + (from + 1) + ' to ' + to) : (' rows 1 to ' + to);
@@ -256,4 +323,5 @@ module.exports = {
   getColumns,
   getRowCount,
   queryTable,
+  restoreBackup,
 };

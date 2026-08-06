@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   firebirdColumns: (dbPath, table, options) => ipcRenderer.invoke('firebird-columns', dbPath, table, options),
   firebirdCount: (dbPath, table, options) => ipcRenderer.invoke('firebird-count', dbPath, table, options),
   firebirdQuery: (dbPath, table, columns, from, to, options) => ipcRenderer.invoke('firebird-query', dbPath, table, columns, from, to, options),
+  firebirdRestore: (backupPath, options) => ipcRenderer.invoke('firebird-restore', backupPath, options),
   // Splash / App Ready
   splashClose: () => ipcRenderer.send('splash-close'),
   // License System

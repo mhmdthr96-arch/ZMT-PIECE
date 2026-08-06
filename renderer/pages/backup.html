@@ -173,6 +173,27 @@
           </div>
         </div>
       </div>
+      <!-- Full Gestion Stock Import Panel -->
+      <div id="migrationFullImportPanel" class="migration-panel" style="display:none;margin-top:16px">
+        <div style="background:linear-gradient(135deg,#e3f2fd,#f9fbe7);border:1px solid var(--primary);border-radius:12px;padding:16px">
+          <h4 style="color:var(--silver-800);margin-bottom:4px"><i class="fas fa-database"></i> <span data-i18n="migration.fullImportPanelTitle">استيراد شامل لكل البيانات</span></h4>
+          <p style="font-size:12px;color:var(--silver-600);margin-bottom:12px" data-i18n="migration.fullImportPanelDesc">تم اكتشاف قاعدة بيانات Sable Stock / Gestion Stock — يمكن استيراد كل شيء دفعة واحدة: العملاء، الموردون، المنتجات بالأسعار، الفواتير والمرتجعات.</p>
+          <button class="btn btn-primary" onclick="startGestionStockFullImport()"><i class="fas fa-rocket"></i> <span data-i18n="migration.fullImportBtn">استيراد شامل</span></button>
+        </div>
+      </div>
+      <!-- Full Import Brand Selection Popup -->
+      <div id="migrationFullBrandPopup" style="display:none;margin-top:8px">
+        <div style="background:var(--card-bg);border:1px solid var(--border-color);border-radius:12px;padding:16px">
+          <h4 style="margin-bottom:4px;color:var(--silver-800)"><i class="fas fa-tag"></i> <span data-i18n="migration.fullImportPopupTitle">اختر العلامات التجارية للاستيراد</span></h4>
+          <p style="font-size:12px;color:var(--silver-500);margin-bottom:12px" data-i18n="migration.fullImportPopupHint">حدد العلامات التجارية التي تريد استيراد منتجاتها. المنتجات التي لا تحمل علامة تُستورد دائماً.</p>
+          <div id="migrationFullBrandList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;max-height:240px;overflow-y:auto;margin-bottom:12px"></div>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn btn-sm" onclick="selectAllFullBrands(true)"><i class="fas fa-check-double"></i> <span data-i18n="migration.selectAll">تحديد الكل</span></button>
+            <button class="btn btn-sm" onclick="document.getElementById('migrationFullBrandPopup').style.display='none'"><i class="fas fa-times"></i> <span data-i18n="migration.cancelImport">إلغاء</span></button>
+            <button class="btn btn-primary btn-sm" onclick="confirmGestionStockFullImport()"><i class="fas fa-rocket"></i> <span data-i18n="migration.confirmImport">بدء الاستيراد</span></button>
+          </div>
+        </div>
+      </div>
       <div id="migrationStep3" class="migration-panel" style="display:none">
         <h4 style="color:var(--silver-800);margin-bottom:4px"><i class="fas fa-project-diagram"></i> <span data-i18n="migration.mapColumns">مطابقة الأعمدة</span></h4>
         <p style="color:var(--silver-500);font-size:12px;margin-bottom:16px" data-i18n="migration.mapHint">البرنامج حاول مطابقة الأعمدة تلقائياً — راجع وعدّل حسب الحاجة</p>

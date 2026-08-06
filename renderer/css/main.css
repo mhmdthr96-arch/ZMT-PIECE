@@ -407,6 +407,22 @@ html, body {
 .brand-card .brand-name { font-size:12px; font-weight:600; color:var(--silver-800); margin-bottom:2px; }
 .brand-card .brand-country { font-size:10px; color:var(--silver-500); font-weight:500; }
 
+.brand-card .brand-fav {
+  position:absolute; top:8px; right:8px; z-index:2;
+  width:26px; height:26px; border:none; border-radius:50%;
+  background:rgba(255,255,255,0.9); color:var(--silver-400);
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+  font-size:13px; transition:var(--transition); box-shadow:0 1px 4px rgba(0,0,0,0.15);
+}
+.brand-card .brand-fav:hover { color:#f7b500; transform:scale(1.15); }
+.brand-card .brand-fav.active { color:#f7b500; background:rgba(255,244,181,0.6); }
+html[data-theme="dark"] .brand-card .brand-fav { background:rgba(30,32,36,0.85); color:var(--silver-500); }
+html[data-theme="dark"] .brand-card .brand-fav.active { color:#f7b500; background:rgba(90,74,20,0.5); }
+.brand-card.fav-true { border-color:#f7b500; }
+.brand-card.fav-true::after { background:linear-gradient(90deg,#f7b500,#ffdd66); opacity:1; }
+
+.brand-grid .brand-card.brand-fav-slot { opacity:1; border-color:#f7b500; }
+
 /* ===== CARDS ===== */
 .card {
   background: var(--silver-50);
