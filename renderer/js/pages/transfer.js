@@ -83,6 +83,35 @@ function onTransferDestChange() {
   updateTransferExecSection();
 }
 
+// ===== DONATION (FREE TRANSFER) =====
+
+function isTransferDonation() {
+  const el = document.getElementById('transferDonation');
+  return el ? el.checked : false;
+}
+
+function onTransferDonationToggle() {
+  const donation = isTransferDonation();
+  const warnEl = document.getElementById('transferDonationWarning');
+
+  if (donation) {
+    if (!confirm(`${t('transfer.donationWarning')}\n\n${t('transfer.confirmContinue')}`)) {
+      document.getElementById('transferDonation').checked = false;
+      return;
+    }
+    warnEl.style.display = '';
+    _transferCart.forEach(it => { it.buyPrice = 0; });
+  } else {
+    warnEl.style.display = 'none';
+  }
+
+  const bpInput = document.getElementById('transferItemBuyPrice');
+  bpInput.disabled = donation;
+  if (donation) bpInput.value = '0';
+
+  renderTransferCart();
+}
+
 // ===== BARCODE SCANNER =====
 
 function handleTransferBarcodeScan(e) {
@@ -168,7 +197,8 @@ function fillTransferFromProduct(id) {
   document.getElementById('transferItemAvail').value = product.quantity;
   document.getElementById('transferItemQty').value = '1';
   document.getElementById('transferItemQty').max = product.quantity;
-  document.getElementById('transferItemBuyPrice').value = product.buyPrice;
+  document.getElementById('transferItemBuyPrice').value = isTransferDonation() ? 0 : product.buyPrice;
+  document.getElementById('transferItemBuyPrice').disabled = isTransferDonation();
   document.getElementById('transferItemSellPrice').value = product.sellPrice;
 
   const brands = [...BRANDS.global, ...BRANDS.chinese];
@@ -190,7 +220,7 @@ function addTransferItem() {
   const name = document.getElementById('transferItemName').value.trim();
   const avail = parseInt(document.getElementById('transferItemAvail').value) || 0;
   const qty = parseInt(document.getElementById('transferItemQty').value) || 0;
-  const buyPrice = parseFloat(document.getElementById('transferItemBuyPrice').value) || 0;
+  let buyPrice = parseFloat(document.getElementById('transferItemBuyPrice').value) || 0;
   const sellPrice = parseFloat(document.getElementById('transferItemSellPrice').value) || 0;
   const brandId = document.getElementById('transferItemBrand').value;
   const category = document.getElementById('transferItemCategory').value;
@@ -198,7 +228,11 @@ function addTransferItem() {
   if (!name) { alert(t('transfer.searchFirst')); return; }
   if (qty <= 0) { alert(t('transfer.qtyZero')); return; }
   if (qty > avail) { alert(`${t('transfer.qtyExceeds')} (${qty}) ${t('transfer.qtyExceedsAvail')} (${avail})`); return; }
-  if (buyPrice <= 0) { alert(t('transfer.buyPriceZero')); return; }
+  if (isTransferDonation()) {
+    buyPrice = 0;
+  } else if (buyPrice <= 0) {
+    alert(t('transfer.buyPriceZero')); return;
+  }
 
   const selectedProduct = document.getElementById('transferSelectedProduct');
   let productId = null;
@@ -251,7 +285,7 @@ function renderTransferCart() {
     </div>`;
   }).join('');
 
-  document.getElementById('transferPaymentSection').style.display = '';
+  document.getElementById('transferPaymentSection').style.display = isTransferDonation() ? 'none' : '';
   document.getElementById('transferPayTotal').textContent = `DA${total.toFixed(2)}`;
   const payInput = document.getElementById('transferPayAmount');
   if (parseFloat(payInput.value) > total) payInput.value = total;
@@ -319,23 +353,26 @@ async function executeTransfer() {
   if (_transferCart.length === 0) { alert(t('transfer.cartEmpty')); return; }
 
   const srcCode = Auth.getUserCode();
+  const donation = isTransferDonation();
   const total = _transferCart.reduce((sum, item) => sum + item.qty * item.buyPrice, 0);
-  const paid = parseFloat(document.getElementById('transferPayAmount').value) || 0;
+  let paid = parseFloat(document.getElementById('transferPayAmount').value) || 0;
+  if (donation) paid = 0;
   const debt = Math.max(0, total - paid);
 
-  if (paid > total) { alert(t('transfer.paidExceedsTotal')); return; }
+  if (!donation && paid > total) { alert(t('transfer.paidExceedsTotal')); return; }
 
   const destStore = _transferAccessibleStores.find(s => s.code === destCode);
   const destName = destStore ? destStore.name : destCode;
 
-  const msg = `${t('transfer.confirmTitle')}\n` +
+  let msg = `${t('transfer.confirmTitle')}\n` +
     `${t('transfer.confirmFrom')} ${srcCode}\n` +
     `${t('transfer.confirmTo')} ${destName} (${destCode})\n` +
     `${t('transfer.confirmProducts')} ${_transferCart.length}\n` +
     `${t('transfer.confirmTotal')} DA${total.toFixed(2)}\n` +
     `${t('transfer.confirmPaid')} DA${paid.toFixed(2)}\n` +
-    `${t('transfer.confirmRemaining')} DA${debt.toFixed(2)}\n\n` +
-    `${t('transfer.confirmContinue')}`;
+    `${t('transfer.confirmRemaining')} DA${debt.toFixed(2)}`;
+  if (donation) msg += `\n\n⚠️ ${t('transfer.donationWarning')}`;
+  msg += `\n\n${t('transfer.confirmContinue')}`;
 
   if (!confirm(msg)) return;
 
@@ -416,6 +453,7 @@ async function executeTransfer() {
       fromCode: srcCode,
       toCode: destCode,
       fromName: localStorage.getItem('zmt_store_name') || srcCode,
+      ...(donation ? { isDonation: true, note: t('transfer.donationNote') } : {}),
     };
     raw.invoices.push(receiverInvoice);
 
@@ -441,6 +479,7 @@ async function executeTransfer() {
       toCode: destCode,
       toName: destName,
       isProvisional: false,
+      ...(donation ? { isDonation: true, note: t('transfer.donationNote') } : {}),
     });
 
     // 5. Record transfer
@@ -462,6 +501,7 @@ async function executeTransfer() {
       totalAmount: total,
       paidAmount: paid,
       debtAmount: debt,
+      ...(donation ? { isDonation: true, note: t('transfer.donationNote') } : {}),
     };
 
     const transfers = DB.getTransfers();
@@ -503,6 +543,7 @@ async function executeTransfer() {
     let successMsg = `${t('transfer.transferSuccess')}\n\n`;
     successMsg += `${t('transfer.transferredProducts')} ${itemSummary}\n`;
     successMsg += `${t('transfer.transferTotal')} DA${total.toFixed(2)}\n`;
+    if (donation) successMsg += `✅ ${t('transfer.donationNote')}\n`;
     if (paid > 0) successMsg += `${t('transfer.transferPaid')} DA${paid.toFixed(2)}\n`;
     if (debt > 0) successMsg += `${t('transfer.transferRemaining')} DA${debt.toFixed(2)}\n`;
 
@@ -511,6 +552,12 @@ async function executeTransfer() {
     // Reset
     _transferCart = [];
     document.getElementById('transferPayAmount').value = '0';
+    const donEl = document.getElementById('transferDonation');
+    if (donEl) donEl.checked = false;
+    const donWarn = document.getElementById('transferDonationWarning');
+    if (donWarn) donWarn.style.display = 'none';
+    const bpInput = document.getElementById('transferItemBuyPrice');
+    if (bpInput) bpInput.disabled = false;
     renderTransferCart();
     resetTransferItemForm();
   } catch (e) {
