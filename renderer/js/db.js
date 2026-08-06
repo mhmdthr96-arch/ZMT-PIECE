@@ -325,14 +325,30 @@ const DB = (() => {
 
   // ===== AUTO-BACKUP =====
   let _autoBackupTimer = 0;
+  let _autoBackupSuppressed = false;
+  let _autoBackupLastTs = 0;
+  const AUTO_BACKUP_MIN_GAP = 5 * 60 * 1000;
   function debounceAutoBackup() {
+    if (_autoBackupSuppressed) return;
     if (_autoBackupTimer) clearTimeout(_autoBackupTimer);
     _autoBackupTimer = setTimeout(tryAutoBackup, 30000);
   }
 
+  function suppressAutoBackup(on) {
+    _autoBackupSuppressed = !!on;
+    if (on && _autoBackupTimer) { clearTimeout(_autoBackupTimer); _autoBackupTimer = 0; }
+  }
+
   async function tryAutoBackup() {
+    if (_autoBackupSuppressed) return;
     if (!window.electronAPI?.getAppDataPath) return;
     if (_cache.products.length === 0 && _cache.invoices.length === 0 && _cache.customers.length === 0 && _cache.suppliers.length === 0) return;
+    const now = Date.now();
+    if (now - _autoBackupLastTs < AUTO_BACKUP_MIN_GAP) {
+      _autoBackupTimer = setTimeout(tryAutoBackup, AUTO_BACKUP_MIN_GAP - (now - _autoBackupLastTs));
+      return;
+    }
+    _autoBackupLastTs = now;
     try {
       const appPath = await window.electronAPI.getAppDataPath();
       if (!appPath) return;
@@ -1053,6 +1069,11 @@ const DB = (() => {
     // ===== LAN SYNC HOOKS =====
     onLocalChange(cb) {
       _localChangeListeners.push(cb);
+    },
+
+    // ===== AUTO-BACKUP CONTROL =====
+    suppressAutoBackup(on) {
+      suppressAutoBackup(on);
     },
 
     getTombstoneTs(store, id) {

@@ -1923,6 +1923,7 @@ async function importGestionStockInvoices(ctx) {
 async function importGestionStockFull(selectedBrands) {
   if (!_migrationState.firebird) return;
   const { dbPath, options } = _migrationState.firebird;
+  if (DB && DB.suppressAutoBackup) DB.suppressAutoBackup(true);
 
   migrationUpdateStatus(t('migration.creatingBackup') || 'جاري إنشاء نسخة احتياطية قبل الاستيراد...', 'info');
   const backupPath = await createPreImportBackup();
@@ -2119,7 +2120,11 @@ async function importGestionStockFull(selectedBrands) {
     return p || null;
   };
 
-  await importGestionStockInvoices({ dbPath, options, load, num, txt, parseDate, custCodeToId, supCodeToId, prodByRef, prodByBar, ensureProduct, results, migrationUpdateStatus, setImportStatus, t });
+  try {
+    await importGestionStockInvoices({ dbPath, options, load, num, txt, parseDate, custCodeToId, supCodeToId, prodByRef, prodByBar, ensureProduct, results, migrationUpdateStatus, setImportStatus, t });
+  } finally {
+    if (DB && DB.suppressAutoBackup) DB.suppressAutoBackup(false);
+  }
   migrationUpdateStatus('', '');
   if (migrationUpdateStatus && (t('migration.fullImportDone') || 'اكتمل الاستيراد الشامل').length) {
     migrationUpdateStatus(`✓ ${t('migration.fullImportDone') || 'اكتمل الاستيراد الشامل'}: ` +

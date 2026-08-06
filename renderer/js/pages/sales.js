@@ -65,10 +65,24 @@ function getTvaRate() {
 
 function init_sales() {
   _salesProducts = DB.getProducts();
+  invalidateSalesGroupsCache();
   _salesSearchQuery = '';
   _salesDefaultMode = 'unit';
   renderSalesProducts();
   setupSalesBarcode();
+  setupSalesGridScroll();
+}
+
+function setupSalesGridScroll() {
+  const grid = document.getElementById('salesProductGrid');
+  if (!grid) return;
+  if (grid.dataset.scrollBound) return;
+  grid.dataset.scrollBound = '1';
+  grid.addEventListener('scroll', () => {
+    if (grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 600) {
+      loadMoreSalesProducts();
+    }
+  });
 }
 
 function escHtml(str) {
@@ -79,15 +93,28 @@ function escHtml(str) {
 // ===== PRODUCT GROUPS (merge same name+barcode, FIFO) =====
 
 var _salesGroupList = [];
+var _salesGroupsCache = null;
+var _salesRenderedCount = 0;
+var _salesGridLoadingMore = false;
 
 function salesGroupKey(p) {
   return (p.name || '') + '\u0001' + (p.barcode || '');
 }
 
+function invalidateSalesGroupsCache() {
+  _salesGroupsCache = null;
+  _salesGroupsIndex = null;
+}
+
+var _salesGroupsIndex = null;
+
 function getSalesGroups() {
+  if (_salesGroupsCache) return _salesGroupsCache;
   const map = new Map();
   const groups = [];
-  for (const p of _salesProducts) {
+  const prods = _salesProducts;
+  for (let i = 0; i < prods.length; i++) {
+    const p = prods[i];
     const key = salesGroupKey(p);
     let g = map.get(key);
     if (!g) {
@@ -97,14 +124,18 @@ function getSalesGroups() {
     }
     g.records.push(p);
   }
-  for (const g of groups) {
-    g.records.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  for (let i = 0; i < groups.length; i++) {
+    groups[i].records.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   }
+  _salesGroupsCache = groups;
+  _salesGroupsIndex = map;
   return groups;
 }
 
 function getSalesGroupByKey(key) {
-  for (const g of getSalesGroups()) {
+  const groups = getSalesGroups();
+  if (_salesGroupsIndex) return _salesGroupsIndex.get(key) || null;
+  for (const g of groups) {
     if (g.key === key) return g;
   }
   return null;
@@ -183,6 +214,8 @@ function salesCardHTML(g, i) {
   </div>`;
 }
 
+const SALES_GRID_PAGE_SIZE = 300;
+
 function renderSalesProducts(filter) {
   if (typeof filter === 'string') {
     _salesSearchQuery = filter.trim().toLowerCase();
@@ -202,6 +235,8 @@ function renderSalesProducts(filter) {
     );
   }
   _salesGroupList = groups;
+  _salesRenderedCount = 0;
+  _salesGridLoadingMore = false;
 
   const count = document.getElementById('salesProdCount');
   if (count) count.textContent = `${groups.length} ${t('common.product')}`;
@@ -215,21 +250,36 @@ function renderSalesProducts(filter) {
     return;
   }
 
-  let i = 0;
-  const CHUNK = 240;
-  const renderChunk = () => {
+  const renderNextPage = () => {
     if (!grid || !grid.isConnected) return;
-    const t0 = performance.now();
+    if (_salesRenderedCount >= groups.length) return;
+    const from = _salesRenderedCount;
+    const to = Math.min(from + SALES_GRID_PAGE_SIZE, groups.length);
     let html = '';
-    while (i < groups.length) {
+    for (let i = from; i < to; i++) {
       html += salesCardHTML(groups[i], i);
-      i++;
-      if (i % CHUNK === 0 || (performance.now() - t0) > 15) break;
     }
+    _salesRenderedCount = to;
     grid.insertAdjacentHTML('beforeend', html);
-    if (i < groups.length) _salesRenderRAF = requestAnimationFrame(renderChunk);
   };
-  renderChunk();
+  _salesRenderRAF = requestAnimationFrame(renderNextPage);
+}
+
+function loadMoreSalesProducts() {
+  if (_salesGridLoadingMore || _salesRenderRAF) return;
+  _salesGridLoadingMore = true;
+  const grid = document.getElementById('salesProductGrid');
+  if (!grid || !grid.isConnected) { _salesGridLoadingMore = false; return; }
+  const t0 = performance.now();
+  let html = '';
+  const groups = _salesGroupList;
+  while (_salesRenderedCount < groups.length) {
+    html += salesCardHTML(groups[_salesRenderedCount], _salesRenderedCount);
+    _salesRenderedCount++;
+    if ((performance.now() - t0) > 15) break;
+  }
+  grid.insertAdjacentHTML('beforeend', html);
+  _salesGridLoadingMore = false;
 }
 
 const _debouncedSalesSearch = debounce((q) => { renderSalesProducts(q); }, 200);
@@ -387,7 +437,6 @@ function addSalesLine(key) {
 
   renderSalesCart();
   document.getElementById('salesEmptyCart').style.display = 'none';
-  renderSalesProducts();
 }
 
 function renderSalesCart() {
@@ -1067,5 +1116,6 @@ function clearSalesCart() {
 window._pageSyncHandlers = window._pageSyncHandlers || {};
 window._pageSyncHandlers['sales'] = function salesSyncData() {
   _salesProducts = DB.getProducts();
+  invalidateSalesGroupsCache();
   renderSalesProducts();
 };
