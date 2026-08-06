@@ -489,7 +489,7 @@ function showInvEditSection() {
             <td>${escHtml(item.name)}</td>
             <td style="text-align:center">${item.qty}</td>
             <td style="text-align:center">
-              <input type="number" class="no-spinner" id="editQty_${i}" value="${item.qty}" min="1" style="width:70px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
+              <input type="number" class="no-spinner" id="editQty_${i}" value="${item.qty}" min="0" style="width:70px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
             </td>
           </tr>
         `).join('')}
@@ -594,7 +594,8 @@ function saveInvEdit() {
     const item = inv.items[i];
     const input = document.getElementById('editQty_' + i);
     if (!input) { updatedItems.push(item); newTotalAmount += item.price * item.qty; continue; }
-    const newQty = parseInt(input.value) || 1;
+    let newQty = parseInt(input.value);
+    if (isNaN(newQty) || newQty < 0) newQty = item.qty;
     const diff = newQty - item.qty;
 
     if (diff !== 0 && !isProvisional) {
@@ -684,6 +685,9 @@ function saveInvEdit() {
   // Update invoice
   const oldTotal = inv.totalAmount;
   inv.totalAmount = newTotalAmount;
+  const isSaleEdit = inv.type !== 'supplier' && inv.type !== 'purchase';
+  const paidBefore = DB.getInvoicePaidAmount(_invDetailId);
+  if (isSaleEdit) DB.reduceInvoicePayments(_invDetailId, newTotalAmount);
   const actualPaid = DB.getInvoicePaidAmount(_invDetailId);
   if (actualPaid > newTotalAmount) inv.paidAmount = newTotalAmount;
   else inv.paidAmount = actualPaid;
@@ -709,11 +713,12 @@ function saveInvEdit() {
   // Update customer/supplier balance if total changed
   if (oldTotal !== newTotalAmount) {
     const diff = newTotalAmount - oldTotal;
+    const balanceChange = (isSaleEdit && newTotalAmount < paidBefore) ? (paidBefore - oldTotal) : diff;
     if (inv.customerId) {
       const customers = DB.getCustomers();
       const cIdx = customers.findIndex(c => c.id === inv.customerId);
       if (cIdx !== -1) {
-        customers[cIdx].balance = (parseFloat(customers[cIdx].balance) || 0) + diff;
+        customers[cIdx].balance = (parseFloat(customers[cIdx].balance) || 0) + balanceChange;
         DB.saveCustomers(customers);
       }
     }
@@ -1847,6 +1852,7 @@ function resetPurForm() {
   document.getElementById('purQty').value = '1';
   document.getElementById('purBuyPrice').value = '0';
   document.getElementById('purSellPrice').value = '0';
+  document.getElementById('purWholePrice').value = '0';
   document.getElementById('purSupSearch').value = '';
   document.getElementById('purSupResults').innerHTML = '';
   document.getElementById('purSelectedSupplier').style.display = 'none';
@@ -1896,6 +1902,7 @@ function fillPurFromScan(id) {
   document.getElementById('purQty').value = '1';
   document.getElementById('purBuyPrice').value = p.buyPrice;
   document.getElementById('purSellPrice').value = p.sellPrice;
+  document.getElementById('purWholePrice').value = p.wholesalePrice || 0;
   document.getElementById('purBrand').value = p.brandId;
   document.getElementById('purCategory').value = p.category;
 }
@@ -1928,6 +1935,7 @@ function fillPurFromSearch(id) {
   document.getElementById('purQty').value = '1';
   document.getElementById('purBuyPrice').value = p.buyPrice;
   document.getElementById('purSellPrice').value = p.sellPrice;
+  document.getElementById('purWholePrice').value = p.wholesalePrice || 0;
   document.getElementById('purBrand').value = p.brandId;
   document.getElementById('purCategory').value = p.category;
 }
@@ -1966,11 +1974,12 @@ function purAddToCart() {
   const qty = parseInt(document.getElementById('purQty').value) || 1;
   const buyPrice = parseFloat(document.getElementById('purBuyPrice').value) || 0;
   const sellPrice = parseFloat(document.getElementById('purSellPrice').value) || 0;
+  const wholesalePrice = parseFloat(document.getElementById('purWholePrice').value) || 0;
 
   if (!name) { alert('الرجاء إدخال اسم المنتج'); return; }
   if (!barcode) { alert('الرجاء إدخال الباركود'); return; }
 
-  _purCart.push({ name, barcode, brandId, category, qty, buyPrice, sellPrice });
+  _purCart.push({ name, barcode, brandId, category, qty, buyPrice, sellPrice, wholesalePrice });
   renderPurCart();
   resetPurForm();
   setTimeout(() => document.getElementById('purBarcodeScanner').focus(), 200);
@@ -2058,6 +2067,7 @@ function purConfirmInvoice() {
       name: item.name, barcode: item.barcode,
       brandId: item.brandId, category: item.category,
       buyPrice: item.buyPrice, sellPrice: item.sellPrice,
+      wholesalePrice: item.wholesalePrice || 0,
       quantity: item.qty, supplierId,
     });
 

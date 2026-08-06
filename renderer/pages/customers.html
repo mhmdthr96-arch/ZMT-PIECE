@@ -65,6 +65,14 @@
         <input type="text" class="form-input" id="custAddress" placeholder="مثال: الجزائر العاصمة">
       </div>
       <div class="form-group">
+        <label data-i18n="customers.formType">نوع العميل</label>
+        <select class="form-input" id="custType">
+          <option value="unit" data-i18n="customers.typeUnit">قطعة</option>
+          <option value="whole" data-i18n="customers.typeWhole">جملة</option>
+        </select>
+        <small style="color:var(--silver-500);font-size:11px" data-i18n="customers.formTypeHelp">يحدد السعر الافتراضي في صفحة البيع (يمكن تغييره لكل منتج داخل السلة)</small>
+      </div>
+      <div class="form-group">
         <label data-i18n="customers.formDiscount">نسبة الخصم (%)</label>
         <input type="number" class="form-input no-spinner" id="custDiscount" value="0" min="0" max="100" step="0.001">
         <small style="color:var(--silver-500);font-size:11px" data-i18n="customers.formDiscountHelp">من 0.001% إلى 100% - اختياري</small>

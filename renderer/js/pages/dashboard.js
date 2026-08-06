@@ -42,7 +42,7 @@ function updateDashboardStats() {
 
   document.getElementById('dashLowStock').textContent = products.filter(p => p.quantity > 0 && p.quantity <= 5).length;
   document.getElementById('dashMonthSales').textContent = `DA${thisMonthTotal.toFixed(2)}`;
-  document.getElementById('dashProfit').textContent = `DA${invoices.filter(i => i.type === 'customer').reduce((s, i) => s + (i.profit || 0), 0).toFixed(2)}`;
+  document.getElementById('dashProfit').textContent = `DA${invoices.filter(i => i.type === 'customer' && DB.getInvoicePaidAmount(i.id) >= (i.totalAmount || 0)).reduce((s, i) => s + (i.profit || 0), 0).toFixed(2)}`;
 }
 
 function generateRealData(months) {
@@ -69,7 +69,7 @@ function generateRealData(months) {
     const returnQty = monthReturns.reduce((s, r) => s + (r.qty || 0), 0);
 
     const monthProfit = invoices
-      .filter(inv => inv.type === 'customer' && inv.createdAt >= mStart && inv.createdAt <= mEndTs)
+      .filter(inv => inv.type === 'customer' && inv.createdAt >= mStart && inv.createdAt <= mEndTs && DB.getInvoicePaidAmount(inv.id) >= (inv.totalAmount || 0))
       .reduce((s, inv) => s + (inv.profit || 0), 0);
 
     data.push({ label, sales, inventory, returns: returnQty, profit: monthProfit });

@@ -336,6 +336,20 @@ if (typeof window.escHtml === 'undefined') {
 // ===== UTILITIES =====
 function debounce(fn, ms) { let t; return function() { clearTimeout(t); const a=arguments, ctx=this; t = setTimeout(() => fn.apply(ctx, a), ms); }; }
 
+// ===== ORDERS NAV BADGE =====
+window.updateOrdersBadge = function() {
+  const el = document.getElementById('ordersNavBadge');
+  if (!el) return;
+  let n = 0;
+  try {
+    if (typeof DB !== 'undefined' && DB.ready && DB.ready()) {
+      n = (DB.getOrders() || []).filter(o => o.status === 'pending' || o.status === 'notAvailable').length;
+    }
+  } catch (e) {}
+  el.textContent = n;
+  el.style.display = n > 0 ? '' : 'none';
+};
+
 // ===== CONTROLS =====
 document.getElementById('btnMinimize')?.addEventListener('click', () => api.minimize?.());
 document.getElementById('btnMaximize')?.addEventListener('click', () => api.maximize?.());
@@ -360,6 +374,7 @@ const LANG = {
       reports: 'التقارير', backup: 'النسخ الاحتياطي', settings: 'الاعدادات',
       connection: 'اعدادات الاتصال',
       storeDebts: 'ديون المحلات', branchesMonitor: 'مراقبة الفروع', sharedInventory: 'المخزون المشترك',
+      orders: 'الطلبات',
     },
     dash: {
       title: 'لوحة التحكم', sub: 'نظرة عامة على المبيعات والمخزون',
@@ -409,6 +424,7 @@ const LANG = {
       addModalTitle: 'إضافة عميل جديد', editModalTitle: 'تعديل العميل',
       formName: 'اسم العميل', formNamePl: 'مثال: أحمد علي',
       formPhone: 'رقم الهاتف', formAddress: 'العنوان', formAddressPl: 'مثال: الجزائر العاصمة',
+      formType: 'نوع العميل', typeUnit: 'قطعة', typeWhole: 'جملة', formTypeHelp: 'يحدد السعر الافتراضي في صفحة البيع (يمكن تغييره لكل منتج داخل السلة)',
       formDiscount: 'نسبة الخصم (%)', formDiscountHelp: 'من 0.001% إلى 100% - اختياري',
       cancel: 'إلغاء', save: 'حفظ',
       totalDebts: 'إجمالي الديون على العملاء',
@@ -596,7 +612,7 @@ const LANG = {
       oldPaymentNote: 'مدفوعات مستوردة',
     },
     brandCat: { brand: 'العلامة', category: 'اختر نوع القطعة', searchPlaceholder: 'بحث عن نوع...', addProduct: 'إضافة منتج' },
-    catProducts: { title: 'المنتجات', sub: 'المنتجات المتوفرة', searchPlaceholder: 'بحث عن منتج...', addProduct: 'إضافة منتج', empty: 'لا توجد منتجات في هذا التصنيف', addInvoiceTitle: 'إضافة منتج للفاتورة', scanPlaceholder: 'امسح الباركود ضوئياً...', scannerReady: 'جاهز للمسح', searchProduct: 'بحث عن منتج', newProduct: 'منتج جديد', searchExisting: 'ابحث بالاسم أو الباركود', searchExistingPlaceholder: 'اسم المنتج أو الباركود...', name: 'اسم المنتج', namePlaceholder: 'اسم القطعة', barcode: 'الباركود', barcodePlaceholder: 'أدخل الباركود', generate: 'توليد', qty: 'الكمية', buyPrice: 'سعر الشراء', sellPrice: 'سعر البيع', supplier: 'المورد', supplierPlaceholder: 'ابحث عن مورد بالاسم...', cancel: 'إلغاء', addToCart: 'إضافة إلى سلة الفاتورة', cartTitle: 'سلة الفاتورة', total: 'الإجمالي:', clear: 'تفريغ', confirmInvoice: 'تأكيد الفاتورة', fiscalStamp: 'طابع جبائي (Timbre Fiscal)' },
+    catProducts: { title: 'المنتجات', sub: 'المنتجات المتوفرة', searchPlaceholder: 'بحث عن منتج...', addProduct: 'إضافة منتج', empty: 'لا توجد منتجات في هذا التصنيف', addInvoiceTitle: 'إضافة منتج للفاتورة', scanPlaceholder: 'امسح الباركود ضوئياً...', scannerReady: 'جاهز للمسح', searchProduct: 'بحث عن منتج', newProduct: 'منتج جديد', searchExisting: 'ابحث بالاسم أو الباركود', searchExistingPlaceholder: 'اسم المنتج أو الباركود...', name: 'اسم المنتج', namePlaceholder: 'اسم القطعة', barcode: 'الباركود', barcodePlaceholder: 'أدخل الباركود', generate: 'توليد', qty: 'الكمية', buyPrice: 'سعر الشراء', sellPrice: 'سعر البيع', supplier: 'المورد', supplierPlaceholder: 'ابحث عن مورد بالاسم...', cancel: 'إلغاء', addToCart: 'إضافة إلى سلة الفاتورة', cartTitle: 'سلة الفاتورة', total: 'الإجمالي:', clear: 'تفريغ',       confirmInvoice: 'تأكيد الفاتورة', fiscalStamp: 'طابع جبائي (Timbre Fiscal)', wholesalePrice: 'سعر البيع بالجملة' },
     settings: {
       title: 'الاعدادات', sub: 'إعدادات البرنامج',
       general: 'الإعدادات العامة',
@@ -657,7 +673,22 @@ const LANG = {
       cartTitle: 'سلة المشتريات', subtotal: 'المجموع الفرعي', customerDiscount: 'خصم العميل', additionalDiscount: 'تخفيض إضافي',
       totalLabel: 'الإجمالي', paidLabel: 'المبلغ المدفوع', payFull: 'دفع كلياً', remainingLabel: 'الباقي',
       clear: 'تفريغ', checkout: 'إتمام البيع', emptyCartTitle: 'السلة فارغة', emptyCartHint: 'امسح باركود القطعة أو اخترها من قائمة المنتجات',
-      scanPlaceholder: 'امسح الباركود ضوئياً...', searchPlaceholder2: 'ابحث باسم القطعة أو الباركود...', productsCount: '0 منتج', multiBatches: 'دفعات متعددة', mixedPrice: 'أسعار متعددة',
+      scanPlaceholder: 'امسح الباركود ضوئياً...', searchPlaceholder2: 'ابحث باسم القطعة أو الباركود...', productsCount: '0 منتج', multiBatches: 'دفعات متعددة', mixedPrice: 'أسعار متعددة', unit: 'قطعة', wholesale: 'جملة',
+    },
+    orders: {
+      title: 'الطلبات', sub: 'طلب القطع الناقصة من الموردين',
+      tabMine: 'طلباتي', tabBranches: 'طلبات الفروع',
+      suggestions: 'اقتراحات النقص', noSuggestions: 'لا توجد منتجات منخفضة أو نافدة — رائع!',
+      search: 'ابحث باسم القطعة أو الباركود...',
+      all: 'الكل', today: 'اليوم', week: 'الأسبوع', month: 'الشهر', year: 'السنة',
+      refresh: 'تحديث',
+      empty: 'لا توجد طلبات بعد — أضف من اقتراحات النقص أو ابحث',
+      statusPending: 'قيد الانتظار', statusDone: 'منجز', statusNotAvailable: 'لا يوجد',
+      btnDone: 'منجز', btnNotAvailable: 'لا يوجد', btnDelete: 'حذف',
+      deleteConfirm: 'حذف هذا الطلب؟',
+      cloudRequired: 'يتطلب اتصالاً بالسحابة لعرض طلبات الفروع',
+      loading: 'جاري تحميل طلبات الفروع...',
+      noBranchOrders: 'لا توجد طلبات من الفروع بعد',
     },
     invoices: {
       title: 'الفواتير', sub: 'جميع فواتير البيع والمشتريات',
@@ -716,7 +747,7 @@ const LANG = {
       invoiceSaved: 'تم تسجيل فاتورة بقيمة', fiscalStamp: 'طابع جبائي',
       includes: 'تشمل', productUnit: 'منتج', pieceUnit: 'قطعة',
       editLabelName: 'اسم المنتج', editLabelBarcode: 'الباركود', editLabelBrand: 'العلامة',
-      editLabelCategory: 'التصنيف', editLabelQty: 'الكمية', editLabelBuyPrice: 'سعر الشراء', editLabelSellPrice: 'سعر البيع',
+      editLabelCategory: 'التصنيف', editLabelQty: 'الكمية', editLabelBuyPrice: 'سعر الشراء', editLabelSellPrice: 'سعر البيع', editLabelWholesale: 'سعر البيع بالجملة',
       editTitle: 'تعديل المنتج',
       deleteConfirm: 'هل أنت متأكد من حذف هذا المنتج؟',
       importSuccess: 'تم استيراد', importSuccessEnd: 'منتج بنجاح',
@@ -726,7 +757,7 @@ const LANG = {
       addTitle: 'إضافة مخزون + فاتورة', scanPlaceholder2: 'امسح الباركود ضوئياً...',
       searchExisting: 'ابحث عن منتج موجود (بالاسم أو الباركود)', searchExistingPlaceholder: 'اسم المنتج أو الباركود...',
       category: 'التصنيف', name: 'اسم المنتج', barcode: 'الباركود', generate2: 'توليد',
-      qty: 'الكمية', buyPrice: 'سعر الشراء', sellPrice: 'سعر البيع', supplierOptional: 'المورد (اختياري)',
+      qty: 'الكمية', buyPrice: 'سعر الشراء', sellPrice: 'سعر البيع', wholesalePrice: 'سعر البيع بالجملة', supplierOptional: 'المورد (اختياري)',
       supplierSearchPlaceholder: 'ابحث عن مورد...', addToCart: 'إضافة إلى سلة الفاتورة',
       invoiceCart: 'سلة الفاتورة', fiscalStamp2: 'الطابع الجبائي (Timbre Fiscal)', totalLabel: 'الإجمالي:',
       clear2: 'تفريغ', confirmInvoice: 'تأكيد الفاتورة', categoryCol: 'التصنيف',
@@ -963,6 +994,7 @@ const LANG = {
       reports: 'Reports', backup: 'Backup', settings: 'Settings',
       connection: 'Connection Settings',
       storeDebts: 'Store Debts', branchesMonitor: 'Branch Monitor', sharedInventory: 'Shared Inventory',
+      orders: 'Orders',
     },
     dash: {
       title: 'Dashboard', sub: 'Sales & Inventory Overview',
@@ -1012,6 +1044,7 @@ const LANG = {
       addModalTitle: 'Add New Customer', editModalTitle: 'Edit Customer',
       formName: 'Customer Name', formNamePl: 'e.g. Ahmed Ali',
       formPhone: 'Phone Number', formAddress: 'Address', formAddressPl: 'e.g. Algiers',
+      formType: 'Customer Type', typeUnit: 'Unit', typeWhole: 'Wholesale', formTypeHelp: 'Sets the default price in the sales page (can be changed per product in the cart)',
       formDiscount: 'Discount (%)', formDiscountHelp: 'From 0.001% to 100% - Optional',
       cancel: 'Cancel', save: 'Save',
       totalDebts: 'Total Customer Debts',
@@ -1199,7 +1232,7 @@ const LANG = {
       oldPaymentNote: 'Imported payment',
     },
     brandCat: { brand: 'Brand', category: 'Choose Part Type', searchPlaceholder: 'Search for type...', addProduct: 'Add Product' },
-    catProducts: { title: 'Products', sub: 'Available Products', searchPlaceholder: 'Search for product...', addProduct: 'Add Product', empty: 'No products in this category', addInvoiceTitle: 'Add Product to Invoice', scanPlaceholder: 'Scan barcode...', scannerReady: 'Ready to scan', searchProduct: 'Search for product', newProduct: 'New Product', searchExisting: 'Search by name or barcode', searchExistingPlaceholder: 'Product name or barcode...', name: 'Product Name', namePlaceholder: 'Part name', barcode: 'Barcode', barcodePlaceholder: 'Enter barcode', generate: 'Generate', qty: 'Quantity', buyPrice: 'Buy Price', sellPrice: 'Sell Price', supplier: 'Supplier', supplierPlaceholder: 'Search for supplier by name...', cancel: 'Cancel', addToCart: 'Add to Invoice Cart', cartTitle: 'Invoice Cart', total: 'Total:', clear: 'Clear', confirmInvoice: 'Confirm Invoice', fiscalStamp: 'Fiscal Stamp (Timbre Fiscal)' },
+    catProducts: { title: 'Products', sub: 'Available Products', searchPlaceholder: 'Search for product...', addProduct: 'Add Product', empty: 'No products in this category', addInvoiceTitle: 'Add Product to Invoice', scanPlaceholder: 'Scan barcode...', scannerReady: 'Ready to scan', searchProduct: 'Search for product', newProduct: 'New Product', searchExisting: 'Search by name or barcode', searchExistingPlaceholder: 'Product name or barcode...', name: 'Product Name', namePlaceholder: 'Part name', barcode: 'Barcode', barcodePlaceholder: 'Enter barcode', generate: 'Generate', qty: 'Quantity', buyPrice: 'Buy Price', sellPrice: 'Sell Price', supplier: 'Supplier', supplierPlaceholder: 'Search for supplier by name...', cancel: 'Cancel', addToCart: 'Add to Invoice Cart', cartTitle: 'Invoice Cart', total: 'Total:', clear: 'Clear',       confirmInvoice: 'Confirm Invoice', fiscalStamp: 'Fiscal Stamp (Timbre Fiscal)', wholesalePrice: 'Wholesale Price' },
     settings: {
       title: 'Settings', sub: 'Application Settings',
       general: 'General Settings',
@@ -1260,7 +1293,22 @@ const LANG = {
       cartTitle: 'Shopping Cart', subtotal: 'Subtotal', customerDiscount: 'Customer Discount', additionalDiscount: 'Additional Discount',
       totalLabel: 'Total', paidLabel: 'Amount Paid', payFull: 'Pay Full', remainingLabel: 'Remaining',
       clear: 'Clear', checkout: 'Checkout', emptyCartTitle: 'Cart is Empty', emptyCartHint: 'Scan item barcode or select from product list',
-      scanPlaceholder: 'Scan barcode...', searchPlaceholder2: 'Search by part name or barcode...', productsCount: '0 products', multiBatches: 'Multiple batches', mixedPrice: 'Mixed price',
+      scanPlaceholder: 'Scan barcode...', searchPlaceholder2: 'Search by part name or barcode...', productsCount: '0 products', multiBatches: 'Multiple batches', mixedPrice: 'Mixed price', unit: 'Unit', wholesale: 'Wholesale',
+    },
+    orders: {
+      title: 'Orders', sub: 'Order missing parts from suppliers',
+      tabMine: 'My Orders', tabBranches: 'Branch Orders',
+      suggestions: 'Low stock suggestions', noSuggestions: 'No low or out-of-stock products — great!',
+      search: 'Search by part name or barcode...',
+      all: 'All', today: 'Today', week: 'Week', month: 'Month', year: 'Year',
+      refresh: 'Refresh',
+      empty: 'No orders yet — add from suggestions or search',
+      statusPending: 'Pending', statusDone: 'Done', statusNotAvailable: 'Not available',
+      btnDone: 'Done', btnNotAvailable: 'Not available', btnDelete: 'Delete',
+      deleteConfirm: 'Delete this order?',
+      cloudRequired: 'Cloud connection required to view branch orders',
+      loading: 'Loading branch orders...',
+      noBranchOrders: 'No branch orders yet',
     },
     invoices: {
       title: 'Invoices', sub: 'All Sales & Purchase Invoices',
@@ -1319,7 +1367,7 @@ const LANG = {
       invoiceSaved: 'Invoice registered for', fiscalStamp: 'Fiscal stamp',
       includes: 'includes', productUnit: 'products', pieceUnit: 'pieces',
       editLabelName: 'Product Name', editLabelBarcode: 'Barcode', editLabelBrand: 'Brand',
-      editLabelCategory: 'Category', editLabelQty: 'Quantity', editLabelBuyPrice: 'Buy Price', editLabelSellPrice: 'Sell Price',
+      editLabelCategory: 'Category', editLabelQty: 'Quantity', editLabelBuyPrice: 'Buy Price', editLabelSellPrice: 'Sell Price', editLabelWholesale: 'Wholesale Price',
       editTitle: 'Edit Product',
       deleteConfirm: 'Are you sure you want to delete this product?',
       importSuccess: 'Imported', importSuccessEnd: 'products successfully',
@@ -1329,7 +1377,7 @@ const LANG = {
       addTitle: 'Add Stock + Invoice', scanPlaceholder2: 'Scan barcode...',
       searchExisting: 'Search existing product (by name or barcode)', searchExistingPlaceholder: 'Product name or barcode...',
       category: 'Category', name: 'Product Name', barcode: 'Barcode', generate2: 'Generate',
-      qty: 'Quantity', buyPrice: 'Buy Price', sellPrice: 'Sell Price', supplierOptional: 'Supplier (optional)',
+      qty: 'Quantity', buyPrice: 'Buy Price', sellPrice: 'Sell Price', wholesalePrice: 'Wholesale Price', supplierOptional: 'Supplier (optional)',
       supplierSearchPlaceholder: 'Search for supplier...', addToCart: 'Add to Invoice Cart',
       invoiceCart: 'Invoice Cart', fiscalStamp2: 'Fiscal Stamp (Timbre Fiscal)', totalLabel: 'Total:',
       clear2: 'Clear', confirmInvoice: 'Confirm Invoice', categoryCol: 'Category',
@@ -1561,6 +1609,7 @@ const LANG = {
       reports: 'Rapports', backup: 'Sauvegarde', settings: 'Paramètres',
       connection: 'Paramètres de Connexion',
       storeDebts: 'Dettes Magasins', branchesMonitor: 'Moniteur Succursales', sharedInventory: 'Stock Partagé',
+      orders: 'Commandes',
     },
     dash: {
       title: 'Tableau de Bord', sub: 'Aperçu des Ventes et des Stocks',
@@ -1610,6 +1659,7 @@ const LANG = {
       addModalTitle: 'Ajouter un Client', editModalTitle: 'Modifier le Client',
       formName: 'Nom du Client', formNamePl: 'Ex: Ahmed Ali',
       formPhone: 'Numéro de Téléphone', formAddress: 'Adresse', formAddressPl: 'Ex: Alger',
+      formType: 'Type de client', typeUnit: 'Détail', typeWhole: 'Gros', formTypeHelp: 'Définit le prix par défaut dans la page de vente (modifiable par produit dans le panier)',
       formDiscount: 'Remise (%)', formDiscountHelp: 'De 0.001% à 100% - Optionnel',
       cancel: 'Annuler', save: 'Enregistrer',
       totalDebts: 'Total Dettes des Clients',
@@ -1797,7 +1847,7 @@ const LANG = {
       oldPaymentNote: 'Paiement importé',
     },
     brandCat: { brand: 'Marque', category: 'Choisir le Type de Pièce', searchPlaceholder: 'Rechercher un type...', addProduct: 'Ajouter Produit' },
-    catProducts: { title: 'Produits', sub: 'Produits Disponibles', searchPlaceholder: 'Rechercher un produit...', addProduct: 'Ajouter Produit', empty: 'Aucun produit dans cette catégorie', addInvoiceTitle: 'Ajouter un Produit à la Facture', scanPlaceholder: 'Scannez le code-barres...', scannerReady: 'Prêt à scanner', searchProduct: 'Rechercher un produit', newProduct: 'Nouveau Produit', searchExisting: 'Rechercher par nom ou code-barres', searchExistingPlaceholder: 'Nom du produit ou code-barres...', name: 'Nom du Produit', namePlaceholder: 'Nom de la pièce', barcode: 'Code-barres', barcodePlaceholder: 'Entrez le code-barres', generate: 'Générer', qty: 'Quantité', buyPrice: 'Prix d\'Achat', sellPrice: 'Prix de Vente', supplier: 'Fournisseur', supplierPlaceholder: 'Rechercher un fournisseur par nom...', cancel: 'Annuler', addToCart: 'Ajouter au Panier de Facture', cartTitle: 'Panier de Facture', total: 'Total:', clear: 'Vider', confirmInvoice: 'Confirmer la Facture', fiscalStamp: 'Timbre Fiscal (Timbre Fiscal)' },
+    catProducts: { title: 'Produits', sub: 'Produits Disponibles', searchPlaceholder: 'Rechercher un produit...', addProduct: 'Ajouter Produit', empty: 'Aucun produit dans cette catégorie', addInvoiceTitle: 'Ajouter un Produit à la Facture', scanPlaceholder: 'Scannez le code-barres...', scannerReady: 'Prêt à scanner', searchProduct: 'Rechercher un produit', newProduct: 'Nouveau Produit', searchExisting: 'Rechercher par nom ou code-barres', searchExistingPlaceholder: 'Nom du produit ou code-barres...', name: 'Nom du Produit', namePlaceholder: 'Nom de la pièce', barcode: 'Code-barres', barcodePlaceholder: 'Entrez le code-barres', generate: 'Générer', qty: 'Quantité', buyPrice: 'Prix d\'Achat', sellPrice: 'Prix de Vente', supplier: 'Fournisseur', supplierPlaceholder: 'Rechercher un fournisseur par nom...', cancel: 'Annuler', addToCart: 'Ajouter au Panier de Facture', cartTitle: 'Panier de Facture', total: 'Total:', clear: 'Vider',       confirmInvoice: 'Confirmer la Facture', fiscalStamp: 'Timbre Fiscal (Timbre Fiscal)', wholesalePrice: 'Prix de Gros' },
     settings: {
       title: 'Paramètres', sub: 'Paramètres de l\'Application',
       general: 'Paramètres Généraux',
@@ -1858,7 +1908,22 @@ const LANG = {
       cartTitle: 'Panier', subtotal: 'Sous-total', customerDiscount: 'Remise Client', additionalDiscount: 'Remise Supplémentaire',
       totalLabel: 'Total', paidLabel: 'Montant Payé', payFull: 'Payer Tout', remainingLabel: 'Reste',
       clear: 'Vider', checkout: 'Finaliser', emptyCartTitle: 'Le Panier est Vide', emptyCartHint: 'Scannez le code-barres ou sélectionnez dans la liste',
-      scanPlaceholder: 'Scannez le code-barres...', searchPlaceholder2: 'Rechercher par nom ou code-barres...', productsCount: '0 produits', multiBatches: 'Plusieurs lots', mixedPrice: 'Prix mixte',
+      scanPlaceholder: 'Scannez le code-barres...', searchPlaceholder2: 'Rechercher par nom ou code-barres...', productsCount: '0 produits', multiBatches: 'Plusieurs lots', mixedPrice: 'Prix mixte', unit: 'Unité', wholesale: 'Gros',
+    },
+    orders: {
+      title: 'Commandes', sub: 'Commander les pièces manquantes aux fournisseurs',
+      tabMine: 'Mes commandes', tabBranches: 'Commandes des succursales',
+      suggestions: 'Suggestions de stock faible', noSuggestions: 'Aucun produit en stock faible ou épuisé — parfait !',
+      search: 'Rechercher par nom ou code-barres...',
+      all: 'Tout', today: 'Aujourd\'hui', week: 'Semaine', month: 'Mois', year: 'Année',
+      refresh: 'Actualiser',
+      empty: 'Aucune commande pour le moment — ajoutez depuis les suggestions ou la recherche',
+      statusPending: 'En attente', statusDone: 'Terminée', statusNotAvailable: 'Indisponible',
+      btnDone: 'Terminée', btnNotAvailable: 'Indisponible', btnDelete: 'Supprimer',
+      deleteConfirm: 'Supprimer cette commande ?',
+      cloudRequired: 'Connexion cloud requise pour voir les commandes des succursales',
+      loading: 'Chargement des commandes des succursales...',
+      noBranchOrders: 'Aucune commande de succursale pour le moment',
     },
     invoices: {
       title: 'Factures', sub: 'Toutes les Factures',
@@ -1917,7 +1982,7 @@ const LANG = {
       invoiceSaved: 'Facture enregistrée pour', fiscalStamp: 'Timbre fiscal',
       includes: 'inclut', productUnit: 'produits', pieceUnit: 'pièces',
       editLabelName: 'Nom du Produit', editLabelBarcode: 'Barcode', editLabelBrand: 'Marque',
-      editLabelCategory: 'Catégorie', editLabelQty: 'Quantité', editLabelBuyPrice: 'Prix Achat', editLabelSellPrice: 'Prix Vente',
+      editLabelCategory: 'Catégorie', editLabelQty: 'Quantité', editLabelBuyPrice: 'Prix Achat', editLabelSellPrice: 'Prix Vente', editLabelWholesale: 'Prix de Gros',
       editTitle: 'Modifier le Produit',
       deleteConfirm: 'Êtes-vous sûr de vouloir supprimer ce produit?',
       importSuccess: 'Importé', importSuccessEnd: 'produits avec succès',
@@ -1927,7 +1992,7 @@ const LANG = {
       addTitle: 'Ajouter Stock + Facture', scanPlaceholder2: 'Scannez le code-barres...',
       searchExisting: 'Rechercher un produit existant (par nom ou code-barres)', searchExistingPlaceholder: 'Nom du produit ou code-barres...',
       category: 'Catégorie', name: 'Nom du Produit', barcode: 'Code-barres', generate2: 'Générer',
-      qty: 'Quantité', buyPrice: 'Prix Achat', sellPrice: 'Prix Vente', supplierOptional: 'Fournisseur (optionnel)',
+      qty: 'Quantité', buyPrice: 'Prix Achat', sellPrice: 'Prix Vente', wholesalePrice: 'Prix de Gros', supplierOptional: 'Fournisseur (optionnel)',
       supplierSearchPlaceholder: 'Rechercher un fournisseur...', addToCart: 'Ajouter au Panier',
       invoiceCart: 'Panier de Facture', fiscalStamp2: 'Timbre Fiscal', totalLabel: 'Total:',
       clear2: 'Vider', confirmInvoice: 'Confirmer la Facture', categoryCol: 'Catégorie',
@@ -2159,6 +2224,7 @@ const LANG = {
       reports: '报告', backup: '备份', settings: '设置',
       connection: '连接设置',
       storeDebts: '商店债务', branchesMonitor: '分支监控', sharedInventory: '共享库存',
+      orders: '订单',
     },
     dash: {
       title: '控制面板', sub: '销售与库存概览',
@@ -2208,6 +2274,7 @@ const LANG = {
       addModalTitle: '添加新客户', editModalTitle: '编辑客户',
       formName: '客户名称', formNamePl: '例如：艾哈迈德',
       formPhone: '电话号码', formAddress: '地址', formAddressPl: '例如：阿尔及尔',
+      formType: '客户类型', typeUnit: '零售', typeWhole: '批发', formTypeHelp: '设置销售页面的默认价格（可在购物车中按产品更改）',
       formDiscount: '折扣 (%)', formDiscountHelp: '从0.001%到100% - 可选',
       cancel: '取消', save: '保存',
       totalDebts: '客户总债务',
@@ -2395,7 +2462,7 @@ const LANG = {
       oldPaymentNote: '导入的付款',
     },
     brandCat: { brand: '品牌', category: '选择零件类型', searchPlaceholder: '搜索类型...', addProduct: '添加产品' },
-    catProducts: { title: '产品', sub: '可用产品', searchPlaceholder: '搜索产品...', addProduct: '添加产品', empty: '此分类无产品', addInvoiceTitle: '添加产品到发票', scanPlaceholder: '扫描条码...', scannerReady: '准备扫描', searchProduct: '搜索产品', newProduct: '新产品', searchExisting: '按名称或条码搜索', searchExistingPlaceholder: '产品名称或条码...', name: '产品名称', namePlaceholder: '零件名称', barcode: '条码', barcodePlaceholder: '输入条码', generate: '生成', qty: '数量', buyPrice: '进价', sellPrice: '售价', supplier: '供应商', supplierPlaceholder: '按名称搜索供应商...', cancel: '取消', addToCart: '添加到发票购物车', cartTitle: '发票购物车', total: '总计:', clear: '清空', confirmInvoice: '确认发票', fiscalStamp: '印花税 (Timbre Fiscal)' },
+    catProducts: { title: '产品', sub: '可用产品', searchPlaceholder: '搜索产品...', addProduct: '添加产品', empty: '此分类无产品', addInvoiceTitle: '添加产品到发票', scanPlaceholder: '扫描条码...', scannerReady: '准备扫描', searchProduct: '搜索产品', newProduct: '新产品', searchExisting: '按名称或条码搜索', searchExistingPlaceholder: '产品名称或条码...', name: '产品名称', namePlaceholder: '零件名称', barcode: '条码', barcodePlaceholder: '输入条码', generate: '生成', qty: '数量', buyPrice: '进价', sellPrice: '售价', supplier: '供应商', supplierPlaceholder: '按名称搜索供应商...', cancel: '取消', addToCart: '添加到发票购物车', cartTitle: '发票购物车', total: '总计:', clear: '清空',       confirmInvoice: '确认发票', fiscalStamp: '印花税 (Timbre Fiscal)', wholesalePrice: '批发价' },
     settings: {
       title: '设置', sub: '应用程序设置',
       general: '常规设置',
@@ -2456,7 +2523,22 @@ const LANG = {
       cartTitle: '购物车', subtotal: '小计', customerDiscount: '客户折扣', additionalDiscount: '额外折扣',
       totalLabel: '总计', paidLabel: '已付金额', payFull: '全额付款', remainingLabel: '剩余',
       clear: '清空', checkout: '结账', emptyCartTitle: '购物车为空', emptyCartHint: '扫描商品条码或从产品列表选择',
-      scanPlaceholder: '扫描条码...', searchPlaceholder2: '按名称或条码搜索...', productsCount: '0 件产品', multiBatches: '多批次', mixedPrice: '混合价格',
+      scanPlaceholder: '扫描条码...', searchPlaceholder2: '按名称或条码搜索...', productsCount: '0 件产品', multiBatches: '多批次', mixedPrice: '混合价格', unit: '件', wholesale: '批发',
+    },
+    orders: {
+      title: '订单', sub: '向供应商订购缺失零件',
+      tabMine: '我的订单', tabBranches: '分店订单',
+      suggestions: '库存不足建议', noSuggestions: '没有库存不足或缺货的产品——很好！',
+      search: '按名称或条码搜索...',
+      all: '全部', today: '今天', week: '本周', month: '本月', year: '今年',
+      refresh: '刷新',
+      empty: '暂无订单——请从建议或搜索中添加',
+      statusPending: '待处理', statusDone: '已完成', statusNotAvailable: '无货',
+      btnDone: '已完成', btnNotAvailable: '无货', btnDelete: '删除',
+      deleteConfirm: '删除此订单？',
+      cloudRequired: '查看分店订单需要云连接',
+      loading: '正在加载分店订单...',
+      noBranchOrders: '暂无分店订单',
     },
     invoices: {
       title: '发票', sub: '所有销售和采购发票',
@@ -2515,7 +2597,7 @@ const LANG = {
       invoiceSaved: '发票已登记，金额', fiscalStamp: '印花税',
       includes: '包含', productUnit: '产品', pieceUnit: '件',
       editLabelName: '产品名称', editLabelBarcode: '条码', editLabelBrand: '品牌',
-      editLabelCategory: '类别', editLabelQty: '数量', editLabelBuyPrice: '进价', editLabelSellPrice: '售价',
+      editLabelCategory: '类别', editLabelQty: '数量', editLabelBuyPrice: '进价', editLabelSellPrice: '售价', editLabelWholesale: '批发价',
       editTitle: '编辑产品',
       deleteConfirm: '确定删除此产品？',
       importSuccess: '已导入', importSuccessEnd: '件产品',
@@ -2525,7 +2607,7 @@ const LANG = {
       addTitle: '添加库存 + 发票', scanPlaceholder2: '扫描条码...',
       searchExisting: '搜索现有产品（按名称或条码）', searchExistingPlaceholder: '产品名称或条码...',
       category: '类别', name: '产品名称', barcode: '条码', generate2: '生成',
-      qty: '数量', buyPrice: '进价', sellPrice: '售价', supplierOptional: '供应商（可选）',
+      qty: '数量', buyPrice: '进价', sellPrice: '售价', wholesalePrice: '批发价', supplierOptional: '供应商（可选）',
       supplierSearchPlaceholder: '搜索供应商...', addToCart: '添加到发票购物车',
       invoiceCart: '发票购物车', fiscalStamp2: '印花税', totalLabel: '总计:',
       clear2: '清空', confirmInvoice: '确认发票', categoryCol: '类别',
@@ -3195,6 +3277,7 @@ async function bootApp() {
         console.error('[App] Offline restore error:', e);
       }
     }
+    if (typeof window.updateOrdersBadge === 'function') window.updateOrdersBadge();
   } catch (e) {
     console.error('[DB] Progressive init error:', e);
   } finally {

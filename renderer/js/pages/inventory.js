@@ -113,6 +113,7 @@ function resetInvForm() {
   document.getElementById('invQty').value = '1';
   document.getElementById('invBuyPrice').value = '0';
   document.getElementById('invSellPrice').value = '0';
+  document.getElementById('invWholePrice').value = '0';
   document.getElementById('invSupSearch').value = '';
   document.getElementById('invSupResults').innerHTML = '';
   document.getElementById('invSelectedSupplier').style.display = 'none';
@@ -197,6 +198,7 @@ function fillInvFromProduct(id) {
   document.getElementById('invCategory').value = p.category || DB.getCategories()[0];
   document.getElementById('invBuyPrice').value = p.buyPrice;
   document.getElementById('invSellPrice').value = p.sellPrice;
+  document.getElementById('invWholePrice').value = p.wholesalePrice || 0;
   document.getElementById('invQty').value = '1';
 }
 
@@ -239,11 +241,12 @@ function invAddToCart() {
   const qty = parseInt(document.getElementById('invQty').value) || 1;
   const buyPrice = parseFloat(document.getElementById('invBuyPrice').value) || 0;
   const sellPrice = parseFloat(document.getElementById('invSellPrice').value) || 0;
+  const wholesalePrice = parseFloat(document.getElementById('invWholePrice').value) || 0;
 
   if (!name) { alert(t('inventory.enterName')); return; }
   if (!barcode) { alert(t('inventory.enterBarcode')); return; }
 
-  _invCart.push({ name, barcode, brandId, category, qty, buyPrice, sellPrice });
+  _invCart.push({ name, barcode, brandId, category, qty, buyPrice, sellPrice, wholesalePrice });
   renderInvCart();
   resetInvForm();
   setTimeout(() => document.getElementById('invBarcodeScanner').focus(), 200);
@@ -329,6 +332,7 @@ function invConfirmInvoice() {
       name: item.name, barcode: item.barcode,
       brandId: item.brandId, category: item.category,
       buyPrice: item.buyPrice, sellPrice: item.sellPrice,
+      wholesalePrice: item.wholesalePrice || 0,
       quantity: item.qty, supplierId,
     });
 
@@ -418,6 +422,10 @@ function editInventoryItem(id) {
         <label>${t('inventory.editLabelSellPrice')}</label>
         <input type="number" class="form-input no-spinner" id="invEditSell" value="${p.sellPrice}" min="0">
       </div>
+    </div>
+    <div class="form-group">
+      <label>${t('inventory.editLabelWholesale')}</label>
+      <input type="number" class="form-input no-spinner" id="invEditWhole" value="${p.wholesalePrice || 0}" min="0">
     </div>`;
 
   showModal(t('inventory.editTitle'), html, () => {
@@ -426,13 +434,14 @@ function editInventoryItem(id) {
     const newQty = parseInt(document.getElementById('invEditQty').value) || 0;
     const newBuyPrice = parseFloat(document.getElementById('invEditBuy').value) || 0;
     const newSellPrice = parseFloat(document.getElementById('invEditSell').value) || 0;
+    const newWholePrice = parseFloat(document.getElementById('invEditWhole').value) || 0;
 
     DB.updateProduct(id, {
       name: document.getElementById('invEditName').value.trim() || p.name,
       barcode: document.getElementById('invEditBar').value.trim() || p.barcode,
       brandId: document.getElementById('invEditBrand').value,
       category: document.getElementById('invEditCat').value,
-      quantity: newQty, buyPrice: newBuyPrice, sellPrice: newSellPrice,
+      quantity: newQty, buyPrice: newBuyPrice, sellPrice: newSellPrice, wholesalePrice: newWholePrice,
     });
 
     if (oldQty !== newQty || oldBuyPrice !== newBuyPrice) {

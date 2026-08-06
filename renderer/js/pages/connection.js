@@ -182,11 +182,13 @@ async function connDownloadBackup() {
     const merged = {};
     if (dbData.products) merged.products = dbData.products;
     if (dbData.invoices) merged.invoices = dbData.invoices;
+    if (dbData.orders) merged.orders = dbData.orders;
     merged.meta = {};
     if (dbData.nextBarcode) merged.meta.nextBarcode = dbData.nextBarcode;
     if (dbData.nextInvoiceCounter) merged.meta.nextInvoiceCounter = dbData.nextInvoiceCounter;
     if (backup.data.products) merged.products = backup.data.products;
     if (backup.data.invoices) merged.invoices = backup.data.invoices;
+    if (backup.data.orders) merged.orders = backup.data.orders;
     if (backup.data.meta) merged.meta = backup.data.meta;
     if (backup.data.zmt_customers) merged.customers = backup.data.zmt_customers;
     if (backup.data.zmt_suppliers) merged.suppliers = backup.data.zmt_suppliers;
@@ -194,10 +196,11 @@ async function connDownloadBackup() {
     if (backup.data.zmt_returns) merged.returns = backup.data.zmt_returns;
     if (backup.data.zmt_transfers) merged.transfers = backup.data.zmt_transfers;
     if (backup.data.zmt_discounts) merged.discounts = backup.data.zmt_discounts;
+    if (backup.data.zmt_orders) merged.orders = backup.data.zmt_orders;
     await DB.importAll(merged);
 
     for (const [key, value] of Object.entries(backup.data)) {
-      if (key.startsWith('zmt_') && !['zmt_db', 'zmt_customers', 'zmt_suppliers', 'zmt_payments', 'zmt_returns', 'zmt_transfers', 'zmt_discounts'].includes(key)) {
+      if (key.startsWith('zmt_') && !['zmt_db', 'zmt_customers', 'zmt_suppliers', 'zmt_payments', 'zmt_returns', 'zmt_transfers', 'zmt_discounts', 'zmt_orders'].includes(key)) {
         localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
       }
     }

@@ -19,6 +19,7 @@ function init_backup() {
     data.zmt_db = {
       products: dbExport.products,
       invoices: dbExport.invoices,
+      orders: dbExport.orders,
       nextBarcode: dbExport.meta.nextBarcode || 100000,
       nextInvoiceCounter: dbExport.meta.nextInvoiceCounter || 0,
     };
@@ -28,6 +29,7 @@ function init_backup() {
     data.zmt_returns = dbExport.returns;
     data.zmt_transfers = dbExport.transfers;
     data.zmt_discounts = dbExport.discounts;
+    data.zmt_orders = dbExport.orders;
     const settingsKeys = [
       'zmt_store_name', 'zmt_store_address', 'zmt_store_phone',
       'zmt_tva_rate', 'zmt_timbre_enabled', 'zmt_timbre_rate',
@@ -65,6 +67,7 @@ function init_backup() {
     if (hasDbKeys) {
       merged.products = dbData.products || [];
       merged.invoices = dbData.invoices || [];
+      merged.orders = dbData.orders || [];
       merged.meta = {};
       if (dbData.nextBarcode) merged.meta.nextBarcode = dbData.nextBarcode;
       if (dbData.nextInvoiceCounter) merged.meta.nextInvoiceCounter = dbData.nextInvoiceCounter;
@@ -80,9 +83,10 @@ function init_backup() {
     if (data.zmt_returns) merged.returns = data.zmt_returns;
     if (data.zmt_transfers) merged.transfers = data.zmt_transfers;
     if (data.zmt_discounts) merged.discounts = data.zmt_discounts;
+    if (data.zmt_orders) merged.orders = data.zmt_orders;
     await DB.importAll(merged);
     for (const [k, v] of Object.entries(data)) {
-      if (k.startsWith('zmt_') && !_BACKUP_EXCLUDE.includes(k) && !['zmt_db', 'zmt_customers', 'zmt_suppliers', 'zmt_payments', 'zmt_returns', 'zmt_transfers', 'zmt_discounts'].includes(k)) {
+      if (k.startsWith('zmt_') && !_BACKUP_EXCLUDE.includes(k) && !['zmt_db', 'zmt_customers', 'zmt_suppliers', 'zmt_payments', 'zmt_returns', 'zmt_transfers', 'zmt_discounts', 'zmt_orders'].includes(k)) {
         localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
       }
     }
@@ -101,7 +105,8 @@ function init_backup() {
     const payments = data.zmt_payments?.length || 0;
     const returns = data.zmt_returns?.length || 0;
     const discounts = data.zmt_discounts?.length || 0;
-    return { products, invoices, customers, suppliers, payments, returns, discounts };
+    const orders = (data.zmt_orders || data.zmt_db?.orders)?.length || 0;
+    return { products, invoices, customers, suppliers, payments, returns, discounts, orders };
   }
 
   async function createBackup() {

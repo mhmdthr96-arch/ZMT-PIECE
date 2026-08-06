@@ -445,7 +445,8 @@ function confirmCdEditInvoice() {
   let newTotal = 0;
 
   inv.items.forEach((item, i) => {
-    const newQty = parseInt(document.getElementById(`cdEditItemQty_${i}`).value) || 0;
+    let newQty = parseInt(document.getElementById(`cdEditItemQty_${i}`).value);
+    if (isNaN(newQty) || newQty < 0) newQty = item.qty;
     const unitPrice = parseFloat(document.getElementById(`cdEditItemUnitPrice_${i}`).value) || 0;
     const newItemTotal = newQty * unitPrice;
     newTotal += newItemTotal;
@@ -531,13 +532,16 @@ function confirmCdEditInvoice() {
     if (newTimbre > 10000) newTimbre = 10000;
     updateData.timbreFiscal = newTimbre;
   }
+  const paidBefore = DB.getInvoicePaidAmount(_cdCurrentInvoiceId);
+  DB.reduceInvoicePayments(_cdCurrentInvoiceId, newTotal);
   DB.updateInvoice(_cdCurrentInvoiceId, updateData);
 
   const diffTotal = newTotal - oldTotal;
+  const balanceChange = newTotal < paidBefore ? (paidBefore - oldTotal) : diffTotal;
   const customers = DB.getCustomers();
   const cIdx = customers.findIndex(c => c.id === _cdCustomerId);
   if (cIdx !== -1) {
-    customers[cIdx].balance = (parseFloat(customers[cIdx].balance) || 0) + diffTotal;
+    customers[cIdx].balance = (parseFloat(customers[cIdx].balance) || 0) + balanceChange;
     DB.saveCustomers(customers);
   }
 

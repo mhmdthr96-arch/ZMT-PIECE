@@ -1,7 +1,7 @@
 const DB = (() => {
   const DB_NAME = 'zmt_piece_db';
-  const DB_VERSION = 1;
-  const STORES = ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'meta'];
+  const DB_VERSION = 2;
+  const STORES = ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'meta'];
   let db = null;
   let _ready = false;
 
@@ -109,6 +109,10 @@ const DB = (() => {
           if (!_idx.payments['cust:' + p.customerId]) _idx.payments['cust:' + p.customerId] = [];
           _idx.payments['cust:' + p.customerId].push(p);
         }
+      }
+    } else if (store === 'orders') {
+      for (const o of arr) {
+        _idx.orders[o.id] = o;
       }
     }
   }
@@ -591,6 +595,22 @@ const DB = (() => {
       return this.getInvoicePayments(invoiceId).reduce((sum, p) => sum + p.amount, 0);
     },
 
+    reduceInvoicePayments(invoiceId, maxTotal) {
+      const payments = this.getInvoicePayments(invoiceId);
+      const sum = payments.reduce((s, p) => s + (p.amount || 0), 0);
+      if (sum <= maxTotal) return;
+      let excess = sum - maxTotal;
+      const ordered = payments.slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      for (let i = ordered.length - 1; i >= 0 && excess > 0; i--) {
+        const p = ordered[i];
+        const cut = Math.min(p.amount || 0, excess);
+        p.amount = (p.amount || 0) - cut;
+        excess -= cut;
+      }
+      const all = this.getPayments().filter(p => p.invoiceId !== invoiceId || (p.amount || 0) > 0);
+      this.savePayments(all);
+    },
+
     deletePaymentsByInvoice(invoiceId) {
       const toDelete = this.getInvoicePayments(invoiceId).map(p => p.id);
       _cache.payments = _cache.payments.filter(p => p.invoiceId !== invoiceId);
@@ -713,6 +733,40 @@ const DB = (() => {
       for (const id of toDelete) _queueDelete('returns', id);
     },
 
+    // ===== ORDERS =====
+    getOrders() { return _cache.orders; },
+
+    getOrder(id) { return _idx.orders[id] || null; },
+
+    addOrder(o) {
+      o.id = _genId();
+      o.createdAt = Date.now();
+      const sid = _getStoreId();
+      if (sid) o.storeId = sid;
+      _cache.orders.push(o);
+      _rebuildIndex('orders');
+      _queueWrite('orders', o);
+      return o;
+    },
+
+    updateOrder(id, changes) {
+      const o = _idx.orders[id];
+      if (!o) return null;
+      changes.updatedAt = Date.now();
+      Object.assign(o, changes);
+      _queueWrite('orders', o);
+      return o;
+    },
+
+    deleteOrder(id) {
+      const idx = _cache.orders.findIndex(o => o.id === id);
+      if (idx === -1) return false;
+      _cache.orders.splice(idx, 1);
+      _rebuildIndex('orders');
+      _queueDelete('orders', id);
+      return true;
+    },
+
     getLowStockProducts(threshold) {
       const t = threshold || 5;
       const sid = _getStoreId();
@@ -733,7 +787,7 @@ const DB = (() => {
     exportProductsCSV() {
       const products = this.getProducts();
       const brands = [...BRANDS.global, ...BRANDS.chinese];
-      const header = 'name,barcode,brand,category,buyPrice,sellPrice,quantity';
+      const header = 'name,barcode,brand,category,buyPrice,sellPrice,wholesalePrice,quantity';
       const rows = products.map(p => {
         const brand = brands.find(b => b.id === p.brandId);
         return [
@@ -743,6 +797,7 @@ const DB = (() => {
           p.category || '',
           p.buyPrice || 0,
           p.sellPrice || 0,
+          p.wholesalePrice || 0,
           p.quantity || 0,
         ].join(',');
       });
@@ -760,6 +815,9 @@ const DB = (() => {
       const catIdx = header.indexOf('category');
       const buyIdx = header.indexOf('buyprice');
       const sellIdx = header.indexOf('sellprice');
+      let wholeIdx = header.indexOf('wholesaleprice');
+      if (wholeIdx === -1) wholeIdx = header.indexOf('سعر الجملة');
+      if (wholeIdx === -1) wholeIdx = header.indexOf('جملة');
       let qtyIdx = header.indexOf('quantity');
       if (qtyIdx === -1) qtyIdx = header.indexOf('qty');
       if (qtyIdx === -1) qtyIdx = header.indexOf('stock');
@@ -791,6 +849,7 @@ const DB = (() => {
           category: vals[catIdx] || 'محرك',
           buyPrice,
           sellPrice: parseFloat(vals[sellIdx]) || 0,
+          wholesalePrice: wholeIdx !== -1 ? (parseFloat(vals[wholeIdx]) || 0) : 0,
           quantity: qty,
           createdAt: now,
           updatedAt: now,
@@ -951,6 +1010,7 @@ const DB = (() => {
       _cache.discounts = [];
       _cache.returns = [];
       _cache.transfers = [];
+      _cache.orders = [];
       _cache.meta = { nextBarcode: 100000, nextInvoiceCounter: 0 };
       _rebuildAll();
       for (const s of STORES) await _idbClear(s);
@@ -969,6 +1029,7 @@ const DB = (() => {
         discounts: _cache.discounts.slice(),
         returns: _cache.returns.slice(),
         transfers: _cache.transfers.slice(),
+        orders: _cache.orders.slice(),
         meta: { ..._cache.meta },
       };
     },
@@ -981,11 +1042,13 @@ const DB = (() => {
         const dbData = data.zmt_db;
         if (dbData.products) mapped.products = dbData.products;
         if (dbData.invoices) mapped.invoices = dbData.invoices;
+        if (dbData.orders) mapped.orders = dbData.orders;
         if (dbData.nextBarcode) mapped.meta = { ...(mapped.meta || {}), nextBarcode: dbData.nextBarcode };
         if (dbData.nextInvoiceCounter) mapped.meta = { ...(mapped.meta || {}), nextInvoiceCounter: dbData.nextInvoiceCounter };
       }
       if (data.products) mapped.products = data.products;
       if (data.invoices) mapped.invoices = data.invoices;
+      if (data.orders) mapped.orders = data.orders;
       if (data.payments) mapped.payments = data.payments;
       if (data.customers) mapped.customers = data.customers;
       if (data.suppliers) mapped.suppliers = data.suppliers;
@@ -998,6 +1061,7 @@ const DB = (() => {
       if (data.zmt_returns) mapped.returns = data.zmt_returns;
       if (data.zmt_transfers) mapped.transfers = data.zmt_transfers;
       if (data.zmt_discounts) mapped.discounts = data.zmt_discounts;
+      if (data.zmt_orders) mapped.orders = data.zmt_orders;
       if (data.meta) mapped.meta = { ...(mapped.meta || {}), ...data.meta };
       if (mapped.products) _cache.products = mapped.products;
       if (mapped.invoices) _cache.invoices = mapped.invoices;
@@ -1007,6 +1071,7 @@ const DB = (() => {
       if (mapped.discounts) _cache.discounts = mapped.discounts;
       if (mapped.returns) _cache.returns = mapped.returns;
       if (mapped.transfers) _cache.transfers = mapped.transfers;
+      if (mapped.orders) _cache.orders = mapped.orders;
       if (mapped.meta) Object.assign(_cache.meta, mapped.meta);
       if (!_cache.meta.nextBarcode) _cache.meta.nextBarcode = 100000;
       if (!_cache.meta.nextInvoiceCounter) _cache.meta.nextInvoiceCounter = 0;
@@ -1039,6 +1104,7 @@ const DB = (() => {
         payments: _cache.payments.length,
         returns: _cache.returns.length,
         discounts: _cache.discounts.length,
+        orders: _cache.orders.length,
       };
     },
 

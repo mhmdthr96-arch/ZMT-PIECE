@@ -750,6 +750,9 @@ body.user-mode td.hide-user { display: none !important; }
 .sup-card-name { font-size:15px; font-weight:700; color:var(--silver-800); }
 .sup-card-meta { display:flex; gap:12px; flex-wrap:wrap; margin-top:4px; }
 .sup-card-meta span { font-size:11px; color:var(--silver-600); display:flex; align-items:center; gap:4px; }
+.cust-type-chip { font-weight:700; padding:1px 8px; border-radius:20px; font-size:10px; }
+.cust-type-chip.whole { color:#e65100; background:rgba(230,81,0,0.12); border:1px solid rgba(230,81,0,0.3); }
+.cust-type-chip.unit { color:var(--bmw-blue-1); background:rgba(0,102,177,0.08); border:1px solid rgba(0,102,177,0.25); }
 .sup-card-stats { display:flex; gap:16px; flex-shrink:0; }
 .sup-stat { text-align:center; }
 .sup-stat-label { font-size:10px; color:var(--silver-500); text-transform:uppercase; }
@@ -1055,6 +1058,14 @@ body.user-mode td.hide-user { display: none !important; }
   font-size: 16px; font-weight: 800;
   color: var(--bmw-blue-1);
 }
+.sp-card-prices { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.sp-card-price-whole {
+  font-size: 11px; font-weight: 700;
+  color: var(--silver-500);
+  background: var(--silver-100);
+  padding: 2px 8px; border-radius: 20px;
+  white-space: nowrap;
+}
 .sp-card-qty {
   font-size: 11px; font-weight: 700;
   color: var(--silver-500);
@@ -1195,6 +1206,33 @@ body.user-mode td.hide-user { display: none !important; }
   margin-left: 6px; vertical-align: middle; white-space: nowrap;
 }
 .sc-item-bar { font-size: 9px; color: var(--silver-400); direction: ltr; text-align: left; font-family: monospace; }
+
+.sc-mode-btn {
+  font-size: 10px; font-weight: 700;
+  color: var(--silver-600);
+  background: var(--silver-100);
+  border: 1px solid var(--silver-300);
+  border-radius: 10px;
+  padding: 1px 8px;
+  cursor: pointer;
+  transition: 0.2s;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.sc-mode-btn:hover { border-color: var(--bmw-blue-1); color: var(--bmw-blue-1); }
+.sales-cust-type {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  padding: 1px 8px; border-radius: 10px; margin-right: 6px; vertical-align: middle;
+  background: var(--silver-100); color: var(--silver-600);
+}
+.sales-cust-type.whole { color: #e65100; background: rgba(230,81,0,0.12); border: 1px solid rgba(230,81,0,0.3); }
+.sales-cust-type.unit { color: var(--bmw-blue-1); background: rgba(0,102,177,0.08); border: 1px solid rgba(0,102,177,0.25); }
+.sc-mode-btn-active {
+  color: #fff;
+  background: var(--bmw-blue-1);
+  border-color: var(--bmw-blue-1);
+}
+.sc-mode-btn-active:hover { color: #fff; background: var(--bmw-blue-2); border-color: var(--bmw-blue-2); }
 
 .sc-item-controls {
   display: flex; align-items: center; gap: 3px;
@@ -2839,3 +2877,98 @@ html.transitioning, html.transitioning * { transition: background-color 0.25s ea
 
 /* Loading spinner for progressive init */
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ==================== ORDERS PAGE ==================== */
+.nav-badge {
+  min-width: 18px; height: 18px; padding: 0 5px;
+  background: #dc3545; color: #fff;
+  border-radius: 20px; font-size: 10px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-right: auto; line-height: 1;
+}
+.ord-tabs { display: flex; gap: 8px; margin-bottom: 4px; }
+.ord-tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 18px; border-radius: 8px; border: 1px solid var(--silver-300);
+  background: white; color: var(--silver-600); font-weight: 600; font-size: 13px;
+  cursor: pointer; transition: all 0.15s ease;
+}
+.ord-tab:hover { border-color: var(--bmw-blue-1); color: var(--bmw-blue-1); }
+.ord-tab-active { background: var(--bmw-blue-1); border-color: var(--bmw-blue-1); color: #fff; }
+.ord-tab-active:hover { color: #fff; }
+.ord-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.ord-filter {
+  padding: 7px 13px; border-radius: 20px; border: 1px solid var(--silver-300);
+  background: white; color: var(--silver-600); font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s ease;
+}
+.ord-filter:hover { border-color: var(--bmw-blue-1); color: var(--bmw-blue-1); }
+.ord-filter-active { background: var(--bmw-blue-1); border-color: var(--bmw-blue-1); color: #fff; }
+
+.orders-suggestions { border: 1px dashed var(--silver-400); border-radius: 10px; padding: 12px; background: rgba(0,102,177,0.02); }
+.orders-suggestions-head h3 { margin: 0 0 10px 0; font-size: 14px; color: var(--silver-700); display: flex; align-items: center; gap: 8px; }
+.orders-suggestions-head h3 i { color: #e65100; }
+.orders-suggestions-list { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
+.ord-suggestion-card {
+  display: flex; align-items: center; gap: 12px;
+  background: white; border: 1px solid var(--silver-200); border-radius: 8px; padding: 8px 12px;
+}
+.ord-suggestion-info { flex: 1; min-width: 0; }
+.ord-suggestion-name { font-size: 13px; font-weight: 700; color: var(--silver-800); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ord-suggestion-meta { font-size: 10px; color: var(--silver-400); font-family: 'Courier New', monospace; }
+.ord-suggestion-qty {
+  font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 20px;
+  background: var(--silver-100); color: var(--silver-500); white-space: nowrap;
+}
+.ord-suggestion-qty.ord-qty-low { color: #dc3545; background: rgba(220,53,69,0.1); }
+.ord-suggestion-qty.ord-qty-oos { color: #fff; background: #dc3545; }
+.ord-qty-input { width: 70px; padding: 5px 8px; font-size: 13px; }
+
+.orders-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.ord-card {
+  display: flex; align-items: center; gap: 14px;
+  background: white; border: 1px solid var(--silver-200); border-radius: 8px; padding: 10px 14px;
+  flex-wrap: wrap;
+}
+.ord-card-info { flex: 1; min-width: 180px; }
+.ord-card-name { font-size: 13px; font-weight: 700; color: var(--silver-800); }
+.ord-card-meta { font-size: 11px; color: var(--silver-500); margin-top: 2px; }
+.ord-card-actions { display: flex; gap: 6px; }
+.ord-st {
+  font-size: 11px; font-weight: 700; padding: 3px 12px; border-radius: 20px; white-space: nowrap;
+}
+.ord-st-pending { color: #b26a00; background: rgba(255,193,7,0.18); }
+.ord-st-done { color: #1e7e34; background: rgba(40,167,69,0.15); }
+.ord-st-na { color: #b02a37; background: rgba(220,53,69,0.15); }
+.ord-btn {
+  border: 1px solid var(--silver-300); background: white; color: var(--silver-600);
+  border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; transition: all 0.15s ease;
+}
+.ord-btn:hover { border-color: var(--bmw-blue-1); color: var(--bmw-blue-1); }
+.ord-btn-done { color: #1e7e34; border-color: rgba(40,167,69,0.4); }
+.ord-btn-done:hover { background: rgba(40,167,69,0.08); border-color: #1e7e34; color: #1e7e34; }
+.ord-btn-na { color: #b02a37; border-color: rgba(220,53,69,0.4); }
+.ord-btn-na:hover { background: rgba(220,53,69,0.08); border-color: #b02a37; color: #b02a37; }
+.ord-btn-delete { color: var(--silver-500); }
+.ord-btn-delete:hover { background: rgba(220,53,69,0.08); border-color: #dc3545; color: #dc3545; }
+
+.ord-branch-group { margin-bottom: 16px; }
+.ord-branch-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--silver-700); margin-bottom: 8px; }
+.ord-branch-title i { color: var(--bmw-blue-1); }
+.ord-branch-count { font-size: 11px; font-weight: 700; background: var(--bmw-blue-1); color: #fff; padding: 1px 8px; border-radius: 20px; }
+
+.ord-empty {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  flex-direction: column; padding: 40px 16px; text-align: center;
+  color: var(--silver-500); font-size: 13px;
+}
+.ord-empty i { font-size: 28px; color: var(--silver-300); }
+.ord-empty-ok i { color: #1e7e34; }
+
+html[data-theme="dark"] .ord-tab,
+html[data-theme="dark"] .ord-filter,
+html[data-theme="dark"] .ord-suggestion-card,
+html[data-theme="dark"] .ord-card,
+html[data-theme="dark"] .ord-btn { background: var(--silver-100); }
+html[data-theme="dark"] .ord-tab-active,
+html[data-theme="dark"] .ord-filter-active { background: var(--bmw-blue-1); color: #fff; }

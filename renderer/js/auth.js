@@ -520,6 +520,7 @@ const Auth = (() => {
   const DEFAULT_PAGES = {
     'dashboard': { view: true, edit: false, del: false },
     'sales': { view: true, edit: true, del: false },
+    'orders': { view: true, edit: true, del: true },
     'invoices': { view: true, edit: true, del: true },
     'customers': { view: true, edit: true, del: true },
     'suppliers': { view: true, edit: true, del: true },
@@ -541,6 +542,7 @@ const Auth = (() => {
   const PAGE_NAMES = {
     'dashboard': 'لوحة التحكم',
     'sales': 'المبيعات',
+    'orders': 'الطلبات',
     'invoices': 'الفواتير',
     'customers': 'العملاء',
     'suppliers': 'الموردين',

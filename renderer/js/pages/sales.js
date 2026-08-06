@@ -1,8 +1,15 @@
 var _salesCart = [];
 var _salesCustomerId = null;
 var _salesProducts = [];
-var _salesPage = 0;
-var _salesPerPage = 50;
+var _salesSearchQuery = '';
+var _salesRenderRAF = null;
+var _salesDefaultMode = 'unit';
+var _salesPaidTouched = false;
+
+function onSalesPaidInput() {
+  _salesPaidTouched = true;
+  updateSalesRemaining();
+}
 
 // Settings helpers (also defined in settings.js — duplicated here for availability in sales page)
 function getStoreInfo() {
@@ -24,7 +31,8 @@ function getTvaRate() {
 
 function init_sales() {
   _salesProducts = DB.getProducts();
-  _salesPage = 0;
+  _salesSearchQuery = '';
+  _salesDefaultMode = 'unit';
   renderSalesProducts();
   setupSalesBarcode();
 }
@@ -77,6 +85,11 @@ function getGroupActivePrice(group) {
   return r ? (r.sellPrice || 0) : 0;
 }
 
+function getGroupWholesalePrice(group) {
+  const r = group.records.find(r => (r.quantity || 0) > 0);
+  return r ? (r.wholesalePrice || r.sellPrice || 0) : 0;
+}
+
 function allocateSalesLine(line, key) {
   const g = getSalesGroupByKey(key);
   if (!g) {
@@ -89,12 +102,14 @@ function allocateSalesLine(line, key) {
   const entries = [];
   let remaining = line.qty;
   let latestPrice = 0;
+  const wholesale = line.mode === 'wholesale';
   for (const r of g.records) {
     if (remaining <= 0) break;
     const take = Math.min(r.quantity || 0, remaining);
     if (take > 0) {
-      entries.push({ productId: r.id, qty: take, price: r.sellPrice || 0, total: take * (r.sellPrice || 0) });
-      latestPrice = r.sellPrice || 0;
+      const price = wholesale ? (r.wholesalePrice || r.sellPrice || 0) : (r.sellPrice || 0);
+      entries.push({ productId: r.id, qty: take, price, total: take * price });
+      latestPrice = price;
       remaining -= take;
     }
   }
@@ -103,73 +118,89 @@ function allocateSalesLine(line, key) {
   line.total = entries.reduce((s, e) => s + e.total, 0);
 }
 
-// ===== PRODUCT GRID =====
+// ===== PRODUCT GRID (ALL products, chunked rendering) =====
+
+function salesCardHTML(g, i) {
+  const totalQty = getGroupAvailableQty(g);
+  const price = getGroupActivePrice(g);
+  const whole = getGroupWholesalePrice(g);
+  const outOfStock = totalQty <= 0;
+  const lowStock = totalQty > 0 && totalQty <= DB.getLowStockThreshold();
+  const multi = g.records.length > 1;
+  const wholeVisible = whole > 0 && whole !== price;
+  return `<div class="sp-card ${outOfStock ? 'sp-card-oos' : ''}"
+    onclick="${outOfStock ? '' : `addSalesGroupToCart(${i})`}"
+    ${outOfStock ? `title="${t('sales.unavailable')}"` : ''}>
+    <div class="sp-card-top">
+      <span class="sp-card-name">${escHtml(g.name)}</span>
+      ${lowStock ? `<span class="sp-card-low" title="${t('sales.lowStockTip')}">!</span>` : ''}
+    </div>
+    <div class="sp-card-bar" dir="ltr">${escHtml(g.barcode)}</div>
+    <div class="sp-card-footer">
+      <div class="sp-card-prices">
+        <span class="sp-card-price">DA${price.toFixed(2)}</span>
+        ${wholeVisible ? `<span class="sp-card-price-whole" dir="ltr">${t('sales.wholesale')} DA${whole.toFixed(2)}</span>` : ''}
+      </div>
+      <span style="display:flex;align-items:center;gap:6px">
+        ${multi ? `<span class="sp-card-batches" title="${t('sales.multiBatches')}"><i class="fas fa-layer-group"></i>${g.records.length}</span>` : ''}
+        <span class="sp-card-qty ${lowStock ? 'sp-card-qty-low' : ''}">${totalQty}</span>
+      </span>
+    </div>
+  </div>`;
+}
 
 function renderSalesProducts(filter) {
+  if (typeof filter === 'string') {
+    _salesSearchQuery = filter.trim().toLowerCase();
+  }
+  if (_salesRenderRAF) { cancelAnimationFrame(_salesRenderRAF); _salesRenderRAF = null; }
+
   const grid = document.getElementById('salesProductGrid');
+  if (!grid || !grid.isConnected) return;
   let groups = getSalesGroups();
-  if (filter) {
-    const q = filter.toLowerCase();
-    groups = groups.filter(g => g.name.toLowerCase().includes(q) || g.barcode.includes(q));
+  const q = _salesSearchQuery;
+  if (q && q.length >= 3) {
+    groups = groups.filter(g =>
+      g.name.toLowerCase().startsWith(q) ||
+      g.barcode.toLowerCase().startsWith(q) ||
+      g.name.toLowerCase().includes(' ' + q) ||
+      g.barcode.toLowerCase().includes(q)
+    );
   }
   _salesGroupList = groups;
 
   const count = document.getElementById('salesProdCount');
   if (count) count.textContent = `${groups.length} ${t('common.product')}`;
 
+  grid.innerHTML = '';
   if (groups.length === 0) {
     grid.innerHTML = `<div class="sales-grid-empty">
       <i class="fas fa-box-open"></i>
-      <p>${filter ? t('sales.emptyResults') : t('sales.emptyProducts')}</p>
+      <p>${q ? t('sales.emptyResults') : t('sales.emptyProducts')}</p>
     </div>`;
     return;
   }
 
-  const start = _salesPage * _salesPerPage;
-  const end = Math.min(start + _salesPerPage, groups.length);
-  const pageItems = groups.slice(start, end);
-
-  grid.innerHTML = pageItems.map((g, pi) => {
-    const gi = start + pi;
-    const totalQty = getGroupAvailableQty(g);
-    const price = getGroupActivePrice(g);
-    const outOfStock = totalQty <= 0;
-    const lowStock = totalQty > 0 && totalQty <= 5;
-    const multi = g.records.length > 1;
-    return `<div class="sp-card ${outOfStock ? 'sp-card-oos' : ''}"
-      onclick="${outOfStock ? '' : `addSalesGroupToCart(${gi})`}"
-      ${outOfStock ? `title="${t('sales.unavailable')}"` : ''}>
-      <div class="sp-card-top">
-        <span class="sp-card-name">${escHtml(g.name)}</span>
-        ${lowStock ? `<span class="sp-card-low" title="${t('sales.lowStockTip')}">!</span>` : ''}
-      </div>
-      <div class="sp-card-bar" dir="ltr">${escHtml(g.barcode)}</div>
-      <div class="sp-card-footer">
-        <span class="sp-card-price">DA${price.toFixed(2)}</span>
-        <span style="display:flex;align-items:center;gap:6px">
-          ${multi ? `<span class="sp-card-batches" title="${t('sales.multiBatches')}"><i class="fas fa-layer-group"></i>${g.records.length}</span>` : ''}
-          <span class="sp-card-qty ${lowStock ? 'sp-card-qty-low' : ''}">${totalQty}</span>
-        </span>
-      </div>
-    </div>`;
-  }).join('');
-
-  if (groups.length > _salesPerPage) {
-    const totalPages = Math.ceil(groups.length / _salesPerPage);
-    grid.insertAdjacentHTML('afterend', `<div id="salesPager" style="display:flex;justify-content:center;align-items:center;gap:12px;padding:12px 0;grid-column:1/-1">
-      <button class="btn btn-sm" onclick="salesPrevPage()" ${_salesPage <= 0 ? 'disabled' : ''}>&laquo; ${t('common.back')}</button>
-      <span style="font-size:12px;color:var(--silver-500)">${t('common.page')} ${_salesPage + 1} ${t('common.of')} ${totalPages}</span>
-      <button class="btn btn-sm" onclick="salesNextPage()" ${_salesPage >= totalPages - 1 ? 'disabled' : ''}>${t('common.forward')} &raquo;</button>
-    </div>`);
-  }
+  let i = 0;
+  const CHUNK = 240;
+  const renderChunk = () => {
+    if (!grid || !grid.isConnected) return;
+    const t0 = performance.now();
+    let html = '';
+    while (i < groups.length) {
+      html += salesCardHTML(groups[i], i);
+      i++;
+      if (i % CHUNK === 0 || (performance.now() - t0) > 15) break;
+    }
+    grid.insertAdjacentHTML('beforeend', html);
+    if (i < groups.length) _salesRenderRAF = requestAnimationFrame(renderChunk);
+  };
+  renderChunk();
 }
 
-function salesPrevPage() { if (_salesPage > 0) { _salesPage--; renderSalesProducts(document.getElementById('salesSearch')?.value); } }
-function salesNextPage() { _salesPage++; renderSalesProducts(document.getElementById('salesSearch')?.value); }
-
+const _debouncedSalesSearch = debounce((q) => { renderSalesProducts(q); }, 200);
 function filterSalesProducts(q) {
-  _salesPage = 0;
-  renderSalesProducts(q);
+  _debouncedSalesSearch(q);
 }
 
 // ===== BARCODE SCANNER =====
@@ -249,10 +280,13 @@ function selectSalesCustomer(id) {
   const c = DB.getCustomer(id);
   if (!c) return;
   _salesCustomerId = c.id;
+  _salesDefaultMode = c.type === 'whole' ? 'wholesale' : 'unit';
   document.getElementById('salesCustSearch').value = c.name;
   document.getElementById('salesCustResults').innerHTML = '';
   document.getElementById('salesSelectedCust').style.display = 'flex';
   document.getElementById('salesSelCustName').textContent = c.name;
+  document.getElementById('salesSelCustType').textContent = c.type === 'whole' ? t('sales.wholesale') : t('sales.unit');
+  document.getElementById('salesSelCustType').className = 'sales-cust-type ' + (c.type === 'whole' ? 'whole' : 'unit');
   document.getElementById('salesWalkinLabel').style.display = 'none';
   if (c.discount > 0) {
     document.getElementById('salesSelCustDiscount').textContent = `${t('sales.discount')} ${c.discount}%`;
@@ -265,6 +299,7 @@ function selectSalesCustomer(id) {
 
 function setSalesWalkin() {
   _salesCustomerId = null;
+  _salesDefaultMode = 'unit';
   document.getElementById('salesCustSearch').value = '';
   document.getElementById('salesCustResults').innerHTML = '';
   document.getElementById('salesSelectedCust').style.display = 'none';
@@ -274,6 +309,7 @@ function setSalesWalkin() {
 
 function clearSalesCustomer() {
   _salesCustomerId = null;
+  _salesDefaultMode = 'unit';
   document.getElementById('salesSelectedCust').style.display = 'none';
   document.getElementById('salesWalkinLabel').style.display = 'none';
   document.getElementById('salesCustSearch').value = '';
@@ -307,14 +343,13 @@ function addSalesLine(key) {
     line.qty++;
     allocateSalesLine(line, key);
   } else {
-    line = { key, name: g.name, barcode: g.barcode, qty: 1, price: 0, total: 0, entries: [] };
+    line = { key, name: g.name, barcode: g.barcode, qty: 1, mode: _salesDefaultMode, price: 0, total: 0, entries: [] };
     allocateSalesLine(line, key);
     _salesCart.push(line);
   }
 
   renderSalesCart();
   document.getElementById('salesEmptyCart').style.display = 'none';
-  document.getElementById('salesSearch').value = '';
   renderSalesProducts();
 }
 
@@ -342,6 +377,9 @@ function renderSalesCart() {
       <div class="sc-item-info">
         <div class="sc-item-name">${escHtml(line.name)}${mixed ? `<span class="sc-mixed-badge" title="${t('sales.mixedPrice')}"><i class="fas fa-layer-group"></i> ${t('sales.mixedPrice')}</span>` : ''}</div>
         <div class="sc-item-bar" dir="ltr">${escHtml(line.barcode)}</div>
+        <div style="margin-top:3px">
+          <button class="sc-mode-btn ${line.mode === 'wholesale' ? 'sc-mode-btn-active' : ''}" onclick="toggleSalesLineMode(${i})">${line.mode === 'wholesale' ? t('sales.wholesale') : t('sales.unit')}</button>
+        </div>
       </div>
       <div class="sc-item-controls">
         <button class="sc-qty-btn" onclick="decSalesCartQty(${i})" ${line.qty <= 1 ? 'disabled' : ''}>−</button>
@@ -403,6 +441,14 @@ function removeFromSalesCart(idx) {
   }
 }
 
+function toggleSalesLineMode(idx) {
+  const line = _salesCart[idx];
+  if (!line) return;
+  line.mode = line.mode === 'wholesale' ? 'unit' : 'wholesale';
+  allocateSalesLine(line, line.key);
+  renderSalesCart();
+}
+
 // ===== TOTALS & DISCOUNTS =====
 
 function updateSalesTotals() {
@@ -437,9 +483,11 @@ function updateSalesTotals() {
     document.getElementById('salesPaySection').style.display = '';
     const payInput = document.getElementById('salesPaidAmount');
     payInput.max = total;
-    const currVal = parseFloat(payInput.value) || 0;
-    if (currVal === 0 || currVal > total) {
+    if (!_salesPaidTouched) {
       payInput.value = total.toFixed(2);
+    } else {
+      const currVal = parseFloat(payInput.value) || 0;
+      if (currVal > total) payInput.value = total.toFixed(2);
     }
     updateSalesRemaining();
   }
@@ -486,6 +534,7 @@ function updateSalesRemaining() {
 }
 
 function setSalesFullPayment() {
+  _salesPaidTouched = true;
   const total = parseFloat(document.getElementById('salesCartTotal').textContent.replace('DA', '')) || 0;
   document.getElementById('salesPaidAmount').value = total.toFixed(2);
   updateSalesRemaining();
@@ -915,11 +964,14 @@ function confirmSalesCheckout() {
 
   _salesCart = [];
   _salesCustomerId = null;
+  _salesDefaultMode = 'unit';
   document.getElementById('salesSelectedCust').style.display = 'none';
   document.getElementById('salesWalkinLabel').style.display = 'none';
   document.getElementById('salesCustSearch').value = '';
   document.getElementById('salesPaySection').style.display = 'none';
   document.getElementById('salesExtraDisc').value = '0';
+  document.getElementById('salesPaidAmount').value = '0';
+  _salesPaidTouched = false;
   renderSalesCart();
   renderSalesProducts();
 
@@ -932,11 +984,14 @@ function clearSalesCart() {
   if (!confirm(t('sales.clearCartConfirm'))) return;
   _salesCart = [];
   _salesCustomerId = null;
+  _salesDefaultMode = 'unit';
   document.getElementById('salesSelectedCust').style.display = 'none';
   document.getElementById('salesWalkinLabel').style.display = 'none';
   document.getElementById('salesCustSearch').value = '';
   document.getElementById('salesPaySection').style.display = 'none';
   document.getElementById('salesExtraDisc').value = '0';
+  document.getElementById('salesPaidAmount').value = '0';
+  _salesPaidTouched = false;
   renderSalesCart();
   renderSalesProducts();
   document.getElementById('salesBarcodeScan').focus();

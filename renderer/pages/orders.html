@@ -1,0 +1,48 @@
+<div class="page" id="page-orders">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-clipboard-list"></i> <span data-i18n="orders.title">الطلبات</span></h1>
+      <p><span data-i18n="orders.sub">طلب القطع الناقصة من الموردين</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="ord-tabs">
+      <button class="ord-tab ord-tab-active" id="ordTabMine" onclick="switchOrdersTab('mine')"><i class="fas fa-clipboard-list"></i> <span data-i18n="orders.tabMine">طلباتي</span></button>
+      <button class="ord-tab" id="ordTabBranches" onclick="switchOrdersTab('branches')" style="display:none"><i class="fas fa-store"></i> <span data-i18n="orders.tabBranches">طلبات الفروع</span></button>
+    </div>
+
+    <div id="ordPaneMine">
+      <div class="orders-suggestions">
+        <div class="orders-suggestions-head">
+          <h3><i class="fas fa-exclamation-triangle"></i> <span data-i18n="orders.suggestions">اقتراحات النقص</span></h3>
+        </div>
+        <div id="ordersSuggestions" class="orders-suggestions-list"></div>
+      </div>
+
+      <div class="toolbar" style="margin-top:16px">
+        <div class="search-bar">
+          <i class="fas fa-search"></i>
+          <input type="text" data-i18n-placeholder="orders.search" placeholder="ابحث باسم القطعة أو الباركود..." id="ordersSearch" oninput="renderOrdersList()">
+        </div>
+        <div class="ord-filters" id="ordersFilters">
+          <button class="ord-filter ord-filter-active" data-range="all" onclick="setOrdersRange('all')"><span data-i18n="orders.all">الكل</span></button>
+          <button class="ord-filter" data-range="today" onclick="setOrdersRange('today')"><span data-i18n="orders.today">اليوم</span></button>
+          <button class="ord-filter" data-range="week" onclick="setOrdersRange('week')"><span data-i18n="orders.week">الأسبوع</span></button>
+          <button class="ord-filter" data-range="month" onclick="setOrdersRange('month')"><span data-i18n="orders.month">الشهر</span></button>
+          <button class="ord-filter" data-range="year" onclick="setOrdersRange('year')"><span data-i18n="orders.year">السنة</span></button>
+        </div>
+      </div>
+
+      <div id="ordersList" class="orders-list"></div>
+    </div>
+
+    <div id="ordPaneBranches" style="display:none">
+      <div class="toolbar" style="margin-top:16px">
+        <div style="flex:1"></div>
+        <button class="btn" onclick="loadBranchOrders()"><i class="fas fa-sync-alt"></i> <span data-i18n="orders.refresh">تحديث</span></button>
+      </div>
+      <div id="ordersBranchList" class="orders-list"></div>
+    </div>
+  </div>
+</div>

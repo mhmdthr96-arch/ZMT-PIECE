@@ -93,13 +93,16 @@ const CloudService = (() => {
     const data = {};
     let products = dbExport.products;
     let invoices = dbExport.invoices;
+    let orders = dbExport.orders;
     if (sid) {
       products = products.filter(p => !p.storeId || p.storeId === sid);
       invoices = invoices.filter(inv => !inv.storeId || inv.storeId === sid);
+      orders = (orders || []).filter(o => !o.storeId || o.storeId === sid);
     }
     data.zmt_db = {
       products,
       invoices,
+      orders,
       nextBarcode: dbExport.meta.nextBarcode || 100000,
       nextInvoiceCounter: dbExport.meta.nextInvoiceCounter || 0,
     };
@@ -109,6 +112,7 @@ const CloudService = (() => {
     data.zmt_returns = dbExport.returns;
     data.zmt_transfers = dbExport.transfers;
     data.zmt_discounts = dbExport.discounts;
+    data.zmt_orders = orders;
     const settingsKeys = [
       'zmt_store_name', 'zmt_store_address', 'zmt_store_phone',
       'zmt_tva_rate', 'zmt_timbre_enabled', 'zmt_timbre_rate',
@@ -134,7 +138,7 @@ const CloudService = (() => {
 
   function hasData() {
     const summary = DB.getSummary();
-    return summary.products > 0 || summary.invoices > 0 || summary.customers > 0 || summary.suppliers > 0;
+    return summary.products > 0 || summary.invoices > 0 || summary.customers > 0 || summary.suppliers > 0 || summary.orders > 0;
   }
 
   function dataHash(data) {

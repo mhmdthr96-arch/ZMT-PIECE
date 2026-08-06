@@ -99,6 +99,7 @@ function resetAddForm() {
   document.getElementById('prodQty').value = '1';
   document.getElementById('prodBuyPrice').value = '0';
   document.getElementById('prodSellPrice').value = '0';
+  document.getElementById('prodWholePrice').value = '0';
   document.getElementById('supplierSearchInput').value = '';
   document.getElementById('supplierResults').innerHTML = '';
   document.getElementById('selectedSupplierInfo').style.display = 'none';
@@ -159,6 +160,7 @@ function selectExistingProduct(id) {
   document.getElementById('prodQty').value = '1';
   document.getElementById('prodBuyPrice').value = p.buyPrice;
   document.getElementById('prodSellPrice').value = p.sellPrice;
+  document.getElementById('prodWholePrice').value = p.wholesalePrice || 0;
 }
 
 // ===== SUPPLIER SEARCH =====
@@ -251,6 +253,7 @@ function getFormItem() {
   const qty = parseInt(document.getElementById('prodQty').value) || 1;
   const buyPrice = parseFloat(document.getElementById('prodBuyPrice').value) || 0;
   const sellPrice = parseFloat(document.getElementById('prodSellPrice').value) || 0;
+  const wholesalePrice = parseFloat(document.getElementById('prodWholePrice').value) || 0;
 
   if (tab === 'search') {
     productId = document.getElementById('selProdId').value;
@@ -266,7 +269,7 @@ function getFormItem() {
     if (!barcode) { alert('الرجاء إدخال الباركود'); return null; }
   }
 
-  return { productId, name, barcode, qty, buyPrice, sellPrice };
+  return { productId, name, barcode, qty, buyPrice, sellPrice, wholesalePrice };
 }
 
 function addToCart() {
@@ -345,6 +348,7 @@ function confirmInvoice() {
       name: item.name, barcode: item.barcode,
       brandId: ctx.brandId, category: ctx.category,
       buyPrice: item.buyPrice, sellPrice: item.sellPrice,
+      wholesalePrice: item.wholesalePrice || 0,
       quantity: item.qty, supplierId,
     });
 
@@ -415,6 +419,7 @@ function editProduct(id) {
   document.getElementById('prodQty').value = p.quantity;
   document.getElementById('prodBuyPrice').value = p.buyPrice;
   document.getElementById('prodSellPrice').value = p.sellPrice;
+  document.getElementById('prodWholePrice').value = p.wholesalePrice || 0;
   if (p.supplierId) {
     const sup = DB.getSuppliers().find(s => s.id === p.supplierId);
     if (sup) {

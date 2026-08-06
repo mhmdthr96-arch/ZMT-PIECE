@@ -61,6 +61,7 @@
             <div class="sales-cust-badge-avatar"><i class="fas fa-user"></i></div>
             <div class="sales-cust-badge-info">
               <strong id="salesSelCustName"></strong>
+              <span id="salesSelCustType" class="sales-cust-type"></span>
               <span id="salesSelCustDiscount" style="display:none"></span>
             </div>
             <button class="sales-cust-badge-remove" onclick="clearSalesCustomer()" title="إزالة" data-i18n-title="sales.remove"><i class="fas fa-times"></i></button>
@@ -113,7 +114,7 @@
               <div class="sales-pay-row">
                 <input type="number" class="no-spinner sales-pay-input"
                   id="salesPaidAmount" value="0" min="0" dir="ltr"
-                  oninput="updateSalesRemaining()">
+                  oninput="onSalesPaidInput()">
                 <span class="sales-pay-currency">DA</span>
                 <button class="sales-pay-full" onclick="setSalesFullPayment()">
                   <i class="fas fa-check-circle"></i> <span data-i18n="common.payFull">دفع كلياً</span>

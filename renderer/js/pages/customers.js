@@ -45,6 +45,7 @@ function renderCustPage(slice, info) {
         <div class="sup-card-meta">
           ${c.phone ? `<span><i class="fas fa-phone"></i> ${escHtml(c.phone)}</span>` : ''}
           ${c.discount > 0 ? `<span><i class="fas fa-percent"></i> خصم ${c.discount}%</span>` : ''}
+          <span class="cust-type-chip ${c.type === 'whole' ? 'whole' : 'unit'}">${c.type === 'whole' ? t('customers.typeWhole') : t('customers.typeUnit')}</span>
           <span><i class="fas fa-shopping-cart"></i> ${totalPurchases.toFixed(2)} DA مشتريات</span>
         </div>
       </div>
@@ -113,6 +114,7 @@ function openAddCustomerModal() {
   document.getElementById('custName').value = '';
   document.getElementById('custPhone').value = '';
   document.getElementById('custAddress').value = '';
+  document.getElementById('custType').value = 'unit';
   document.getElementById('custDiscount').value = '0';
   document.getElementById('custPhotoPreview').innerHTML = '<i class="fas fa-user" style="font-size:24px;color:var(--silver-400)"></i>';
   document.getElementById('custPhotoInput').value = '';
@@ -135,6 +137,7 @@ function confirmAddCustomer() {
     name,
     phone: document.getElementById('custPhone').value.trim(),
     address: document.getElementById('custAddress').value.trim(),
+    type: document.getElementById('custType').value === 'whole' ? 'whole' : 'unit',
     discount,
     photo: _custPhotoData || '',
   });

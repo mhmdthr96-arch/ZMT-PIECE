@@ -75,6 +75,7 @@ function filterByDate(items, range) {
 function getProfitMargin(invoices, productMap) {
   return invoices.reduce((s, inv) => {
     if (inv.isProvisional) return s;
+    if (DB.getInvoicePaidAmount(inv.id) < (inv.totalAmount || 0)) return s;
     (inv.items || []).forEach(it => {
       const prod = productMap[it.productId];
       const buyPrice = prod ? (prod.buyPrice || 0) : 0;
@@ -139,7 +140,8 @@ function renderReports() {
 
   // === SALES STATS (from invoice totals — real value of goods sold) ===
   const totalSalesAmount = salesInvoices.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
-  const totalSalesProfit = salesInvoices.reduce((s, inv) => s + (inv.profit || 0), 0);
+  const paidSales = salesInvoices.filter(inv => DB.getInvoicePaidAmount(inv.id) >= (inv.totalAmount || 0));
+  const totalSalesProfit = paidSales.reduce((s, inv) => s + (inv.profit || 0), 0);
   const totalSalesQty = salesInvoices.reduce((s, inv) => s + inv.items.reduce((si, it) => si + it.qty, 0), 0);
   const totalSalesPaid = filteredPayments.reduce((s, p) => s + p.amount, 0);
   const totalSalesDue = totalSalesAmount - totalSalesPaid;
@@ -164,7 +166,8 @@ function renderReports() {
   // هامش الربح = (سعر البيع - سعر الشراء) لكل قطعة — للفترة + الإجمالي العام
   const totalProfitMargin = getProfitMargin(allInvoices.filter(inv => inv.type === 'customer'), productMap);
   const periodProfitMargin = getProfitMargin(salesInvoices, productMap);
-  const profitMargin = totalSalesAmount > 0 ? (periodProfitMargin / totalSalesAmount * 100) : 0;
+  const paidSalesAmount = paidSales.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
+  const profitMargin = paidSalesAmount > 0 ? (periodProfitMargin / paidSalesAmount * 100) : 0;
 
   document.getElementById('rSalesAmount').textContent = formatDA(totalSalesAmount);
   document.getElementById('rSalesCount').textContent = salesInvoices.length;
@@ -315,7 +318,7 @@ function renderSalesTrend(invoices) {
     const d = new Date(inv.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     if (!daily[d]) daily[d] = { sales: 0, profit: 0 };
     daily[d].sales += inv.totalAmount;
-    daily[d].profit += inv.profit || 0;
+    if (DB.getInvoicePaidAmount(inv.id) >= (inv.totalAmount || 0)) daily[d].profit += inv.profit || 0;
   });
 
   const labels = Object.keys(daily).sort();
@@ -578,7 +581,9 @@ function exportReportsPDF() {
   const payments = filterByDate(DB.getPayments().filter(p => p.customerId), range);
 
   const totalSales = payments.reduce((s, p) => s + p.amount, 0);
-  const totalProfit = salesInv.reduce((s, inv) => s + (inv.profit || 0), 0);
+  const totalProfit = salesInv
+    .filter(inv => DB.getInvoicePaidAmount(inv.id) >= (inv.totalAmount || 0))
+    .reduce((s, inv) => s + (inv.profit || 0), 0);
   const totalReturns = ret.reduce((s, r) => s + (r.qty || 0), 0);
 
   const periodLabel = document.querySelector('.period-btn.active');

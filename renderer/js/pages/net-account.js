@@ -51,6 +51,7 @@ function netRangeLabel(range) {
 function calcMargin(salesInvoices, productMap) {
   return salesInvoices.reduce((s, inv) => {
     if (inv.isProvisional) return s;
+    if (DB.getInvoicePaidAmount(inv.id) < (inv.totalAmount || 0)) return s;
     (inv.items || []).forEach(it => {
       const prod = productMap[it.productId];
       const buyPrice = prod ? (prod.buyPrice || 0) : 0;
