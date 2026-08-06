@@ -103,9 +103,8 @@ function renderOrdersList() {
 
   if (query) {
     const matches = _ordGroups().filter(g =>
-      (g.name || '').toLowerCase().startsWith(query) ||
-      (g.barcode || '').toLowerCase().startsWith(query) ||
-      (g.name || '').toLowerCase().split(' ').some(w => w.startsWith(query))
+      (g.name || '').toLowerCase().includes(query) ||
+      (g.barcode || '').toLowerCase().includes(query)
     ).slice(0, 30);
     if (matches.length === 0) {
       el.innerHTML = `<div class="ord-empty"><i class="fas fa-search"></i> ${t('orders.noSuggestions')}</div>`;
