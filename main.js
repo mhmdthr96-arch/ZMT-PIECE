@@ -187,6 +187,8 @@ ipcMain.handle('dialog-save-file', async (event, options) => {
 
 ipcMain.handle('write-file', async (event, filePath, data) => {
   try {
+    const dir = require('path').dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(filePath, data, 'utf-8');
     return { success: true };
   } catch (err) {
@@ -222,7 +224,7 @@ ipcMain.handle('read-directory', async (event, dirPath) => {
   }
 });
 
-ipcMain.handle('get-appdata-path', () => {
+ipcMain.handle('get-app-data-path', () => {
   return app.getPath('userData');
 });
 

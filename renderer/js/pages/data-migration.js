@@ -1649,14 +1649,20 @@ async function startGestionStockFullImport() {
   const popup = document.getElementById('migrationFullBrandPopup');
   if (popup) popup.style.display = 'none';
   const btn = document.getElementById('migrationFullImportBtn');
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span data-i18n="migration.importing">جاري الاستيراد...</span>';
-  }
-  await importGestionStockFull(null);
-  if (btn) {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="fas fa-rocket"></i> <span data-i18n="migration.fullImportBtn">استيراد شامل</span>';
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span data-i18n="migration.importing">جاري الاستيراد...</span>';
+    }
+    await importGestionStockFull(null);
+  } catch (err) {
+    console.error('[Migration] Full import error:', err);
+    migrationUpdateStatus((t('migration.importError') || 'خطأ أثناء الاستيراد') + ': ' + (err && err.message || err), 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-rocket"></i> <span data-i18n="migration.fullImportBtn">استيراد شامل</span>';
+    }
   }
 }
 
@@ -1691,30 +1697,40 @@ function confirmGestionStockFullImport() {
 }
 
 async function createPreImportBackup() {
-  if (!window.electronAPI?.getAppDataPath || !window.electronAPI?.writeFile) return null;
-  const appPath = await window.electronAPI.getAppDataPath();
-  if (!appPath) return null;
-  const dbExport = DB.exportAll();
-  const backup = {
-    version: 3,
-    createdAt: new Date().toISOString(),
-    storeName: localStorage.getItem('zmt_store_name') || '',
-    summary: {
-      products: dbExport.products.length,
-      invoices: dbExport.invoices.length,
-      customers: dbExport.customers.length,
-      suppliers: dbExport.suppliers.length,
-      payments: dbExport.payments.length,
-      returns: dbExport.returns.length,
-      discounts: dbExport.discounts.length,
-    },
-    data: dbExport,
-    note: 'pre-import-auto-backup',
-  };
-  const dateStr = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
-  const filePath = appPath + '\\pre_import_' + dateStr + '.zmt-backup';
-  await window.electronAPI.writeFile(filePath, JSON.stringify(backup));
-  return filePath;
+  try {
+    if (!window.electronAPI?.getAppDataPath || !window.electronAPI?.writeFile) return null;
+    const appPath = await window.electronAPI.getAppDataPath();
+    if (!appPath) return null;
+    const dbExport = DB.exportAll();
+    const backup = {
+      version: 3,
+      createdAt: new Date().toISOString(),
+      storeName: localStorage.getItem('zmt_store_name') || '',
+      summary: {
+        products: dbExport.products.length,
+        invoices: dbExport.invoices.length,
+        customers: dbExport.customers.length,
+        suppliers: dbExport.suppliers.length,
+        payments: dbExport.payments.length,
+        returns: dbExport.returns.length,
+        discounts: dbExport.discounts.length,
+      },
+      data: dbExport,
+      note: 'pre-import-auto-backup',
+    };
+    const dateStr = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
+    const filePath = appPath + '\\pre_import_' + dateStr + '.zmt-backup';
+    const json = JSON.stringify(backup, (k, v) => {
+      if (typeof v === 'bigint') return String(v);
+      if (v === undefined) return null;
+      return v;
+    });
+    await window.electronAPI.writeFile(filePath, json);
+    return filePath;
+  } catch (err) {
+    console.warn('[Migration] Pre-import backup failed:', err);
+    return null;
+  }
 }
 
 async function importGestionStockInvoices(ctx) {
