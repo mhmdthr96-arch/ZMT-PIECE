@@ -158,12 +158,14 @@ function setupTransferSearch() {
 
 function searchTransferProduct(q) {
   const results = document.getElementById('transferSearchResults');
-  if (!q || q.length < 1) { results.innerHTML = ''; return; }
+  q = normSearch(q);
 
   const products = DB.getProducts();
-  const matches = products.filter(p =>
-    p.name.toLowerCase().includes(q.toLowerCase()) || p.barcode.includes(q)
-  ).slice(0, 10);
+  const matches = q
+    ? products.filter(p =>
+        p.name.toLowerCase().includes(q.toLowerCase()) || p.barcode.includes(q)
+      ).slice(0, 10)
+    : products.slice(0, 10);
 
   if (matches.length === 0) {
     results.innerHTML = `<div class="search-result-item disabled">${t('transfer.noResults')}</div>`;

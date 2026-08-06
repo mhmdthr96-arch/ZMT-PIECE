@@ -75,7 +75,7 @@ function _renderInvRow(p, idx) {
 }
 
 function applyInvFilter() {
-  const q = document.getElementById('invSearch')?.value?.toLowerCase() || '';
+  const q = normSearch(document.getElementById('invSearch')?.value || '').toLowerCase();
   _invFiltered = q
     ? _invProducts.filter(p => p.name.toLowerCase().includes(q) || p.barcode.includes(q))
     : [..._invProducts];
@@ -163,11 +163,14 @@ function handleInvBarcodeScan(e) {
 
 function searchInvProduct(q) {
   const results = document.getElementById('invSearchResults');
-  if (!q || q.length < 1) { results.innerHTML = ''; return; }
+  q = normSearch(q);
 
-  const matches = DB.getProducts().filter(p =>
-    p.name.toLowerCase().includes(q.toLowerCase()) || p.barcode.includes(q)
-  ).slice(0, 10);
+  const products = DB.getProducts();
+  const matches = q
+    ? products.filter(p =>
+        p.name.toLowerCase().includes(q.toLowerCase()) || p.barcode.includes(q)
+      ).slice(0, 10)
+    : products.slice(0, 10);
 
   if (matches.length === 0) {
     results.innerHTML = `<div class="search-result-item disabled">${t('inventory.noResults')}</div>`;
@@ -206,11 +209,12 @@ function fillInvFromProduct(id) {
 
 function searchInvSupplier(q) {
   const results = document.getElementById('invSupResults');
-  if (!q || q.length < 1) { results.innerHTML = ''; return; }
+  q = normSearch(q);
 
-  const matches = DB.getSuppliers().filter(s =>
-    s.name.toLowerCase().includes(q.toLowerCase())
-  ).slice(0, 10);
+  const suppliers = DB.getSuppliers();
+  const matches = q
+    ? suppliers.filter(s => s.name.toLowerCase().includes(q.toLowerCase())).slice(0, 10)
+    : suppliers.slice(0, 10);
 
   if (matches.length === 0) { results.innerHTML = ''; return; }
 

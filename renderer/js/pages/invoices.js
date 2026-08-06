@@ -27,7 +27,7 @@ function init_invoices() {
 // ===== FILTERS =====
 
 function filterInvoices() {
-  const q = (document.getElementById('invSearchInput').value || '').toLowerCase();
+  const q = normSearch(document.getElementById('invSearchInput').value || '').toLowerCase();
   const dateFrom = document.getElementById('invDateFrom').value;
   const dateTo = document.getElementById('invDateTo').value;
   const typeFilter = document.getElementById('invTypeFilter').value;
@@ -1131,10 +1131,13 @@ function closeWaybillForm() {
 
 function searchWbCustomer(q) {
   const results = document.getElementById('wbCustResults');
-  if (!q || q.length < 1) { results.innerHTML = ''; return; }
-  const matches = DB.getCustomers().filter(c =>
-    c.name.toLowerCase().includes(q.toLowerCase()) || (c.phone && c.phone.includes(q))
-  ).slice(0, 8);
+  q = normSearch(q);
+  const customers = DB.getCustomers();
+  const matches = q
+    ? customers.filter(c =>
+        c.name.toLowerCase().includes(q.toLowerCase()) || (c.phone && c.phone.includes(q))
+      ).slice(0, 8)
+    : customers.slice(0, 8);
   results.innerHTML = matches.length === 0
     ? '<div class="search-result-item disabled">لا توجد نتائج</div>'
     : matches.map(c => `<div class="search-result-item" onclick="selectWbCustomer('${c.id}')">
@@ -1196,8 +1199,8 @@ function filterWbProducts(q) {
 function renderWbProducts(filter) {
   const grid = document.getElementById('wbProductGrid');
   let list = _wbAllProducts;
-  if (filter) {
-    const f = filter.toLowerCase();
+  const f = normSearch(filter || '').toLowerCase();
+  if (f) {
     list = list.filter(p => p.name.toLowerCase().includes(f) || p.barcode.includes(f));
   }
   if (list.length === 0) {
@@ -1615,10 +1618,13 @@ function dispRecalcTotal() {
 // --- Supplier search ---
 function searchDispSupplier(q) {
   const results = document.getElementById('dispSupResults');
-  if (!q || q.length < 1) { results.innerHTML = ''; return; }
-  const matches = DB.getSuppliers().filter(s =>
-    s.name.toLowerCase().includes(q.toLowerCase()) || (s.phone && s.phone.includes(q))
-  ).slice(0, 8);
+  q = normSearch(q);
+  const suppliers = DB.getSuppliers();
+  const matches = q
+    ? suppliers.filter(s =>
+        s.name.toLowerCase().includes(q.toLowerCase()) || (s.phone && s.phone.includes(q))
+      ).slice(0, 8)
+    : suppliers.slice(0, 8);
   results.innerHTML = matches.length === 0
     ? '<div class="search-result-item disabled">لا توجد نتائج</div>'
     : matches.map(s => `<div class="search-result-item" onclick="selectDispSupplier('${s.id}')">
@@ -1640,10 +1646,13 @@ function selectDispSupplier(id) {
 // --- Customer search ---
 function searchDispCustomer(q) {
   const results = document.getElementById('dispCustResults');
-  if (!q || q.length < 1) { results.innerHTML = ''; return; }
-  const matches = DB.getCustomers().filter(c =>
-    c.name.toLowerCase().includes(q.toLowerCase()) || (c.phone && c.phone.includes(q))
-  ).slice(0, 8);
+  q = normSearch(q);
+  const customers = DB.getCustomers();
+  const matches = q
+    ? customers.filter(c =>
+        c.name.toLowerCase().includes(q.toLowerCase()) || (c.phone && c.phone.includes(q))
+      ).slice(0, 8)
+    : customers.slice(0, 8);
   results.innerHTML = matches.length === 0
     ? '<div class="search-result-item disabled">لا توجد نتائج</div>'
     : matches.map(c => `<div class="search-result-item" onclick="selectDispCustomer('${c.id}')">
@@ -1911,10 +1920,13 @@ function fillPurFromScan(id) {
 // --- Product search ---
 function searchPurProduct(q) {
   const results = document.getElementById('purSearchResults');
-  if (!q || q.length < 1) { results.innerHTML = ''; return; }
-  const matches = DB.getProducts().filter(p =>
-    p.name.toLowerCase().includes(q.toLowerCase()) || p.barcode.includes(q)
-  ).slice(0, 8);
+  q = normSearch(q);
+  const products = DB.getProducts();
+  const matches = q
+    ? products.filter(p =>
+        p.name.toLowerCase().includes(q.toLowerCase()) || p.barcode.includes(q)
+      ).slice(0, 8)
+    : products.slice(0, 8);
   results.innerHTML = matches.length === 0
     ? '<div class="search-result-item disabled">لا توجد نتائج</div>'
     : matches.map(p => `<div class="search-result-item" onclick="fillPurFromSearch('${p.id}')">
@@ -1944,10 +1956,13 @@ function fillPurFromSearch(id) {
 // --- Supplier search ---
 function searchPurSupplier(q) {
   const results = document.getElementById('purSupResults');
-  if (!q || q.length < 1) { results.innerHTML = ''; return; }
-  const matches = DB.getSuppliers().filter(s =>
-    s.name.toLowerCase().includes(q.toLowerCase()) || (s.phone && s.phone.includes(q))
-  ).slice(0, 8);
+  q = normSearch(q);
+  const suppliers = DB.getSuppliers();
+  const matches = q
+    ? suppliers.filter(s =>
+        s.name.toLowerCase().includes(q.toLowerCase()) || (s.phone && s.phone.includes(q))
+      ).slice(0, 8)
+    : suppliers.slice(0, 8);
   results.innerHTML = matches.length === 0
     ? '<div class="search-result-item disabled">لا توجد نتائج</div>'
     : matches.map(s => `<div class="search-result-item" onclick="selectPurSupplier('${s.id}')">

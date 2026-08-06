@@ -51,8 +51,8 @@ function renderSdStats() {
 function renderSdInvoices(filter) {
   const container = document.getElementById('sdInvoicesList');
   let list = _sdInvoices;
-  if (filter) {
-    const q = filter.toLowerCase();
+  const q = normSearch(filter || '').toLowerCase();
+  if (q) {
     list = list.filter(inv => {
       const date = new Date(inv.date || inv.createdAt).toLocaleDateString('ar-EG-u-nu-latn');
       return date.includes(q) || inv.items.some(it => it.name.toLowerCase().includes(q));

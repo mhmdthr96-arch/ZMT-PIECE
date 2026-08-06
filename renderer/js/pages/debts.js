@@ -35,7 +35,7 @@ function renderDebts() {
 
 function renderDebtsList() {
   const container = document.getElementById('debtsList');
-  const q = _debtsSearch.toLowerCase();
+  const q = normSearch(_debtsSearch).toLowerCase();
 
   if (_debtsTab === 'customers') {
     const list = DB.getCustomers().filter(c =>

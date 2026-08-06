@@ -124,14 +124,16 @@ function switchProdTab(tab) {
 
 function searchExistingProduct(q) {
   const results = document.getElementById('searchResults');
-  if (!q || q.length < 1) { results.innerHTML = ''; return; }
+  q = normSearch(q);
 
   const ctx = window._brandCtx;
   const all = DB.getProducts();
-  const matches = all.filter(p =>
-    p.name.toLowerCase().includes(q.toLowerCase()) ||
-    p.barcode.includes(q)
-  ).slice(0, 10);
+  const matches = q
+    ? all.filter(p =>
+        p.name.toLowerCase().includes(q.toLowerCase()) ||
+        p.barcode.includes(q)
+      ).slice(0, 10)
+    : all.slice(0, 10);
 
   if (matches.length === 0) {
     results.innerHTML = '<div class="search-result-item disabled">لا توجد نتائج</div>';
@@ -167,12 +169,12 @@ function selectExistingProduct(id) {
 
 function searchSuppliers(q) {
   const results = document.getElementById('supplierResults');
-  if (!q || q.length < 1) { results.innerHTML = ''; return; }
+  q = normSearch(q);
 
   const suppliers = DB.getSuppliers();
-  const matches = suppliers.filter(s =>
-    s.name.toLowerCase().includes(q.toLowerCase())
-  ).slice(0, 10);
+  const matches = q
+    ? suppliers.filter(s => s.name.toLowerCase().includes(q.toLowerCase())).slice(0, 10)
+    : suppliers.slice(0, 10);
 
   if (matches.length === 0) { results.innerHTML = ''; return; }
 

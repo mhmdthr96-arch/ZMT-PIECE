@@ -298,10 +298,13 @@ function handleSalesBarcodeScan(e) {
 
 function searchSalesCustomer(q) {
   const results = document.getElementById('salesCustResults');
-  if (!q || q.length < 1) { results.innerHTML = ''; return; }
-  const matches = DB.getCustomers().filter(c =>
-    c.name.toLowerCase().includes(q.toLowerCase()) || (c.phone && c.phone.includes(q))
-  ).slice(0, 10);
+  q = normSearch(q);
+  const customers = DB.getCustomers();
+  const matches = q
+    ? customers.filter(c =>
+        c.name.toLowerCase().includes(q.toLowerCase()) || (c.phone && c.phone.includes(q))
+      ).slice(0, 10)
+    : customers.slice(0, 10);
   results.innerHTML = matches.length === 0
     ? `<div class="search-result-item disabled">${t('sales.noCustResults')}</div>`
     : matches.map(c => `<div class="search-result-item" onclick="selectSalesCustomer('${c.id}')">

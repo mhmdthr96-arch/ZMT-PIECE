@@ -336,6 +336,9 @@ if (typeof window.escHtml === 'undefined') {
 // ===== UTILITIES =====
 function debounce(fn, ms) { let t; return function() { clearTimeout(t); const a=arguments, ctx=this; t = setTimeout(() => fn.apply(ctx, a), ms); }; }
 
+// Normalize a search query: whitespace-only (or empty) input counts as no filter
+function normSearch(v) { return String(v || '').trim(); }
+
 // ===== ORDERS NAV BADGE =====
 window.updateOrdersBadge = function() {
   const el = document.getElementById('ordersNavBadge');

@@ -85,7 +85,7 @@ function renderCustPage(slice, info) {
 }
 
 function applyCustFilter() {
-  const q = document.getElementById('custSearch')?.value?.toLowerCase() || '';
+  const q = normSearch(document.getElementById('custSearch')?.value || '').toLowerCase();
   _custFiltered = q
     ? _custAll.filter(c => c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(q)))
     : [..._custAll];

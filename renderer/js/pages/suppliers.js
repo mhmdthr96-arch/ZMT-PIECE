@@ -71,7 +71,7 @@ function escHtml(str) {
 }
 
 function applySupFilter() {
-  const q = document.getElementById('supSearch')?.value?.toLowerCase() || '';
+  const q = normSearch(document.getElementById('supSearch')?.value || '').toLowerCase();
   _supFiltered = q
     ? _supAll.filter(s => s.name.toLowerCase().includes(q) || (s.phone && s.phone.includes(q)))
     : [..._supAll];

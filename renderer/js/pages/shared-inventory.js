@@ -138,12 +138,7 @@ function siShowStoreDetail(code, name) {
 
 function siSearchProduct(q) {
   const resultsEl = document.getElementById('siSearchResults');
-  if (!q || q.length < 1) {
-    resultsEl.innerHTML = '';
-    resultsEl.style.display = 'none';
-    return;
-  }
-
+  q = normSearch(q);
   const lowerQ = q.toLowerCase();
   const brands = (typeof BRANDS !== 'undefined') ? [...(BRANDS.global || []), ...(BRANDS.chinese || [])] : [];
   const myCode = Auth.getUserCode();
@@ -156,8 +151,8 @@ function siSearchProduct(q) {
       : (_siStores.find(s => s.code === storeCode)?.name || storeCode);
 
     for (const p of d.products) {
-      const nameMatch = (p.name || '').toLowerCase().includes(lowerQ);
-      const barMatch = (p.barcode || '').includes(q);
+      const nameMatch = !lowerQ || (p.name || '').toLowerCase().includes(lowerQ);
+      const barMatch = !q || (p.barcode || '').includes(q);
       if (nameMatch || barMatch) {
         allResults.push({ ...p, storeCode, storeName, isOwn: d.isOwn });
       }
