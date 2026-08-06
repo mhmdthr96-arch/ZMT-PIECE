@@ -734,7 +734,11 @@ const DB = (() => {
     },
 
     // ===== ORDERS =====
-    getOrders() { return _cache.orders; },
+    getOrders() {
+      const sid = _getStoreId();
+      if (!sid) return _cache.orders;
+      return _cache.orders.filter(o => !o.storeId || o.storeId === sid);
+    },
 
     getOrder(id) { return _idx.orders[id] || null; },
 

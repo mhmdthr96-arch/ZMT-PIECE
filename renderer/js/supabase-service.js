@@ -326,6 +326,10 @@ const CloudService = (() => {
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
+    if (!(await _canAccessStore(branchCode))) {
+      throw new Error('لا تملك صلاحية الوصول لهذا المحل');
+    }
+
     const parentCode = getParentCode() || getStoreCode();
     const { data, error } = await supabase.storage.from(BUCKET).download(`${parentCode}/${branchCode}_backup.json`);
     if (error) throw error;
@@ -340,30 +344,27 @@ const CloudService = (() => {
     } catch { return []; }
   }
 
-  function _canAccessStore(targetCode) {
+  async function _canAccessStore(targetCode) {
     const myCode = getStoreCode();
     const type = getStoreType();
-    const parent = getParentCode();
 
     if (targetCode === myCode) return true;
 
-    if (type === 'main') {
-      return true;
-    }
+    if (type !== 'main') return false;
 
-    if (type === 'branch') {
-      if (targetCode === parent) return true;
+    try {
+      const branches = await Auth.listBranchesFull(myCode);
+      return (branches || []).some(b => b.code === targetCode);
+    } catch (e) {
       return false;
     }
-
-    return false;
   }
 
   async function downloadStoreBackup(targetCode) {
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
-    if (!_canAccessStore(targetCode)) {
+    if (!(await _canAccessStore(targetCode))) {
       throw new Error('لا تملك صلاحية الوصول لهذا المحل');
     }
 
@@ -372,6 +373,7 @@ const CloudService = (() => {
     if (branchData) {
       const parentCode = branchData.stores?.code;
       if (!parentCode) throw new Error('لا يمكن تحديد المحل الرئيسي');
+      if (targetCode !== getStoreCode() && parentCode !== getStoreCode()) throw new Error('لا تملك صلاحية الوصول لهذا المحل');
 
       const { data, error } = await supabase.storage.from(BUCKET).download(`${parentCode}/${targetCode}_backup.json`);
       if (error) throw new Error('لم يتم العثور على نسخة احتياطية');
