@@ -89,6 +89,43 @@ function formatDA(v) {
   return 'DA' + (v || 0).toFixed(2);
 }
 
+function getProfitMarginSplit(invoices, productMap) {
+  let marginCash = 0, marginCcp = 0, collectedCash = 0, collectedCcp = 0;
+  invoices.forEach(inv => {
+    if (inv.isProvisional) return;
+    if (DB.getInvoicePaidAmount(inv.id) < (inv.totalAmount || 0)) return;
+    let margin = 0;
+    (inv.items || []).forEach(it => {
+      const prod = productMap[it.productId];
+      const buyPrice = prod ? (prod.buyPrice || 0) : 0;
+      margin += (it.price - buyPrice) * it.qty;
+    });
+    const m = DB.getInvoicePaymentMethods(inv.id);
+    collectedCash += m.cash;
+    collectedCcp += m.ccp;
+    const totalPaid = m.cash + m.ccp;
+    if (totalPaid > 0 && m.ccp > 0) {
+      const ccpRatio = m.ccp / totalPaid;
+      marginCcp += margin * ccpRatio;
+      marginCash += margin * (1 - ccpRatio);
+    } else {
+      marginCash += margin;
+    }
+  });
+  return { margin: { cash: marginCash, ccp: marginCcp }, collected: { cash: collectedCash, ccp: collectedCcp } };
+}
+
+function formatProfitMarginSplitCard(margin, split) {
+  return `${formatDA(margin)}
+    <div style="font-size:10px;font-weight:400;margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;color:rgba(255,255,255,0.85)">
+      <span>💵 ${t('net.cashLabel')}: ${formatDA(split.collected.cash)}</span>
+      <span>📮 CCP: ${formatDA(split.collected.ccp)}</span>
+    </div>
+    <div style="font-size:10px;font-weight:400;margin-top:2px;color:rgba(255,255,255,0.6)">
+      ${t('net.marginLabel')} — 💵 ${formatDA(split.margin.cash)} · 📮 ${formatDA(split.margin.ccp)}
+    </div>`;
+}
+
 function init_reports() {
   const now = new Date();
   const y = now.getFullYear();
@@ -164,8 +201,11 @@ function renderReports() {
   const returnRate = totalSalesAmount > 0 ? (totalReturnsValue / totalSalesAmount * 100) : 0;
 
   // هامش الربح = (سعر البيع - سعر الشراء) لكل قطعة — للفترة + الإجمالي العام
-  const totalProfitMargin = getProfitMargin(allInvoices.filter(inv => inv.type === 'customer'), productMap);
+  const allCustomerInvoices = allInvoices.filter(inv => inv.type === 'customer');
+  const totalProfitMargin = getProfitMargin(allCustomerInvoices, productMap);
   const periodProfitMargin = getProfitMargin(salesInvoices, productMap);
+  const totalProfitSplit = getProfitMarginSplit(allCustomerInvoices, productMap);
+  const periodProfitSplit = getProfitMarginSplit(salesInvoices, productMap);
   const paidSalesAmount = paidSales.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
   const profitMargin = paidSalesAmount > 0 ? (periodProfitMargin / paidSalesAmount * 100) : 0;
 
@@ -180,11 +220,11 @@ function renderReports() {
   document.getElementById('rReturnsValue').textContent = formatDA(totalReturnsValue);
   document.getElementById('rNetAmount').textContent = formatDA(netSales);
   document.getElementById('rReturnRate').textContent = returnRate.toFixed(1) + '%';
-  document.getElementById('rProfitMargin').textContent = formatDA(periodProfitMargin);
+  document.getElementById('rProfitMargin').innerHTML = formatProfitMarginSplitCard(periodProfitMargin, periodProfitSplit);
   const pctEl = document.getElementById('rProfitMarginPct');
   if (pctEl) pctEl.textContent = profitMargin.toFixed(1) + '%';
   const totalMarginEl = document.getElementById('rTotalProfitMargin');
-  if (totalMarginEl) totalMarginEl.textContent = formatDA(totalProfitMargin);
+  if (totalMarginEl) totalMarginEl.innerHTML = formatProfitMarginSplitCard(totalProfitMargin, totalProfitSplit);
 
   // Top product
   const prodMap = {};

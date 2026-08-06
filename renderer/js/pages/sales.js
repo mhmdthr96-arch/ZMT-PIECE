@@ -5,10 +5,44 @@ var _salesSearchQuery = '';
 var _salesRenderRAF = null;
 var _salesDefaultMode = 'unit';
 var _salesPaidTouched = false;
+var _salesPayMethod = 'cash';
 
 function onSalesPaidInput() {
   _salesPaidTouched = true;
   updateSalesRemaining();
+}
+
+function getSalesPaidAmount() {
+  if (_salesPayMethod === 'mixed') {
+    const cash = parseFloat(document.getElementById('salesCashAmount').value) || 0;
+    const ccp = parseFloat(document.getElementById('salesCcpAmount').value) || 0;
+    return { cash, ccp, total: cash + ccp };
+  }
+  const paid = parseFloat(document.getElementById('salesPaidAmount').value) || 0;
+  return _salesPayMethod === 'ccp'
+    ? { cash: 0, ccp: paid, total: paid }
+    : { cash: paid, ccp: 0, total: paid };
+}
+
+function setSalesPayMethod(method) {
+  _salesPayMethod = method;
+  _salesPaidTouched = false;
+  document.querySelectorAll('.pay-method-btn').forEach(b => b.classList.toggle('active', b.dataset.method === method));
+  const mixed = method === 'mixed';
+  document.getElementById('salesSinglePay').style.display = mixed ? 'none' : '';
+  document.getElementById('salesMixedPay').style.display = mixed ? '' : 'none';
+  updateSalesTotals();
+}
+
+function resetSalesPaymentUI() {
+  _salesPayMethod = 'cash';
+  _salesPaidTouched = false;
+  document.getElementById('salesPaidAmount').value = '0';
+  document.getElementById('salesCashAmount').value = '0';
+  document.getElementById('salesCcpAmount').value = '0';
+  document.querySelectorAll('.pay-method-btn').forEach(b => b.classList.toggle('active', b.dataset.method === 'cash'));
+  document.getElementById('salesSinglePay').style.display = '';
+  document.getElementById('salesMixedPay').style.display = 'none';
 }
 
 // Settings helpers (also defined in settings.js — duplicated here for availability in sales page)
@@ -484,8 +518,13 @@ function updateSalesTotals() {
     const payInput = document.getElementById('salesPaidAmount');
     payInput.max = total;
     if (!_salesPaidTouched) {
-      payInput.value = total.toFixed(2);
-    } else {
+      if (_salesPayMethod === 'mixed') {
+        document.getElementById('salesCashAmount').value = total.toFixed(2);
+        document.getElementById('salesCcpAmount').value = '0';
+      } else {
+        payInput.value = total.toFixed(2);
+      }
+    } else if (_salesPayMethod !== 'mixed') {
       const currVal = parseFloat(payInput.value) || 0;
       if (currVal > total) payInput.value = total.toFixed(2);
     }
@@ -509,7 +548,7 @@ function clampExtraDisc() {
 
 function updateSalesRemaining() {
   const total = parseFloat(document.getElementById('salesCartTotal').textContent.replace('DA', '')) || 0;
-  const paid = parseFloat(document.getElementById('salesPaidAmount').value) || 0;
+  const paid = getSalesPaidAmount().total;
   const remaining = Math.max(0, total - paid);
 
   document.getElementById('salesRemainingVal').textContent = `DA${remaining.toFixed(2)}`;
@@ -536,9 +575,15 @@ function updateSalesRemaining() {
 function setSalesFullPayment() {
   _salesPaidTouched = true;
   const total = parseFloat(document.getElementById('salesCartTotal').textContent.replace('DA', '')) || 0;
-  document.getElementById('salesPaidAmount').value = total.toFixed(2);
+  if (_salesPayMethod === 'mixed') {
+    document.getElementById('salesCashAmount').value = total.toFixed(2);
+    document.getElementById('salesCcpAmount').value = '0';
+    document.getElementById('salesCcpAmount').focus();
+  } else {
+    document.getElementById('salesPaidAmount').value = total.toFixed(2);
+    document.getElementById('salesPaidAmount').focus();
+  }
   updateSalesRemaining();
-  document.getElementById('salesPaidAmount').focus();
 }
 
 // ===== CHECKOUT =====
@@ -567,6 +612,7 @@ function showInvoicePreview(inv) {
   const timbreFiscal = calcTimbreFiscal(inv.totalAmount);
   const netAPayer = inv.totalAmount + timbreFiscal;
   const paidAmount = DB.getInvoicePaidAmount(inv.id);
+  const payMethods = DB.getInvoicePaymentMethods(inv.id);
 
   const customer = inv.customerId ? DB.getCustomer(inv.customerId) : null;
   const date = new Date(inv.createdAt);
@@ -722,6 +768,14 @@ function showInvoicePreview(inv) {
         <div style="margin-top:14px;padding:10px 14px;background:#e8f5e9;border:1px solid #a5d6a7;border-radius:6px;font-size:12px;color:#2e7d32" dir="ltr">
           <strong>Payée intégralement</strong> — ${paidAmount.toFixed(2)} DA
         </div>`}
+
+        ${payMethods.ccp > 0 ? `
+        <div style="margin-top:8px;padding:8px 14px;background:#e3f2fd;border:1px solid #90caf9;border-radius:6px;font-size:11px;color:#1565c0" dir="ltr">
+          <i class="fas fa-credit-card"></i>
+          ${payMethods.cash > 0
+            ? `<strong>Partiellement réglée par CCP:</strong> ${payMethods.ccp.toFixed(2)} DA &nbsp;|&nbsp; Espèces: ${payMethods.cash.toFixed(2)} DA`
+            : `<strong>Réglée par CCP</strong> — ${payMethods.ccp.toFixed(2)} DA`}
+        </div>` : ''}
 
         <!-- Discounts detailed -->
         ${(custDiscAmount > 0 || extraDiscAmount > 0) ? `
@@ -902,7 +956,8 @@ function confirmSalesCheckout() {
     }
   }
 
-  const paidAmount = Math.min(parseFloat(document.getElementById('salesPaidAmount').value) || 0, totalAmount);
+  const pay = getSalesPaidAmount();
+  const paidAmount = pay.total;
   if (paidAmount > totalAmount) { alert(t('sales.paidExceedsTotal')); return; }
 
   // Batch update all product quantities at once
@@ -920,12 +975,22 @@ function confirmSalesCheckout() {
   });
 
   if (paidAmount > 0) {
-    DB.addPayment({
+    const pmt = {
       customerId: _salesCustomerId,
       invoiceId: inv.id,
       amount: paidAmount,
       note: paidAmount >= totalAmount ? t('sales.fullPaymentNote') : t('sales.partialPaymentNote'),
-    });
+    };
+    if (_salesPayMethod === 'ccp') {
+      pmt.method = 'ccp';
+    } else if (_salesPayMethod === 'mixed') {
+      pmt.method = 'mixed';
+      pmt.cashAmount = pay.cash;
+      pmt.ccpAmount = pay.ccp;
+    } else {
+      pmt.method = 'cash';
+    }
+    DB.addPayment(pmt);
   }
 
   if (custDiscAmount > 0) {
@@ -970,8 +1035,7 @@ function confirmSalesCheckout() {
   document.getElementById('salesCustSearch').value = '';
   document.getElementById('salesPaySection').style.display = 'none';
   document.getElementById('salesExtraDisc').value = '0';
-  document.getElementById('salesPaidAmount').value = '0';
-  _salesPaidTouched = false;
+  resetSalesPaymentUI();
   renderSalesCart();
   renderSalesProducts();
 
@@ -990,8 +1054,7 @@ function clearSalesCart() {
   document.getElementById('salesCustSearch').value = '';
   document.getElementById('salesPaySection').style.display = 'none';
   document.getElementById('salesExtraDisc').value = '0';
-  document.getElementById('salesPaidAmount').value = '0';
-  _salesPaidTouched = false;
+  resetSalesPaymentUI();
   renderSalesCart();
   renderSalesProducts();
   document.getElementById('salesBarcodeScan').focus();

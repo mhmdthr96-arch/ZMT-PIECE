@@ -404,6 +404,7 @@ function confirmInvPayment() {
     supplierId: inv.supplierId || undefined,
     invoiceId: _invDetailId,
     amount,
+    method: (document.getElementById('invPayMethod')?.value) || 'cash',
     note: inv.type === 'transfer' ? t('invoices.transferPayNote') : t('invoices.regularPayNote'),
   });
 

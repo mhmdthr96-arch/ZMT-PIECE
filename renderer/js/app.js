@@ -463,6 +463,7 @@ const LANG = {
       totalExpenses: 'إجمالي المصروفات',
       marginTitle: 'هامش الربح', periodLabel: 'الفترة:', today: 'اليوم',
       totalMargin: 'هامش الربح الكلي', periodMargin: 'هامش الربح للفترة', allTime: 'منذ البداية',
+      cashLabel: 'نقداً', marginLabel: 'هامش', ccpPaidNote: 'مدفوعة CCP',
     },
     discounts: {
       title: 'التخفيضات', sub: 'إدارة العروض والتخفيضات',
@@ -674,6 +675,8 @@ const LANG = {
       totalLabel: 'الإجمالي', paidLabel: 'المبلغ المدفوع', payFull: 'دفع كلياً', remainingLabel: 'الباقي',
       clear: 'تفريغ', checkout: 'إتمام البيع', emptyCartTitle: 'السلة فارغة', emptyCartHint: 'امسح باركود القطعة أو اخترها من قائمة المنتجات',
       scanPlaceholder: 'امسح الباركود ضوئياً...', searchPlaceholder2: 'ابحث باسم القطعة أو الباركود...', productsCount: '0 منتج', multiBatches: 'دفعات متعددة', mixedPrice: 'أسعار متعددة', unit: 'قطعة', wholesale: 'جملة',
+      payMethod: 'طريقة الدفع', payCash: 'نقداً', payCcp: 'CCP', payBoth: 'الاثنان معاً',
+      cashAmount: 'المبلغ النقدي', ccpAmount: 'مبلغ CCP',
     },
     orders: {
       title: 'الطلبات', sub: 'طلب القطع الناقصة من الموردين',
@@ -1083,6 +1086,7 @@ const LANG = {
       totalExpenses: 'Total Expenses',
       marginTitle: 'Profit Margin', periodLabel: 'Period:', today: 'Today',
       totalMargin: 'Total Profit Margin', periodMargin: 'Period Profit Margin', allTime: 'All time',
+      cashLabel: 'Cash', marginLabel: 'Margin', ccpPaidNote: 'Paid via CCP',
     },
     discounts: {
       title: 'Discounts', sub: 'Manage Offers & Discounts',
@@ -1294,6 +1298,8 @@ const LANG = {
       totalLabel: 'Total', paidLabel: 'Amount Paid', payFull: 'Pay Full', remainingLabel: 'Remaining',
       clear: 'Clear', checkout: 'Checkout', emptyCartTitle: 'Cart is Empty', emptyCartHint: 'Scan item barcode or select from product list',
       scanPlaceholder: 'Scan barcode...', searchPlaceholder2: 'Search by part name or barcode...', productsCount: '0 products', multiBatches: 'Multiple batches', mixedPrice: 'Mixed price', unit: 'Unit', wholesale: 'Wholesale',
+      payMethod: 'Payment Method', payCash: 'Cash', payCcp: 'CCP', payBoth: 'Both',
+      cashAmount: 'Cash Amount', ccpAmount: 'CCP Amount',
     },
     orders: {
       title: 'Orders', sub: 'Order missing parts from suppliers',
@@ -1698,6 +1704,7 @@ const LANG = {
       totalExpenses: 'Total Dépenses',
       marginTitle: 'Marge Bénéficiaire', periodLabel: 'Période:', today: "Aujourd'hui",
       totalMargin: 'Marge Bénéficiaire Totale', periodMargin: 'Marge de la Période', allTime: 'Depuis le début',
+      cashLabel: 'Espèces', marginLabel: 'Marge', ccpPaidNote: 'Payée par CCP',
     },
     discounts: {
       title: 'Remises', sub: 'Gérer les Offres et Remises',
@@ -1909,6 +1916,8 @@ const LANG = {
       totalLabel: 'Total', paidLabel: 'Montant Payé', payFull: 'Payer Tout', remainingLabel: 'Reste',
       clear: 'Vider', checkout: 'Finaliser', emptyCartTitle: 'Le Panier est Vide', emptyCartHint: 'Scannez le code-barres ou sélectionnez dans la liste',
       scanPlaceholder: 'Scannez le code-barres...', searchPlaceholder2: 'Rechercher par nom ou code-barres...', productsCount: '0 produits', multiBatches: 'Plusieurs lots', mixedPrice: 'Prix mixte', unit: 'Unité', wholesale: 'Gros',
+      payMethod: 'Moyen de paiement', payCash: 'Espèces', payCcp: 'CCP', payBoth: 'Les deux',
+      cashAmount: 'Montant espèces', ccpAmount: 'Montant CCP',
     },
     orders: {
       title: 'Commandes', sub: 'Commander les pièces manquantes aux fournisseurs',
@@ -2313,6 +2322,7 @@ const LANG = {
       totalExpenses: '总支出',
       marginTitle: '利润率', periodLabel: '期间：', today: '今天',
       totalMargin: '总利润率', periodMargin: '期间利润率', allTime: '自始至终',
+      cashLabel: '现金', marginLabel: '利润', ccpPaidNote: '通过CCP支付',
     },
     discounts: {
       title: '折扣', sub: '管理优惠和折扣',
@@ -2524,6 +2534,8 @@ const LANG = {
       totalLabel: '总计', paidLabel: '已付金额', payFull: '全额付款', remainingLabel: '剩余',
       clear: '清空', checkout: '结账', emptyCartTitle: '购物车为空', emptyCartHint: '扫描商品条码或从产品列表选择',
       scanPlaceholder: '扫描条码...', searchPlaceholder2: '按名称或条码搜索...', productsCount: '0 件产品', multiBatches: '多批次', mixedPrice: '混合价格', unit: '件', wholesale: '批发',
+      payMethod: '支付方式', payCash: '现金', payCcp: 'CCP', payBoth: '两者',
+      cashAmount: '现金金额', ccpAmount: 'CCP金额',
     },
     orders: {
       title: '订单', sub: '向供应商订购缺失零件',

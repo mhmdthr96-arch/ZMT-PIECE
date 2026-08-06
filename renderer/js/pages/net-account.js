@@ -61,6 +61,43 @@ function calcMargin(salesInvoices, productMap) {
   }, 0);
 }
 
+function calcMarginSplit(salesInvoices, productMap) {
+  let marginCash = 0, marginCcp = 0, collectedCash = 0, collectedCcp = 0;
+  salesInvoices.forEach(inv => {
+    if (inv.isProvisional) return;
+    if (DB.getInvoicePaidAmount(inv.id) < (inv.totalAmount || 0)) return;
+    let margin = 0;
+    (inv.items || []).forEach(it => {
+      const prod = productMap[it.productId];
+      const buyPrice = prod ? (prod.buyPrice || 0) : 0;
+      margin += (it.price - buyPrice) * it.qty;
+    });
+    const m = DB.getInvoicePaymentMethods(inv.id);
+    collectedCash += m.cash;
+    collectedCcp += m.ccp;
+    const totalPaid = m.cash + m.ccp;
+    if (totalPaid > 0 && m.ccp > 0) {
+      const ccpRatio = m.ccp / totalPaid;
+      marginCcp += margin * ccpRatio;
+      marginCash += margin * (1 - ccpRatio);
+    } else {
+      marginCash += margin;
+    }
+  });
+  return { margin: { cash: marginCash, ccp: marginCcp }, collected: { cash: collectedCash, ccp: collectedCcp } };
+}
+
+function formatMarginSplitCard(margin, split) {
+  return `DA${margin.toFixed(2)}
+    <div style="font-size:10px;font-weight:400;margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;color:rgba(255,255,255,0.85)">
+      <span>💵 ${t('net.cashLabel')}: DA${split.collected.cash.toFixed(2)}</span>
+      <span>📮 CCP: DA${split.collected.ccp.toFixed(2)}</span>
+    </div>
+    <div style="font-size:10px;font-weight:400;margin-top:2px;color:rgba(255,255,255,0.6)">
+      ${t('net.marginLabel')} — 💵 DA${split.margin.cash.toFixed(2)} · 📮 DA${split.margin.ccp.toFixed(2)}
+    </div>`;
+}
+
 function calculateNet() {
   const invoices = DB.getInvoices();
   const suppliers = DB.getSuppliers();
@@ -149,8 +186,11 @@ function calculateNet() {
   });
   const periodMargin = calcMargin(periodInvoices, productMap);
 
-  document.getElementById('netTotalMargin').textContent = `DA${totalMargin.toFixed(2)}`;
-  document.getElementById('netPeriodMargin').textContent = `DA${periodMargin.toFixed(2)}`;
+  const totalSplit = calcMarginSplit(salesInvoices, productMap);
+  const periodSplit = calcMarginSplit(periodInvoices, productMap);
+
+  document.getElementById('netTotalMargin').innerHTML = formatMarginSplitCard(totalMargin, totalSplit);
+  document.getElementById('netPeriodMargin').innerHTML = formatMarginSplitCard(periodMargin, periodSplit);
   const netRangeLabelEl = document.getElementById('netPeriodLabel');
   if (netRangeLabelEl) netRangeLabelEl.textContent = netRangeLabel(range);
 
@@ -207,9 +247,10 @@ function calculateNet() {
     } else {
       const c = p.customerId ? customers.find(x => x.id === p.customerId) : null;
       const desc = c ? `${t('net.paymentFrom')}${c.name}` : (p.note?.includes('دفع') ? `${t('net.paymentNote')} - ${p.note}` : t('net.paymentWalkin'));
+      const methodNote = p.method === 'ccp' || p.method === 'mixed' ? ` (${t('net.ccpPaidNote')})` : '';
       txLog.push({
         date: new Date(p.createdAt),
-        desc: p.note ? `${desc} (${p.note})` : desc,
+        desc: (p.note ? `${desc} (${p.note})` : desc) + methodNote,
         type: t('net.salesPaid'),
         amount: p.amount, // موجب = دخل
         badge: 'success',

@@ -595,6 +595,21 @@ const DB = (() => {
       return this.getInvoicePayments(invoiceId).reduce((sum, p) => sum + p.amount, 0);
     },
 
+    getInvoicePaymentMethods(invoiceId) {
+      let cash = 0, ccp = 0;
+      this.getInvoicePayments(invoiceId).forEach(p => {
+        const amt = p.amount || 0;
+        if (p.method === 'ccp') ccp += amt;
+        else if (p.method === 'mixed') {
+          cash += (p.cashAmount || 0);
+          ccp += (p.ccpAmount || 0);
+        } else {
+          cash += amt;
+        }
+      });
+      return { cash, ccp };
+    },
+
     reduceInvoicePayments(invoiceId, maxTotal) {
       const payments = this.getInvoicePayments(invoiceId);
       const sum = payments.reduce((s, p) => s + (p.amount || 0), 0);

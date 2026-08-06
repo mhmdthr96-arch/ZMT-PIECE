@@ -110,15 +110,41 @@
           <!-- Payment -->
           <div id="salesPaySection" class="sales-pay" style="display:none">
             <div class="sales-pay-inner">
-              <div class="sales-pay-label" data-i18n="sales.paidLabel">المبلغ المدفوع</div>
-              <div class="sales-pay-row">
-                <input type="number" class="no-spinner sales-pay-input"
-                  id="salesPaidAmount" value="0" min="0" dir="ltr"
-                  oninput="onSalesPaidInput()">
-                <span class="sales-pay-currency">DA</span>
-                <button class="sales-pay-full" onclick="setSalesFullPayment()">
-                  <i class="fas fa-check-circle"></i> <span data-i18n="common.payFull">دفع كلياً</span>
-                </button>
+              <div class="sales-pay-label" data-i18n="sales.payMethod">طريقة الدفع</div>
+              <div class="sales-pay-methods">
+                <button class="pay-method-btn active" data-method="cash" onclick="setSalesPayMethod('cash')" data-i18n="sales.payCash">نقداً</button>
+                <button class="pay-method-btn" data-method="ccp" onclick="setSalesPayMethod('ccp')" data-i18n="sales.payCcp">CCP</button>
+                <button class="pay-method-btn" data-method="mixed" onclick="setSalesPayMethod('mixed')" data-i18n="sales.payBoth">الاثنان معاً</button>
+              </div>
+
+              <div id="salesSinglePay">
+                <div class="sales-pay-label" data-i18n="sales.paidLabel">المبلغ المدفوع</div>
+                <div class="sales-pay-row">
+                  <input type="number" class="no-spinner sales-pay-input"
+                    id="salesPaidAmount" value="0" min="0" dir="ltr"
+                    oninput="onSalesPaidInput()">
+                  <span class="sales-pay-currency">DA</span>
+                  <button class="sales-pay-full" onclick="setSalesFullPayment()">
+                    <i class="fas fa-check-circle"></i> <span data-i18n="common.payFull">دفع كلياً</span>
+                  </button>
+                </div>
+              </div>
+
+              <div id="salesMixedPay" style="display:none">
+                <div class="sales-pay-label" data-i18n="sales.cashAmount">المبلغ النقدي</div>
+                <div class="sales-pay-row">
+                  <input type="number" class="no-spinner sales-pay-input"
+                    id="salesCashAmount" value="0" min="0" dir="ltr"
+                    oninput="onSalesPaidInput()">
+                  <span class="sales-pay-currency">DA</span>
+                </div>
+                <div class="sales-pay-label" data-i18n="sales.ccpAmount">مبلغ CCP</div>
+                <div class="sales-pay-row">
+                  <input type="number" class="no-spinner sales-pay-input"
+                    id="salesCcpAmount" value="0" min="0" dir="ltr"
+                    oninput="onSalesPaidInput()">
+                  <span class="sales-pay-currency">DA</span>
+                </div>
               </div>
 
               <!-- Remaining -->

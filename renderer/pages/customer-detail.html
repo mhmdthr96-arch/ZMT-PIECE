@@ -99,6 +99,10 @@
         <span style="font-size:13px;color:var(--silver-600);white-space:nowrap" data-i18n="common.total">المبلغ:</span>
         <input type="number" class="form-input no-spinner" id="cdPayInvoiceAmount"
           style="flex:1;min-width:100px;padding:7px 10px" min="0" dir="ltr">
+        <select class="form-input" id="cdPayMethod" style="width:auto;padding:7px 8px;font-size:12px">
+          <option value="cash" data-i18n="sales.payCash">نقداً</option>
+          <option value="ccp" data-i18n="sales.payCcp">CCP</option>
+        </select>
         <button class="btn btn-success" onclick="payInvoiceFromCd()" style="white-space:nowrap">
           <i class="fas fa-money-bill-wave"></i> <span data-i18n="common.pay">دفع</span>
         </button>

@@ -313,6 +313,7 @@ function payInvoiceFromCd() {
     customerId: _cdCustomerId,
     invoiceId: _cdCurrentInvoiceId,
     amount,
+    method: (document.getElementById('cdPayMethod')?.value) || 'cash',
     note: `دفع فاتورة #${invNum}`,
   });
 
