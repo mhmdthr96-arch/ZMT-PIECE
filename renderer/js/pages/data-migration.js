@@ -27,7 +27,7 @@ let _migrationState = {
 };
 
 function openMigration() {
-  _migrationState = { step: 1, file: null, fileBuffer: null, filePath: null, fileType: null, parsedData: null, db: null, firebird: null, firebirdPagesLoaded: {}, selectedTable: null, headers: [], rows: [], mapping: {}, totalRows: 0, columnAnalysis: null, selectedBrands: [], brandConfirmed: false, tableRole: 'products', previewPage: 0, finalPage: 0, aiMode: false, aiResult: null, aiProcessing: false };
+  _migrationState = { step: 1, file: null, fileBuffer: null, filePath: null, fileType: null, parsedData: null, db: null, firebird: null, firebirdPagesLoaded: {}, selectedTable: null, headers: [], rows: [], mapping: {}, totalRows: 0, columnAnalysis: null, selectedBrands: [], brandConfirmed: false, tableRole: 'products', previewPage: 0, finalPage: 0, aiMode: false, aiResult: null, aiProcessing: false, gestionStock: false };
   document.getElementById('migrationModal').style.display = 'flex';
   document.getElementById('migrationFileInput').value = '';
   document.getElementById('migrationFileInfo').style.display = 'none';
@@ -151,11 +151,14 @@ async function migrationNextStep() {
     
     migrationUpdateStatus('', '');
     showMigrationStep(2);
-    showMigrationRoleChoice();
+    if (!_migrationState.gestionStock) {
+      showMigrationRoleChoice();
+    }
     return;
   }
   
   if (step === 2) {
+    if (_migrationState.gestionStock) return;
     if (!_migrationState.headers.length) return;
     const rolePopup = document.getElementById('migrationRolePopup');
     if (rolePopup) rolePopup.style.display = 'none';
@@ -558,9 +561,12 @@ async function migrationParseFirebird() {
     _migrationState.firebird = { dbPath: openPath, sourcePath: dbPath, isBackup: ext === 'fbk', options: opts, ods: det.data.odsVersion + '.' + det.data.odsMinor };
     document.getElementById('migrationFileType').textContent =
       (document.getElementById('migrationFileType').textContent || '') + ' • Firebird ' + det.data.odsVersion + '.' + det.data.odsMinor;
-    renderMigrationTableSelect(tables.map(t => t.name));
-    if (detectGestionStockSchema(tables.map(t => t.name))) {
+    const isGestionStock = detectGestionStockSchema(tables.map(t => t.name));
+    _migrationState.gestionStock = isGestionStock;
+    if (isGestionStock) {
       renderGestionStockFullImportPanel();
+    } else {
+      renderMigrationTableSelect(tables.map(t => t.name));
     }
     return true;
   } catch (err) {
@@ -1303,6 +1309,16 @@ async function migrationDoImport() {
   const headers = _migrationState.headers;
   const rows = _migrationState.rows;
   
+  // Auto-map wholesale/sell prices when PRIX columns exist but weren't detected
+  if (mapping.wholesalePrice === undefined) {
+    const pi = headers.findIndex(h => h && String(h).toUpperCase().replace(/[^A-Z0-9]/g, '') === 'PRIX1');
+    if (pi !== -1) mapping.wholesalePrice = pi;
+  }
+  if (mapping.sellPrice === undefined) {
+    const pi = headers.findIndex(h => h && String(h).toUpperCase().replace(/[^A-Z0-9]/g, '') === 'PRIX2');
+    if (pi !== -1) mapping.sellPrice = pi;
+  }
+  
   if (!mapping.name && !mapping.barcode) {
     migrationUpdateStatus(t('migration.needNameOrBarcode'), 'error');
     return;
@@ -1389,6 +1405,7 @@ async function migrationDoImport() {
         category: rv(row, 'category'),
         buyPrice: invoiceMode ? 0 : (rn(row, 'buyPrice') || rn(row, 'unitPrice') || 0),
         sellPrice: invoiceMode ? 0 : (rn(row, 'sellPrice') || rn(row, 'unitPrice') || 0),
+        wholesalePrice: invoiceMode ? 0 : (rn(row, 'wholesalePrice') || rn(row, 'buyPrice') || 0),
         quantity: invoiceMode ? 0 : (rn(row, 'qty') || 0),
         supplierId: sid,
         notes: rv(row, 'notes'),
@@ -1619,44 +1636,27 @@ function renderGestionStockFullImportPanel() {
   const panel = document.getElementById('migrationFullImportPanel');
   if (!panel) return;
   panel.style.display = 'block';
+  const tableSelect = document.getElementById('migrationTableSelect');
+  if (tableSelect) tableSelect.style.display = 'none';
+  const preview = document.getElementById('migrationPreview');
+  if (preview) preview.style.display = 'none';
+  const rolePopup = document.getElementById('migrationRolePopup');
+  if (rolePopup) rolePopup.style.display = 'none';
 }
 
 async function startGestionStockFullImport() {
+  if (!_migrationState.firebird) return;
   const popup = document.getElementById('migrationFullBrandPopup');
-  if (!popup) return;
-  const list = document.getElementById('migrationFullBrandList');
-  migrationUpdateStatus(t('migration.loadingBrands') || 'جاري قراءة العلامات التجارية...', 'info');
-  try {
-    const { dbPath, options } = _migrationState.firebird;
-    const cntRes = await window.electronAPI.firebirdCount(dbPath, 'ARTICLES', options);
-    const total = cntRes.success ? (cntRes.data || 0) : 0;
-    let counts = {};
-    if (total > 0) {
-      const qRes = await window.electronAPI.firebirdQuery(dbPath, 'ARTICLES', ['MARQUE'], 0, total, options);
-      const rows = qRes.success ? (qRes.data || []) : [];
-      for (const r of rows) {
-        const m = String(r['MARQUE'] || '').trim();
-        if (!m) { counts['__empty__'] = (counts['__empty__'] || 0) + 1; continue; }
-        counts[m] = (counts[m] || 0) + 1;
-      }
-    } else {
-      counts = { __empty__: 0 };
-    }
-    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    if (!entries.length) entries.push(['__empty__', 0]);
-    list.innerHTML = entries.map(([m, c]) => {
-      const isEmpty = m === '__empty__';
-      const label = isEmpty ? (t('migration.brandEmpty') || 'بدون علامة') : escapeHtml(m);
-      return `<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;color:var(--silver-700);background:#e3f2fd;border:1px solid var(--primary)">
-        <input type="checkbox" value="${escapeHtml(m)}" checked onchange="toggleFullBrand(this)" style="accent-color:var(--primary)">
-        <span style="font-weight:600">${label}</span>
-        <span style="font-size:11px;color:var(--silver-500)">(${c})</span>
-      </label>`;
-    }).join('');
-    popup.style.display = 'block';
-    migrationUpdateStatus('', '');
-  } catch (err) {
-    migrationUpdateStatus(t('migration.firebirdTableError') + ': ' + err.message, 'error');
+  if (popup) popup.style.display = 'none';
+  const btn = document.getElementById('migrationFullImportBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span data-i18n="migration.importing">جاري الاستيراد...</span>';
+  }
+  await importGestionStockFull(null);
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-rocket"></i> <span data-i18n="migration.fullImportBtn">استيراد شامل</span>';
   }
 }
 
@@ -2025,11 +2025,11 @@ async function importGestionStockFull(selectedBrands) {
   // ===== 3) PRODUCTS =====
   migrationUpdateStatus((t('migration.roleProducts') || 'المنتجات') + '...', 'info');
   const articleRows = await load('ARTICLES');
-  const keepMarques = selectedBrands || new Set();
+  const keepMarques = selectedBrands ? new Set(selectedBrands) : null;
   const productMap = new Map();
   for (const r of articleRows) {
     const marque = txt(r['MARQUE']);
-    if (marque && !keepMarques.has(marque)) continue;
+    if (keepMarques && marque && !keepMarques.has(marque)) continue;
     const ref = txt(r['REFERENCE']);
     const bar = txt(r['CODE_BAR']) || ref;
     if (!ref && !bar) continue;
@@ -2072,7 +2072,7 @@ async function importGestionStockFull(selectedBrands) {
   }
   for (const r of articleRows) {
     const marque = txt(r['MARQUE']);
-    if (marque && !keepMarques.has(marque)) continue;
+    if (keepMarques && marque && !keepMarques.has(marque)) continue;
     const ref = txt(r['REFERENCE']);
     const bar = txt(r['CODE_BAR']) || ref;
     const found = prodByBar[bar || ('REF-' + ref)];
