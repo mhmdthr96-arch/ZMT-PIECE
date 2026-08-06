@@ -193,6 +193,7 @@ function cleanupPage() {
 }
 if (!window._pageListeners) window._pageListeners = [];
 if (!window._pageIntervals) window._pageIntervals = [];
+if (!window._pageSyncHandlers) window._pageSyncHandlers = {};
 
 function trackPageInterval(fn, delay) {
   const id = setInterval(fn, delay);

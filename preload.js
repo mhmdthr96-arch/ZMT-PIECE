@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   lanConfigure: (config) => ipcRenderer.invoke('lan-configure', config),
   lanSend: (payload) => ipcRenderer.invoke('lan-send', payload),
   lanGetLocalIp: () => ipcRenderer.invoke('lan-get-local-ip'),
+  lanGetStatus: () => ipcRenderer.invoke('lan-get-status'),
   lanTestConnection: (ip, port) => ipcRenderer.invoke('lan-test-connection', ip, port),
   onLanMessage: (cb) => ipcRenderer.on('lan-message', (_e, msg) => cb(msg)),
   onLanStatus: (cb) => ipcRenderer.on('lan-status', (_e, st) => cb(st)),

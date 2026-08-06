@@ -567,3 +567,10 @@ async function executeTransfer() {
     alert(`${t('transfer.transferError')} ${e.message}`);
   }
 }
+
+// ===== LAN SYNC: refresh product search results without resetting the form =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['transfer'] = function transferSyncData() {
+  const input = document.getElementById('transferProdSearch');
+  searchTransferProduct(input ? input.value : '');
+};

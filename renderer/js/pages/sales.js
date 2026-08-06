@@ -1062,3 +1062,10 @@ function clearSalesCart() {
   renderSalesProducts();
   document.getElementById('salesBarcodeScan').focus();
 }
+
+// ===== LAN SYNC: live refresh without disturbing the active cart =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['sales'] = function salesSyncData() {
+  _salesProducts = DB.getProducts();
+  renderSalesProducts();
+};

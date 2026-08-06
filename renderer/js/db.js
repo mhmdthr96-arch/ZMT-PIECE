@@ -17,6 +17,12 @@ const DB = (() => {
   // ===== LOCAL CHANGE LISTENERS (LAN sync hook) =====
   let _localChangeListeners = [];
 
+  // ===== DELETE TOMBSTONES (LAN sync) =====
+  // Map store -> recordId -> delete timestamp (ms). Persisted inside meta so
+  // deletes survive restarts and never resurrect on the peer device.
+  let _tombstones = {};
+  let _tombstonesDirty = false;
+
   function _emitLocalChange(ops) {
     for (const cb of _localChangeListeners) {
       try { cb(ops); } catch (e) { console.error('[DB] Change listener error:', e); }
@@ -25,6 +31,80 @@ const DB = (() => {
 
   function _emitStoreReplace(store, list) {
     _emitLocalChange({ [store]: { put: list || [], replace: true } });
+  }
+
+  // ===== TOMBSTONE HELPERS =====
+
+  function _recordTombstone(store, id, ts) {
+    if (store === 'meta' || id == null) return;
+    if (!_tombstones[store]) _tombstones[store] = {};
+    const cur = _tombstones[store][id] || 0;
+    const t = Number(ts) || Date.now();
+    if (t >= cur) {
+      _tombstones[store][id] = t;
+      _tombstonesDirty = true;
+      _persistTombstones();
+    }
+  }
+
+  function _mergeTombstones(incoming) {
+    if (!incoming || typeof incoming !== 'object') return;
+    for (const store of Object.keys(incoming)) {
+      const map = incoming[store];
+      if (!map || typeof map !== 'object') continue;
+      if (!_tombstones[store]) _tombstones[store] = {};
+      for (const id of Object.keys(map)) {
+        const cur = _tombstones[store][id] || 0;
+        const t = Number(map[id]) || 0;
+        if (t > cur) {
+          _tombstones[store][id] = t;
+          _tombstonesDirty = true;
+        }
+      }
+    }
+  }
+
+  function _persistTombstones() {
+    if (!_tombstonesDirty) return;
+    if (!_batchQueue['meta']) _batchQueue['meta'] = { put: [], del: [] };
+    const rec = { id: 'lanTombstones', val: _tombstones };
+    const arr = _batchQueue['meta'].put;
+    const idx = arr.findIndex(x => x && x.id === 'lanTombstones');
+    if (idx !== -1) arr[idx] = rec;
+    else arr.push(rec);
+    _scheduleFlush();
+  }
+
+  async function _persistTombstonesIdb() {
+    if (!_tombstonesDirty) return;
+    await _idbPut('meta', [{ id: 'lanTombstones', val: _tombstones }]);
+    _tombstonesDirty = false;
+  }
+
+  // Remove any cached items that are still covered by a tombstone (used after
+  // remote changes so a deleted record never lingers in the local cache).
+  async function _applyTombstoneSweep() {
+    let removedAny = false;
+    for (const store of Object.keys(_tombstones)) {
+      if (store === 'meta' || !_cache[store]) continue;
+      const tmap = _tombstones[store];
+      const removed = [];
+      _cache[store] = _cache[store].filter(x => {
+        const tts = tmap[x.id];
+        if (tts && (!x.updatedAt || x.updatedAt <= tts)) { removed.push(x.id); return false; }
+        if (tts) delete tmap[x.id];
+        return true;
+      });
+      if (removed.length) {
+        removedAny = true;
+        _rebuildIndex(store);
+        await _idbDelete(store, removed);
+      }
+    }
+    if (removedAny) {
+      _tombstonesDirty = true;
+      await _persistTombstonesIdb();
+    }
   }
 
   function _rebuildIndex(store) {
@@ -202,6 +282,7 @@ const DB = (() => {
   function _queueDelete(store, id) {
     if (!_batchQueue[store]) _batchQueue[store] = { put: [], del: [] };
     _batchQueue[store].del.push(id);
+    _recordTombstone(store, id, Date.now());
     _scheduleFlush();
   }
 
@@ -220,6 +301,7 @@ const DB = (() => {
         if (ops.del.length) await _idbDelete(store, ops.del);
       } catch (e) { console.error('[DB] Flush error:', store, e); }
     }
+    _tombstonesDirty = false;
     debounceAutoBackup();
     if (typeof CloudService !== 'undefined' && CloudService.isCloudConnected() && CloudService.hasData() && localStorage.getItem('zmt_cloud_autosync') === '1') {
       CloudService.triggerSync();
@@ -237,6 +319,7 @@ const DB = (() => {
         if (ops.del.length) await _idbDelete(store, ops.del);
       } catch (e) { console.error('[DB] Flush error:', store, e); }
     }
+    _tombstonesDirty = false;
     _emitLocalChange(queue);
   }
 
@@ -323,6 +406,13 @@ const DB = (() => {
     }
     if (!_cache.meta.nextBarcode) _cache.meta.nextBarcode = 100000;
     if (!_cache.meta.nextInvoiceCounter) _cache.meta.nextInvoiceCounter = 0;
+    if (_cache.meta.lanTombstones && typeof _cache.meta.lanTombstones === 'object') {
+      _tombstones = _cache.meta.lanTombstones;
+    } else {
+      _tombstones = {};
+      _cache.meta.lanTombstones = _tombstones;
+    }
+    _tombstonesDirty = false;
     _rebuildAll();
     _ready = true;
   }
@@ -348,6 +438,13 @@ const DB = (() => {
     }
     if (!_cache.meta.nextBarcode) _cache.meta.nextBarcode = 100000;
     if (!_cache.meta.nextInvoiceCounter) _cache.meta.nextInvoiceCounter = 0;
+    if (_cache.meta.lanTombstones && typeof _cache.meta.lanTombstones === 'object') {
+      _tombstones = _cache.meta.lanTombstones;
+    } else {
+      _tombstones = {};
+      _cache.meta.lanTombstones = _tombstones;
+    }
+    _tombstonesDirty = false;
     _ready = true;
     if (onProgress) onProgress(null, STORES.length, STORES.length, 0);
   }
@@ -958,8 +1055,13 @@ const DB = (() => {
       _localChangeListeners.push(cb);
     },
 
+    getTombstoneTs(store, id) {
+      return (_tombstones[store] || {})[id] || 0;
+    },
+
     // Apply remote changes received via LAN sync. Filters by storeId to
-    // guarantee strict isolation between different stores.
+    // guarantee strict isolation between different stores. Accepts del entries
+    // as either bare ids [id] or [{ id, ts }] so delete timestamps propagate.
     async applyRemoteChanges(ops) {
       if (!ops) return;
       const sid = _getStoreId();
@@ -968,47 +1070,93 @@ const DB = (() => {
         const store = op.store;
         if (!_cache[store]) continue;
         const putItems = Array.isArray(op.put) ? op.put : [];
-        const delIds = Array.isArray(op.del) ? op.del : [];
+        const rawDel = Array.isArray(op.del) ? op.del : [];
+        const delEntries = rawDel.map(d => {
+          if (d && typeof d === 'object') return { id: String(d.id), ts: Number(d.ts) || 0 };
+          return { id: String(d), ts: 0 };
+        }).filter(d => d.id && d.id !== 'undefined');
         const filtered = putItems.filter(item => {
           if ((store === 'products' || store === 'invoices') && sid && item.storeId && item.storeId !== sid) return false;
           return true;
         });
         if (store === 'meta') {
+          const changedMeta = [];
           for (const item of filtered) {
-            if (item && item.id) _cache.meta[item.id] = item.val;
+            if (!item || !item.id) continue;
+            if (item.id === 'nextBarcode' || item.id === 'nextInvoiceCounter') {
+              const cur = Number(_cache.meta[item.id]) || 0;
+              const val = Number(item.val) || 0;
+              if (val > cur) { _cache.meta[item.id] = val; changedMeta.push(item); }
+            } else if (item.id === 'lanTombstones') {
+              _mergeTombstones(item.val);
+              _cache.meta.lanTombstones = _tombstones;
+              changedMeta.push(item);
+            } else if (_cache.meta[item.id] !== item.val) {
+              _cache.meta[item.id] = item.val;
+              changedMeta.push(item);
+            }
           }
-          await _idbPut('meta', filtered.map(item => ({ id: item.id, val: item.val })));
+          for (const d of delEntries) delete _cache.meta[d.id];
+          if (changedMeta.length || delEntries.length) {
+            await _idbPut('meta', Object.entries(_cache.meta).map(([id, val]) => ({ id, val })));
+          }
           continue;
         }
         let changed = false;
-        if (op.replace && store !== 'products' && store !== 'invoices') {
-          _cache[store] = filtered.slice();
+        let appliedItems = [];
+        let storeDelIds = [];
+        if (!_tombstones[store]) _tombstones[store] = {};
+        const tmap = _tombstones[store];
+        if (op.replace) {
+          const newItems = [];
+          for (const item of filtered) {
+            const tts = tmap[item.id];
+            if (tts && (!item.updatedAt || item.updatedAt <= tts)) continue;
+            if (tts) { delete tmap[item.id]; _tombstonesDirty = true; }
+            newItems.push(item);
+          }
+          const oldIds = new Set(_cache[store].map(x => x.id));
+          const newIds = new Set(newItems.map(x => x.id));
+          storeDelIds = [...oldIds].filter(id => !newIds.has(id));
+          _cache[store] = newItems;
+          appliedItems = newItems;
           _rebuildIndex(store);
           changed = true;
         } else {
           for (const item of filtered) {
+            const tts = tmap[item.id];
+            if (tts && (!item.updatedAt || item.updatedAt <= tts)) continue;
+            if (tts) { delete tmap[item.id]; _tombstonesDirty = true; }
             const idx = _cache[store].findIndex(x => x.id === item.id);
             if (idx === -1) {
               _cache[store].push(item);
-              changed = true;
             } else {
               const existing = _cache[store][idx];
               if (existing.updatedAt && item.updatedAt && item.updatedAt < existing.updatedAt) continue;
               Object.assign(existing, item);
-              changed = true;
             }
-          }
-          if (delIds.length) {
-            const delSet = new Set(delIds);
-            _cache[store] = _cache[store].filter(x => !delSet.has(x.id));
+            appliedItems.push(item);
             changed = true;
+          }
+          if (delEntries.length) {
+            storeDelIds = delEntries.map(d => d.id);
+            for (const d of delEntries) {
+              const curTs = tmap[d.id] || 0;
+              if (d.ts > curTs) { tmap[d.id] = d.ts; _tombstonesDirty = true; }
+            }
+            const delSet = new Set(delEntries.map(d => d.id));
+            const before = _cache[store].length;
+            _cache[store] = _cache[store].filter(x => !delSet.has(x.id));
+            if (_cache[store].length !== before) changed = true;
           }
         }
         if (changed) {
           _rebuildIndex(store);
-          accepted.push({ store, items: filtered, delIds });
+          accepted.push({ store, items: appliedItems, delIds: storeDelIds });
         }
       }
+      if (_tombstonesDirty) await _persistTombstonesIdb();
+      await _applyTombstoneSweep();
       for (const a of accepted) {
         if (a.items.length) await _idbPut(a.store, a.items);
         if (a.delIds.length) await _idbDelete(a.store, a.delIds);
@@ -1031,6 +1179,9 @@ const DB = (() => {
       _cache.transfers = [];
       _cache.orders = [];
       _cache.meta = { nextBarcode: 100000, nextInvoiceCounter: 0 };
+      _tombstones = {};
+      _cache.meta.lanTombstones = _tombstones;
+      _tombstonesDirty = false;
       _rebuildAll();
       for (const s of STORES) await _idbClear(s);
       await _idbPut('meta', [{ id: 'nextBarcode', val: 100000 }, { id: 'nextInvoiceCounter', val: 0 }]);
@@ -1092,6 +1243,13 @@ const DB = (() => {
       if (mapped.transfers) _cache.transfers = mapped.transfers;
       if (mapped.orders) _cache.orders = mapped.orders;
       if (mapped.meta) Object.assign(_cache.meta, mapped.meta);
+      if (_cache.meta.lanTombstones && typeof _cache.meta.lanTombstones === 'object') {
+        _tombstones = _cache.meta.lanTombstones;
+      } else {
+        _tombstones = {};
+        _cache.meta.lanTombstones = _tombstones;
+      }
+      _tombstonesDirty = false;
       if (!_cache.meta.nextBarcode) _cache.meta.nextBarcode = 100000;
       if (!_cache.meta.nextInvoiceCounter) _cache.meta.nextInvoiceCounter = 0;
       _rebuildAll();

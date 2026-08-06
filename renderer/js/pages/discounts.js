@@ -40,3 +40,9 @@ function deleteDiscountItem(id) {
   DB.deleteDiscount(id);
   renderDiscounts();
 }
+
+// ===== LAN SYNC: live list refresh =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['discounts'] = function discountsSyncData() {
+  renderDiscounts();
+};

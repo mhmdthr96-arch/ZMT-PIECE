@@ -26,30 +26,50 @@ function sendToRenderer(payload) {
   }
 }
 
-function sendStatus() {
-  const w = getWin();
-  if (!w || w.isDestroyed()) return;
-  let payload;
+function getStatusPayload() {
   if (_role === 'main') {
-    payload = {
+    return {
       role: 'main',
       running: !!_server && _server.listening,
       clients: _sockets.size,
       port: _activePort || _port,
       localIps: getLocalIps(),
     };
-  } else if (_role === 'sub') {
-    payload = {
+  }
+  if (_role === 'sub') {
+    return {
       role: 'sub',
       running: false,
       connected: !!(_subSocket && !_subSocket.destroyed),
       ip: _ip,
       port: _port,
     };
-  } else {
-    payload = { role: '', running: false, connected: false };
   }
-  try { w.webContents.send('lan-status', payload); } catch (e) {}
+  return { role: '', running: false, connected: false };
+}
+
+function getStatus() {
+  return getStatusPayload();
+}
+
+function sendStatus() {
+  const w = getWin();
+  if (!w || w.isDestroyed()) return;
+  try { w.webContents.send('lan-status', getStatusPayload()); } catch (e) {}
+}
+
+// Periodic heartbeat: re-pushes status to the renderer so it never misses the
+// initial connect event (which previously left the sub's _connected flag false).
+let _heartbeatTimer = null;
+function startHeartbeat() {
+  if (_heartbeatTimer) return;
+  _heartbeatTimer = setInterval(() => {
+    if (_role) sendStatus();
+  }, 10000);
+}
+
+function stopHeartbeat() {
+  if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
 }
 
 function getLocalIps() {
@@ -79,6 +99,7 @@ function parseLines(buffer, onLine) {
 function stop() {
   _stopped = true;
   _activePort = 0;
+  stopHeartbeat();
   if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
   if (_server) { try { _server.close(); } catch (e) {} _server = null; }
   for (const s of _sockets.keys()) { try { s.destroy(); } catch (e) {} }
@@ -224,6 +245,7 @@ async function configure(cfg) {
   _ip = (cfg && cfg.ip) || '';
   _port = parseInt((cfg && cfg.port) || '4512', 10) || 4512;
   _role = role;
+  startHeartbeat();
   if (role === 'main') {
     return startServer();
   } else if (role === 'sub') {
@@ -287,6 +309,7 @@ module.exports = {
   setWindowGetter,
   configure,
   sendFromRenderer,
+  getStatus,
   getLocalIps,
   stop,
   testConnection,

@@ -232,3 +232,12 @@ function _ordFmt(ts) {
   if (!ts) return '';
   try { return new Date(ts).toLocaleString(); } catch (e) { return ''; }
 }
+
+// ===== LAN SYNC: live list refresh =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['orders'] = function ordersSyncData() {
+  _ordOrdersCache = (typeof DB !== 'undefined' && DB.getOrders) ? DB.getOrders() : [];
+  renderOrdersSuggestions();
+  renderOrdersList();
+  updateOrdersBadge();
+};

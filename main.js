@@ -345,6 +345,10 @@ ipcMain.handle('lan-get-local-ip', () => {
   return LAN.getLocalIps();
 });
 
+ipcMain.handle('lan-get-status', () => {
+  return LAN.getStatus();
+});
+
 ipcMain.handle('lan-test-connection', (event, ip, port) => {
   return LAN.testConnection(ip, port);
 });

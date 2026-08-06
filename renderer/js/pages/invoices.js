@@ -2147,3 +2147,12 @@ function getStoreInfo() {
     phone: localStorage.getItem('zmt_store_phone') || '',
   };
 }
+
+// ===== LAN SYNC: refresh invoice list without disturbing open entry forms =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['invoices'] = function invoicesSyncData() {
+  _invAllInvoices = DB.getInvoices().sort((a, b) => b.createdAt - a.createdAt);
+  _invCustomersCache = null;
+  _invSuppliersCache = null;
+  filterInvoices();
+};

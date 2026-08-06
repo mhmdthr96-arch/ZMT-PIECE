@@ -470,3 +470,11 @@ function _catProdModalHandler(e) {
 document.removeEventListener('click', _catProdModalHandler);
 document.addEventListener('click', _catProdModalHandler);
 if (window._pageListeners) window._pageListeners.push({ type: 'click', fn: _catProdModalHandler });
+
+// ===== LAN SYNC: re-render product list without closing open modals =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['category-products'] = function categoryProductsSyncData() {
+  renderProducts();
+  const input = document.getElementById('prodSearch');
+  if (input && input.value && typeof input.oninput === 'function') input.oninput();
+};

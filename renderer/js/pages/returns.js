@@ -109,3 +109,9 @@ function exportReturnsExcel() {
     XLSX.writeFile(wb, fileName);
   }
 }
+
+// ===== LAN SYNC: live list refresh =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['returns'] = function returnsSyncData() {
+  renderReturns();
+};
