@@ -41,8 +41,11 @@
   }
 
   // Build a gzip-compressed Blob from a JSON object (cloud uploads).
+  // Note: content-type on the Blob is never sent to Supabase Storage
+  // (uploads always pass an explicit contentType option); it exists only
+  // as metadata, so it is harmless to leave generic.
   function gzipBlob(obj) {
-    return new Blob([pako.gzip(JSON.stringify(obj))], { type: 'application/gzip' });
+    return new Blob([pako.gzip(JSON.stringify(obj))], { type: 'application/octet-stream' });
   }
 
   // Build a base64 string of gzip bytes for the write-file-binary IPC.
