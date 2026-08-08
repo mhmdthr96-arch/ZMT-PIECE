@@ -128,7 +128,7 @@ function init_backup() {
       data: allData,
     };
 
-    const json = JSON.stringify(backup, null, 2);
+    const base64 = window._zmtGzipToBase64(backup);
 
     const result = await window.electronAPI.saveFile({
       defaultPath: `${storeName}_${new Date().toLocaleDateString('ar-EG-u-nu-latn').replace(/\//g, '-')}.zmt-backup`,
@@ -140,7 +140,7 @@ function init_backup() {
       return;
     }
 
-    const writeResult = await window.electronAPI.writeFile(result.filePath, json);
+    const writeResult = await window.electronAPI.writeFileBinary(result.filePath, base64);
     if (writeResult.success) {
       setStatus(`${t('backup.createSuccess')} ${result.filePath}`, 'success');
       loadBackupList();
@@ -161,13 +161,13 @@ function init_backup() {
 
     try {
       setStatus(t('backup.readingFile'), 'info');
-      const readResult = await window.electronAPI.readFile(filePath);
+      const readResult = await window.electronAPI.readFileBuffer(filePath);
       if (!readResult.success) {
         setStatus(`${t('backup.readFileFailed')}${readResult.error}`, 'error');
         return;
       }
 
-      const backup = JSON.parse(readResult.data);
+      const backup = window._zmtParseBase64(readResult.data);
       if (!backup.data) {
         setStatus(t('backup.invalidFile'), 'error');
         return;
@@ -236,12 +236,12 @@ function init_backup() {
     try {
       const appDataPath = await window.electronAPI.getAppDataPath();
       const fullPath = `${appDataPath}\\${filename}`;
-      const readResult = await window.electronAPI.readFile(fullPath);
+      const readResult = await window.electronAPI.readFileBuffer(fullPath);
       if (!readResult.success) {
         setStatus(`${t('backup.readFileFailed')}${readResult.error}`, 'error');
         return;
       }
-      const backup = JSON.parse(readResult.data);
+      const backup = window._zmtParseBase64(readResult.data);
       if (!backup.data) {
         setStatus(t('backup.invalidFile2'), 'error');
         return;
