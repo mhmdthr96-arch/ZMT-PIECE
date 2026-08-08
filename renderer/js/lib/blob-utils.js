@@ -41,11 +41,12 @@
   }
 
   // Build a gzip-compressed Blob from a JSON object (cloud uploads).
-  // Note: content-type on the Blob is never sent to Supabase Storage
-  // (uploads always pass an explicit contentType option); it exists only
-  // as metadata, so it is harmless to leave generic.
+  // IMPORTANT: the client uploads Blobs via FormData, so the Blob's own type
+  // is what Supabase Storage validates against the bucket's allowed_mime_types
+  // (the upload contentType option is ignored for Blob bodies). 'application/gzip'
+  // is whitelisted on the zmt-backups bucket.
   function gzipBlob(obj) {
-    return new Blob([pako.gzip(JSON.stringify(obj))], { type: 'application/octet-stream' });
+    return new Blob([pako.gzip(JSON.stringify(obj))], { type: 'application/gzip' });
   }
 
   // Build a base64 string of gzip bytes for the write-file-binary IPC.
