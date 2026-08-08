@@ -3518,11 +3518,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.electronAPI.splashClose();
   }
 
-  // ===== PERIODIC TIME TAMPER CHECK =====
+  // ===== PERIODIC LICENSE CHECK =====
   setInterval(async () => {
     const tamper = await window.electronAPI.licenseTimeTamper();
     if (tamper.tampered) {
       showFreezeOverlay(tamper.message);
+      return;
+    }
+    const lic = await window.electronAPI.licenseCheck();
+    if (lic && lic.status === 'expired') {
+      _licenseState.expired = true;
+      _licenseState.valid = false;
+      showFreezeOverlay('انتهت مدة التفعيل — أدخل مفتاح جديد للاستمرار');
     }
   }, 5 * 60 * 1000);
 
