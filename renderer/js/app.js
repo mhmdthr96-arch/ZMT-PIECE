@@ -355,7 +355,7 @@ window.updateOrdersBadge = function() {
 };
 
 // ===== WEB PUSH NOTIFY (fire-and-forget) =====
-// Notifies the manager's phone (via the website's /api/push/trigger) the
+// Notifies the manager's phone (via the website's /api/push-trigger) the
 // moment an order or spoiled-goods return is created on the desktop. Settings
 // live in localStorage (zmt_push_site_url / zmt_push_secret) and are filled in
 // the Connection Settings page. Never blocks or throws.
@@ -380,7 +380,7 @@ window.notifyWebPush = function(type, payload) {
       createdAt: Date.now()
     }, payload || {});
 
-    fetch(siteUrl.replace(/\/+$/, '') + '/api/push/trigger', {
+    fetch(siteUrl.replace(/\/+$/, '') + '/api/push-trigger', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-zmt-secret': secret },
       body: JSON.stringify(body)
