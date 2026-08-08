@@ -354,6 +354,40 @@ window.updateOrdersBadge = function() {
   el.style.display = n > 0 ? '' : 'none';
 };
 
+// ===== WEB PUSH NOTIFY (fire-and-forget) =====
+// Notifies the manager's phone (via the website's /api/push/trigger) the
+// moment an order or spoiled-goods return is created on the desktop. Settings
+// live in localStorage (zmt_push_site_url / zmt_push_secret) and are filled in
+// the Connection Settings page. Never blocks or throws.
+window.notifyWebPush = function(type, payload) {
+  try {
+    const siteUrl = localStorage.getItem('zmt_push_site_url');
+    const secret = localStorage.getItem('zmt_push_secret');
+    if (!siteUrl || !secret) return;
+    if (!/^https?:\/\/.+/.test(siteUrl)) return;
+
+    const user = (typeof Auth !== 'undefined' && typeof Auth.getCurrentUser === 'function') ? Auth.getCurrentUser() : null;
+    const storeCode = (typeof Auth !== 'undefined' && Auth.getUserCode) ? (Auth.getUserCode() || '') : '';
+    const storeType = (typeof Auth !== 'undefined' && Auth.getStoreType) ? Auth.getStoreType() : 'main';
+    const parentCode = (typeof Auth !== 'undefined' && Auth.getParentCode) ? (Auth.getParentCode() || '') : '';
+    const storeName = (typeof Auth !== 'undefined' && Auth.getStoreName) ? (Auth.getStoreName() || '') : (user && (user.branchName || ''));
+
+    const body = Object.assign({
+      type: type,
+      parentCode: parentCode || storeCode,
+      storeCode: storeCode,
+      storeName: storeName || '',
+      createdAt: Date.now()
+    }, payload || {});
+
+    fetch(siteUrl.replace(/\/+$/, '') + '/api/push/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-zmt-secret': secret },
+      body: JSON.stringify(body)
+    }).catch(function() {});
+  } catch (e) { /* ignore */ }
+};
+
 // ===== CONTROLS =====
 document.getElementById('btnMinimize')?.addEventListener('click', () => api.minimize?.());
 document.getElementById('btnMaximize')?.addEventListener('click', () => api.maximize?.());
@@ -374,6 +408,7 @@ const LANG = {
       main: 'الرئيسية', manage: 'إدارة', finance: 'المالية', system: 'النظام',
       dashboard: 'لوحة التحكم', brands: 'العلامات التجارية', sales: 'البيع', invoices: 'الفواتير',
       inventory: 'المخزون', suppliers: 'الموردين', customers: 'العملاء', debts: 'الديون',
+      supplierReturns: 'السلع الفاسدة',
       netAccount: 'صافي الحساب', discounts: 'التخفيضات', returns: 'المرتجعات',
       reports: 'التقارير', backup: 'النسخ الاحتياطي', settings: 'الاعدادات',
       connection: 'اعدادات الاتصال',
@@ -489,6 +524,33 @@ const LANG = {
       exportSuccess: 'تم تصدير المرتجعات بنجاح',
       exportError: 'حدث خطأ أثناء الحفظ: ',
     },
+    supplierReturns: {
+      title: 'السلع الفاسدة', sub: 'إدارة إرجاع السلع الفاسدة للموردين',
+      export: 'تصدير', filterAll: 'الكل',
+      statusPending: 'جاري الاسترجاع', statusReturned: 'تم الاسترجاع', statusNotReturned: 'لم تسترجع',
+      colProduct: 'المنتج', colQty: 'الكمية', colAmount: 'القيمة',
+      colSupplier: 'المورد', colInvoice: 'الفاتورة', colDate: 'التاريخ',
+      colStatus: 'الحالة', colActions: 'إجراءات', colStore: 'المحل/الفرع',
+      empty: 'لا توجد طلبات إرجاع',
+      noProduct: 'المنتج غير موجود', noInvoice: 'لا توجد فاتورة شراء لهذا المنتج',
+      stock: 'المتوفر', supplier: 'المورد', qty: 'الكمية المرتجعة', invoice: 'فاتورة الدخول',
+      note: 'ملاحظة', notePlaceholder: 'اختياري...',
+      modalTitle: 'إرجاع سلعة للمورد',
+      notOwned: 'لا يمكن تعديل طلبات محل آخر',
+      invalidQty: 'أدخل كمية صحيحة', qtyExceedsStock: 'الكمية أكبر من المتوفر في المخزون',
+      qtyExceedsInvoice: 'الكمية أكبر مما ورد في هذه الفاتورة',
+      created: 'تم تسجيل طلب الإرجاع',
+      confirmReturned: 'تأكيد تم الاسترجاع؟\nسيتم خصم الكمية من المخزون وتخفيض فاتورة المورد والأثر على صافي الحساب.',
+      confirmNotReturned: 'تأكيد عدم استرجاع السلعة؟\nلن يحدث أي تغيير على المخزون أو الفاتورة.',
+      insufficientStock: 'المخزون الحالي لا يكفي للخصم', invoiceMissing: 'فاتورة الشراء غير موجودة',
+      lineMissing: 'المنتج لم يعد موجودًا في الفاتورة',
+      returnedSuccess: 'تم الاسترجاع: خُصمت الكمية من المخزون وخفّضت فاتورة المورد',
+      delete: 'حذف الطلب', deleteReverse: 'تراجع عن الاسترجاع',
+      deleteConfirm: 'حذف طلب الإرجاع؟', deleteReturnedConfirm: 'حذف الطلب؟\nسيتم التراجع عن كل التأثيرات (إعادة الكمية للمخزون ورفع الفاتورة).',
+      deleted: 'تم حذف الطلب',
+      refundNote: 'استرجاع بضاعة مورد',
+      noExport: 'لا توجد بيانات للتصدير', exportSuccess: 'تم التصدير بنجاح', exportError: 'حدث خطأ أثناء الحفظ: ',
+    },
     reports: {
       title: 'التقارير', sub: 'تقارير المبيعات والمخزون المتقدمة',
       c1: 'تقرير المبيعات', c1desc: 'تحليل المبيعات اليومية والأسبوعية والشهرية',
@@ -520,6 +582,14 @@ const LANG = {
       dailyDetail2: 'تفصيل المبيعات والمرتجعات اليومي', dateCol: 'التاريخ',
       salesInvoicesCol: 'فواتير البيع', piecesSoldCol: 'قطع مباعة', salesValueCol: 'قيمة المبيعات',
       returnsCol: 'مرتجعات', piecesReturnedCol: 'قطع مرتجعة', netDayCol: 'صافي اليوم',
+    },
+    reportsNet: {
+      title: 'صافي الحساب', period: 'الفترة:', year: 'السنة:', specificDate: 'تاريخ محدد',
+      range: 'نطاق', sales: 'إجمالي المبيعات', purchases: 'إجمالي المشتريات',
+      expenses: 'إجمالي المصروفات', profit: 'صافي الربح',
+      periodDebt: 'المبالغ المعلقة للفترة', currentDebt: 'المبالغ المعلقة الحالية',
+      customerDebt: 'دين لنا', supplierDebt: 'دين علينا',
+      periodMargin: 'هامش الربح للفترة', totalMargin: 'هامش الربح الكلي',
     },
     backup: {
       title: 'النسخ الاحتياطي', sub: 'إدارة النسخ الاحتياطية للبيانات',
@@ -947,6 +1017,7 @@ const LANG = {
       uploading: 'جاري الرفع...', noChanges: 'لا توجد تغييرات للرفع',
       uploadSuccess: 'تم الرفع بنجاح',
       uploadBackupBtn: 'رفع نسخة احتياطية',
+      lanSubUploadMsg: 'هذا الجهاز فرعي (LAN): رفع البيانات للسحابة يتم من السيرفر الرئيسي لهذا الموقع',
       enterStorePassword: 'أدخل كلمة مرور المحل للتحميل:',
       wrongPassword: 'كلمة المرور غير صحيحة',
       verificationError: 'خطأ في التحقق: ',
@@ -974,6 +1045,11 @@ const LANG = {
       branchesTab: 'الفروع', recoveryTab: 'استرداد الحساب',
       cloudStatusCard: 'حالة الاتصال السحابي', cloudStatusDesc: 'الاتصال بالسحابة تلقائي. جميع بياناتك محفوظة بأمان.',
       logoutBtn: 'تسجيل خروج', uploadCard: 'رفع نسخة احتياطية', uploadDesc: 'سيتم استبدال النسخة الموجودة في السحابة...',
+      pushTitle: 'إشعارات الجوال', pushDesc: 'عند إنشاء طلب منتج أو استرجاع سلعة فاسدة، يُرسل إشعار فوري لهاتفك حتى عندما يكون الموقع مغلقًا.',
+      siteUrlLabel: 'رابط الموقع', siteUrlPlaceholder: 'https://...',
+      pushSecretLabel: 'المفتاح السري', pushSecretPlaceholder: 'المفتاح السري الخاص بك',
+      pushSaveBtn: 'حفظ', pushUrlRequired: 'أدخل رابط الموقع', pushUrlInvalid: 'رابط الموقع غير صالح',
+      pushSecretRequired: 'أدخل المفتاح السري', pushSaved: 'تم حفظ الإعدادات',
       autoBackup: 'النسخ الاحتياطي التلقائي', backupInterval: 'الفترة (بالدقائق)',
       min1: '1 دقيقة', min2: '2 دقيقة', min5: '5 دقائق', min10: '10 دقائق', min30: '30 دقيقة',
       uploadBtn: 'رفع نسخة احتياطية', restoreBtn: 'استرداد نسخة احتياطية',
@@ -1017,6 +1093,7 @@ const LANG = {
       main: 'Main', manage: 'Management', finance: 'Finance', system: 'System',
       dashboard: 'Dashboard', brands: 'Brands', sales: 'Sales', invoices: 'Invoices',
       inventory: 'Inventory', suppliers: 'Suppliers', customers: 'Customers', debts: 'Debts',
+      supplierReturns: 'Spoiled Goods',
       netAccount: 'Net Account', discounts: 'Discounts', returns: 'Returns',
       reports: 'Reports', backup: 'Backup', settings: 'Settings',
       connection: 'Connection Settings',
@@ -1132,6 +1209,33 @@ const LANG = {
       exportSuccess: 'Returns exported successfully',
       exportError: 'Error saving: ',
     },
+    supplierReturns: {
+      title: 'Spoiled Goods', sub: 'Manage returned spoiled goods to suppliers',
+      export: 'Export', filterAll: 'All',
+      statusPending: 'Being Returned', statusReturned: 'Returned', statusNotReturned: 'Not Returned',
+      colProduct: 'Product', colQty: 'Qty', colAmount: 'Amount',
+      colSupplier: 'Supplier', colInvoice: 'Invoice', colDate: 'Date',
+      colStatus: 'Status', colActions: 'Actions', colStore: 'Store / Branch',
+      empty: 'No return requests',
+      noProduct: 'Product not found', noInvoice: 'No purchase invoice for this product',
+      stock: 'In stock', supplier: 'Supplier', qty: 'Return qty', invoice: 'Entry invoice',
+      note: 'Note', notePlaceholder: 'Optional...',
+      modalTitle: 'Return Goods to Supplier',
+      notOwned: 'You cannot modify another store\'s requests',
+      invalidQty: 'Enter a valid quantity', qtyExceedsStock: 'Quantity exceeds current stock',
+      qtyExceedsInvoice: 'Quantity exceeds the amount on this invoice',
+      created: 'Return request created',
+      confirmReturned: 'Confirm returned?\nQuantity will be deducted from stock, the supplier invoice reduced and net account affected.',
+      confirmNotReturned: 'Confirm not returned?\nNo change will be made to stock or invoice.',
+      insufficientStock: 'Current stock is not enough to deduct', invoiceMissing: 'Purchase invoice not found',
+      lineMissing: 'Product no longer exists on the invoice',
+      returnedSuccess: 'Returned: deducted from stock and reduced the supplier invoice',
+      delete: 'Delete request', deleteReverse: 'Undo return',
+      deleteConfirm: 'Delete return request?', deleteReturnedConfirm: 'Delete request?\nAll effects will be reversed (stock restored and invoice raised).',
+      deleted: 'Request deleted',
+      refundNote: 'Supplier goods return',
+      noExport: 'Nothing to export', exportSuccess: 'Exported successfully', exportError: 'Error saving: ',
+    },
     reports: {
       title: 'Reports', sub: 'Advanced Sales & Inventory Reports',
       c1: 'Sales Report', c1desc: 'Daily, weekly and monthly sales analysis',
@@ -1163,6 +1267,14 @@ const LANG = {
       dailyDetail2: 'Daily Sales & Returns Detail', dateCol: 'Date',
       salesInvoicesCol: 'Sales Invoices', piecesSoldCol: 'Pieces Sold', salesValueCol: 'Sales Value',
       returnsCol: 'Returns', piecesReturnedCol: 'Pieces Returned', netDayCol: 'Net Day',
+    },
+    reportsNet: {
+      title: 'Net Account', period: 'Period:', year: 'Year:', specificDate: 'Specific Date',
+      range: 'Range', sales: 'Total Sales', purchases: 'Total Purchases',
+      expenses: 'Total Expenses', profit: 'Net Profit',
+      periodDebt: 'Pending (Period)', currentDebt: 'Pending (Current)',
+      customerDebt: 'Owed to us', supplierDebt: 'We owe',
+      periodMargin: 'Period Profit Margin', totalMargin: 'Total Profit Margin',
     },
     backup: {
       title: 'Backup', sub: 'Manage Data Backups',
@@ -1585,6 +1697,7 @@ const LANG = {
       uploading: 'Uploading...', noChanges: 'No changes to upload',
       uploadSuccess: 'Upload successful',
       uploadBackupBtn: 'Upload backup',
+      lanSubUploadMsg: 'This device is a LAN sub server: uploading to the cloud is done from this location\'s main server',
       enterStorePassword: 'Enter store password to download:',
       wrongPassword: 'Wrong password',
       verificationError: 'Verification error: ',
@@ -1612,6 +1725,11 @@ const LANG = {
       branchesTab: 'Branches', recoveryTab: 'Account Recovery',
       cloudStatusCard: 'Cloud Connection Status', cloudStatusDesc: 'Cloud connection is automatic. All your data is safely stored.',
       logoutBtn: 'Logout', uploadCard: 'Upload Backup', uploadDesc: 'The existing backup in the cloud will be replaced...',
+      pushTitle: 'Mobile Notifications', pushDesc: 'When a product order or spoiled-goods return is created, an instant notification is sent to your phone even while the website is closed.',
+      siteUrlLabel: 'Website URL', siteUrlPlaceholder: 'https://...',
+      pushSecretLabel: 'Secret Key', pushSecretPlaceholder: 'Your secret key',
+      pushSaveBtn: 'Save', pushUrlRequired: 'Please enter the website URL', pushUrlInvalid: 'The website URL is not valid',
+      pushSecretRequired: 'Please enter the secret key', pushSaved: 'Settings saved',
       autoBackup: 'Auto Backup', backupInterval: 'Interval (minutes)',
       min1: '1 min', min2: '2 min', min5: '5 min', min10: '10 min', min30: '30 min',
       uploadBtn: 'Upload Backup', restoreBtn: 'Restore Backup',
@@ -1655,6 +1773,7 @@ const LANG = {
       main: 'Principal', manage: 'Gestion', finance: 'Finances', system: 'Système',
       dashboard: 'Tableau de Bord', brands: 'Marques', sales: 'Ventes', invoices: 'Factures',
       inventory: 'Stock', suppliers: 'Fournisseurs', customers: 'Clients', debts: 'Dettes',
+      supplierReturns: 'Marchandises Abîmées',
       netAccount: 'Compte Net', discounts: 'Remises', returns: 'Retours',
       reports: 'Rapports', backup: 'Sauvegarde', settings: 'Paramètres',
       connection: 'Paramètres de Connexion',
@@ -1770,6 +1889,33 @@ const LANG = {
       exportSuccess: 'Retours exportés avec succès',
       exportError: 'Erreur lors de la sauvegarde: ',
     },
+    supplierReturns: {
+      title: 'Marchandises Abîmées', sub: 'Gérer les retours de marchandises abîmées aux fournisseurs',
+      export: 'Exporter', filterAll: 'Tous',
+      statusPending: 'En cours de retour', statusReturned: 'Retourné', statusNotReturned: 'Non retourné',
+      colProduct: 'Produit', colQty: 'Qté', colAmount: 'Montant',
+      colSupplier: 'Fournisseur', colInvoice: 'Facture', colDate: 'Date',
+      colStatus: 'Statut', colActions: 'Actions', colStore: 'Magasin / Succursale',
+      empty: 'Aucune demande de retour',
+      noProduct: 'Produit introuvable', noInvoice: 'Aucune facture d\'achat pour ce produit',
+      stock: 'En stock', supplier: 'Fournisseur', qty: 'Qté retournée', invoice: 'Facture d\'entrée',
+      note: 'Note', notePlaceholder: 'Facultatif...',
+      modalTitle: 'Retourner la Marchandise au Fournisseur',
+      notOwned: 'Vous ne pouvez pas modifier les demandes d\'un autre magasin',
+      invalidQty: 'Saisissez une quantité valide', qtyExceedsStock: 'La quantité dépasse le stock actuel',
+      qtyExceedsInvoice: 'La quantité dépasse celle de cette facture',
+      created: 'Demande de retour enregistrée',
+      confirmReturned: 'Confirmer le retour ?\nLa quantité sera déduite du stock, la facture du fournisseur réduite et le compte net affecté.',
+      confirmNotReturned: 'Confirmer non retourné ?\nAucun changement sur le stock ni la facture.',
+      insufficientStock: 'Le stock actuel est insuffisant', invoiceMissing: 'Facture d\'achat introuvable',
+      lineMissing: 'Le produit n\'existe plus sur la facture',
+      returnedSuccess: 'Retourné : déduit du stock et facture du fournisseur réduite',
+      delete: 'Supprimer la demande', deleteReverse: 'Annuler le retour',
+      deleteConfirm: 'Supprimer la demande de retour ?', deleteReturnedConfirm: 'Supprimer la demande ?\nTous les effets seront annulés (stock restauré et facture augmentée).',
+      deleted: 'Demande supprimée',
+      refundNote: 'Retour de marchandise fournisseur',
+      noExport: 'Rien à exporter', exportSuccess: 'Exporté avec succès', exportError: 'Erreur de sauvegarde : ',
+    },
     reports: {
       title: 'Rapports', sub: 'Rapports Avancés de Ventes et Stock',
       c1: 'Rapport des Ventes', c1desc: 'Analyse quotidienne, hebdomadaire et mensuelle',
@@ -1801,6 +1947,14 @@ const LANG = {
       dailyDetail2: 'Détail Quotidien Ventes & Retours', dateCol: 'Date',
       salesInvoicesCol: 'Factures de Vente', piecesSoldCol: 'Pièces Vendues', salesValueCol: 'Valeur des Ventes',
       returnsCol: 'Retours', piecesReturnedCol: 'Pièces Retournées', netDayCol: 'Net du Jour',
+    },
+    reportsNet: {
+      title: 'Compte Net', period: 'Période :', year: 'Année :', specificDate: 'Date Précise',
+      range: 'Plage', sales: 'Total des Ventes', purchases: 'Total des Achats',
+      expenses: 'Total des Dépenses', profit: 'Bénéfice Net',
+      periodDebt: 'En attente (Période)', currentDebt: 'En attente (Actuel)',
+      customerDebt: 'Dû à nous', supplierDebt: 'Nous devons',
+      periodMargin: 'Marge de la Période', totalMargin: 'Marge Totale',
     },
     backup: {
       title: 'Sauvegarde', sub: 'Gérer les Sauvegardes',
@@ -2223,6 +2377,7 @@ const LANG = {
       uploading: 'Téléchargement...', noChanges: 'Aucun changement à télécharger',
       uploadSuccess: 'Téléchargement réussi',
       uploadBackupBtn: 'Télécharger la sauvegarde',
+      lanSubUploadMsg: 'Cet appareil est un serveur LAN sub : l\'envoi vers le cloud se fait depuis le serveur principal de cet emplacement',
       enterStorePassword: 'Entrez le mot de passe du magasin:',
       wrongPassword: 'Mot de passe incorrect',
       verificationError: 'Erreur de vérification: ',
@@ -2250,6 +2405,11 @@ const LANG = {
       branchesTab: 'Succursales', recoveryTab: 'Récupération de Compte',
       cloudStatusCard: 'État de la Connexion Cloud', cloudStatusDesc: 'La connexion cloud est automatique. Toutes vos données sont stockées en sécurité.',
       logoutBtn: 'Déconnexion', uploadCard: 'Télécharger Sauvegarde', uploadDesc: 'La sauvegarde existante dans le cloud sera remplacée...',
+      pushTitle: 'Notifications Mobiles', pushDesc: 'Lorsqu\'une commande de produit ou un retour de marchandise avariée est créé, une notification instantanée est envoyée à votre téléphone même lorsque le site est fermé.',
+      siteUrlLabel: 'URL du site', siteUrlPlaceholder: 'https://...',
+      pushSecretLabel: 'Clé secrète', pushSecretPlaceholder: 'Votre clé secrète',
+      pushSaveBtn: 'Enregistrer', pushUrlRequired: 'Veuillez saisir l\'URL du site', pushUrlInvalid: 'L\'URL du site est invalide',
+      pushSecretRequired: 'Veuillez saisir la clé secrète', pushSaved: 'Paramètres enregistrés',
       autoBackup: 'Sauvegarde Auto', backupInterval: 'Intervalle (minutes)',
       min1: '1 min', min2: '2 min', min5: '5 min', min10: '10 min', min30: '30 min',
       uploadBtn: 'Télécharger Sauvegarde', restoreBtn: 'Restaurer la Sauvegarde',
@@ -2293,6 +2453,7 @@ const LANG = {
       main: '主页', manage: '管理', finance: '财务', system: '系统',
       dashboard: '控制面板', brands: '品牌', sales: '销售', invoices: '发票',
       inventory: '库存', suppliers: '供应商', customers: '客户', debts: '债务',
+      supplierReturns: '损坏商品',
       netAccount: '净账户', discounts: '折扣', returns: '退货',
       reports: '报告', backup: '备份', settings: '设置',
       connection: '连接设置',
@@ -2408,6 +2569,33 @@ const LANG = {
       exportSuccess: '退货导出成功',
       exportError: '保存时出错: ',
     },
+    supplierReturns: {
+      title: '损坏商品', sub: '管理退回给供应商的损坏商品',
+      export: '导出', filterAll: '全部',
+      statusPending: '退回中', statusReturned: '已退回', statusNotReturned: '未退回',
+      colProduct: '商品', colQty: '数量', colAmount: '金额',
+      colSupplier: '供应商', colInvoice: '发票', colDate: '日期',
+      colStatus: '状态', colActions: '操作', colStore: '店铺/分店',
+      empty: '暂无退回申请',
+      noProduct: '商品不存在', noInvoice: '该商品没有采购发票',
+      stock: '库存', supplier: '供应商', qty: '退回数量', invoice: '入库发票',
+      note: '备注', notePlaceholder: '可选...',
+      modalTitle: '将商品退回给供应商',
+      notOwned: '无法修改其他店铺的申请',
+      invalidQty: '请输入有效数量', qtyExceedsStock: '数量超过当前库存',
+      qtyExceedsInvoice: '数量超过该发票上的数量',
+      created: '退回申请已登记',
+      confirmReturned: '确认已退回？\n将从库存中扣减数量、减少供应商发票并影响净账户。',
+      confirmNotReturned: '确认未退回？\n库存和发票均不会发生变化。',
+      insufficientStock: '当前库存不足', invoiceMissing: '未找到采购发票',
+      lineMissing: '商品已不在该发票中',
+      returnedSuccess: '已退回：从库存扣减并减少了供应商发票',
+      delete: '删除申请', deleteReverse: '撤销退回',
+      deleteConfirm: '删除退回申请？', deleteReturnedConfirm: '删除申请？\n所有影响将被撤销（恢复库存并增加发票）。',
+      deleted: '申请已删除',
+      refundNote: '供应商商品退回',
+      noExport: '没有可导出的数据', exportSuccess: '导出成功', exportError: '保存时出错: ',
+    },
     reports: {
       title: '报告', sub: '高级销售和库存报告',
       c1: '销售报告', c1desc: '每日、每周和每月销售分析',
@@ -2439,6 +2627,14 @@ const LANG = {
       dailyDetail2: '每日销售与退货明细', dateCol: '日期',
       salesInvoicesCol: '销售发票', piecesSoldCol: '已售件数', salesValueCol: '销售价值',
       returnsCol: '退货', piecesReturnedCol: '退回件数', netDayCol: '当日净额',
+    },
+    reportsNet: {
+      title: '净账户', period: '期间：', year: '年份：', specificDate: '指定日期',
+      range: '范围', sales: '总销售额', purchases: '总采购额',
+      expenses: '总支出', profit: '净利润',
+      periodDebt: '待定（期间）', currentDebt: '待定（当前）',
+      customerDebt: '欠我们的', supplierDebt: '我们欠的',
+      periodMargin: '期间利润', totalMargin: '总利润',
     },
     backup: {
       title: '备份', sub: '管理数据备份',
@@ -2861,6 +3057,7 @@ const LANG = {
       uploading: '正在上传...', noChanges: '没有更改需要上传',
       uploadSuccess: '上传成功',
       uploadBackupBtn: '上传备份',
+      lanSubUploadMsg: '此设备为 LAN 从服务器：数据上传由该站点的主服务器完成',
       enterStorePassword: '输入商店密码以下载:',
       wrongPassword: '密码错误',
       verificationError: '验证错误: ',
@@ -2888,6 +3085,11 @@ const LANG = {
       branchesTab: '分店', recoveryTab: '账户恢复',
       cloudStatusCard: '云连接状态', cloudStatusDesc: '云连接是自动的。所有数据安全存储。',
       logoutBtn: '退出登录', uploadCard: '上传备份', uploadDesc: '云端现有备份将被替换...',
+      pushTitle: '手机通知', pushDesc: '创建产品订单或变质商品退货时，即使网站已关闭，也会立即向您的手机发送通知。',
+      siteUrlLabel: '网站链接', siteUrlPlaceholder: 'https://...',
+      pushSecretLabel: '密钥', pushSecretPlaceholder: '您的密钥',
+      pushSaveBtn: '保存', pushUrlRequired: '请输入网站链接', pushUrlInvalid: '网站链接无效',
+      pushSecretRequired: '请输入密钥', pushSaved: '设置已保存',
       autoBackup: '自动备份', backupInterval: '间隔（分钟）',
       min1: '1分钟', min2: '2分钟', min5: '5分钟', min10: '10分钟', min30: '30分钟',
       uploadBtn: '上传备份', restoreBtn: '恢复备份',

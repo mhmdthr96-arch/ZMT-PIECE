@@ -1,0 +1,55 @@
+<div class="page" id="page-supplier-returns">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-box-open"></i> <span data-i18n="supplierReturns.title">السلع الفاسدة</span></h1>
+      <p><span data-i18n="supplierReturns.sub">إدارة إرجاع السلع الفاسدة للموردين</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-body" style="padding:16px 20px">
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+          <div style="position:relative;flex:1;min-width:220px">
+            <i class="fas fa-search" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--silver-400);font-size:13px"></i>
+            <input type="text" id="srSearch" class="form-input" placeholder="..." style="width:100%;padding-left:34px" oninput="renderSupplierReturns()">
+          </div>
+          <select id="srStatusFilter" class="form-input" style="width:170px" onchange="renderSupplierReturns()">
+            <option value="all" data-i18n="supplierReturns.filterAll">الكل</option>
+            <option value="pending" data-i18n="supplierReturns.statusPending">جاري الاسترجاع</option>
+            <option value="returned" data-i18n="supplierReturns.statusReturned">تم الاسترجاع</option>
+            <option value="not_returned" data-i18n="supplierReturns.statusNotReturned">لم تسترجع</option>
+          </select>
+          <button class="btn" onclick="exportSupplierReturns()"><i class="fas fa-file-export"></i> <span data-i18n="supplierReturns.export">تصدير</span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th><span data-i18n="supplierReturns.colStore">المحل/الفرع</span></th>
+            <th><span data-i18n="supplierReturns.colProduct">المنتج</span></th>
+            <th><span data-i18n="supplierReturns.colQty">الكمية</span></th>
+            <th><span data-i18n="supplierReturns.colAmount">القيمة</span></th>
+            <th><span data-i18n="supplierReturns.colSupplier">المورد</span></th>
+            <th><span data-i18n="supplierReturns.colInvoice">الفاتورة</span></th>
+            <th><span data-i18n="supplierReturns.colDate">التاريخ</span></th>
+            <th><span data-i18n="supplierReturns.colStatus">الحالة</span></th>
+            <th><span data-i18n="supplierReturns.colActions">إجراءات</span></th>
+          </tr>
+        </thead>
+        <tbody id="srBody">
+          <tr><td colspan="10" class="empty-row"><i class="fas fa-box-open"></i> <span data-i18n="supplierReturns.empty">لا توجد طلبات إرجاع</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<style>
+  .form-input { padding:6px 10px;border:1px solid var(--silver-300);border-radius:6px;font-size:13px; }
+  .form-input:focus { outline:none;border-color:var(--bmw-blue-1);box-shadow:0 0 0 2px rgba(0,102,177,0.15); }
+</style>

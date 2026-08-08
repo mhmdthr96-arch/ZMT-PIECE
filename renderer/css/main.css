@@ -477,6 +477,8 @@ html[data-theme="dark"] .brand-card .brand-fav.active { color:#f7b500; backgroun
 .btn-success:hover { background:#34ce57; }
 .btn-danger { background:#dc3545; color:white; }
 .btn-danger:hover { background:#e4606d; }
+.btn-return { background:#f59e0b; color:white; }
+.btn-return:hover { background:#ffb52e; box-shadow:0 2px 8px rgba(245,158,11,0.3); }
 
 /* ===== TABLES ===== */
 .table-container { overflow-x:auto; }
@@ -2849,6 +2851,8 @@ html[data-theme="dark"] textarea {
 /* Buttons */
 html[data-theme="dark"] .btn { background: var(--silver-300); color: var(--silver-800); }
 html[data-theme="dark"] .btn:hover { background: var(--silver-400); }
+html[data-theme="dark"] .btn-return { background: #b45309; color: white; }
+html[data-theme="dark"] .btn-return:hover { background: #d97706; }
 
 /* Modal */
 html[data-theme="dark"] .modal { background: var(--silver-100); }

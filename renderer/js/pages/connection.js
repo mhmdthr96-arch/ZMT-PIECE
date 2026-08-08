@@ -8,6 +8,7 @@ function init_connection() {
   connLoadUserInfo();
   connLoadBranches();
   connUpdateLastSync();
+  connLoadPushSettings();
 
   const autoSync = localStorage.getItem('zmt_cloud_autosync') === '1';
   document.getElementById('connAutoSync').checked = autoSync;
@@ -129,6 +130,8 @@ async function connUploadBackup() {
     if (uploadResult.skipped) {
       if (uploadResult.reason === 'no_data') {
         result.innerHTML = `<span class="text-warning">${t('backup.noDataToBackup') || 'لا توجد بيانات للرفع'}</span>`;
+      } else if (uploadResult.reason === 'lan_sub') {
+        result.innerHTML = `<span class="text-warning"><i class="fas fa-info-circle"></i> ${t('connection.lanSubUploadMsg') || 'هذا الجهاز فرعي (LAN): رفع البيانات للسحابة يتم من السيرفر الرئيسي لهذا الموقع'}</span>`;
       } else {
         result.innerHTML = `<span class="text-success">${t('connection.alreadySynced') || 'البيانات محدثة في السحابة'}</span>`;
       }
@@ -215,6 +218,42 @@ async function connDownloadBackup() {
   btn.innerHTML = `<i class="fas fa-cloud-download-alt"></i> ${t('connection.restoreBackupBtn')}`;
 }
 
+// ===== PUSH NOTIFICATIONS =====
+function connLoadPushSettings() {
+  const urlEl = document.getElementById('connPushSiteUrl');
+  const secretEl = document.getElementById('connPushSecret');
+  if (!urlEl || !secretEl) return;
+  urlEl.value = localStorage.getItem('zmt_push_site_url') || '';
+  secretEl.value = localStorage.getItem('zmt_push_secret') || '';
+}
+
+function connSavePushSettings() {
+  const urlEl = document.getElementById('connPushSiteUrl');
+  const secretEl = document.getElementById('connPushSecret');
+  const result = document.getElementById('connPushResult');
+  if (!urlEl || !secretEl || !result) return;
+
+  const url = (urlEl.value || '').trim().replace(/\/+$/, '');
+  const secret = (secretEl.value || '').trim();
+
+  if (!url) {
+    result.innerHTML = `<span class="text-danger">${t('connection.pushUrlRequired')}</span>`;
+    return;
+  }
+  if (!/^https?:\/\/.+/.test(url)) {
+    result.innerHTML = `<span class="text-danger">${t('connection.pushUrlInvalid')}</span>`;
+    return;
+  }
+  if (!secret) {
+    result.innerHTML = `<span class="text-danger">${t('connection.pushSecretRequired')}</span>`;
+    return;
+  }
+
+  localStorage.setItem('zmt_push_site_url', url);
+  localStorage.setItem('zmt_push_secret', secret);
+  result.innerHTML = `<span class="text-success">${t('connection.pushSaved')}</span>`;
+}
+
 // ===== AUTO SYNC =====
 function connToggleAutoSync() {
   const enabled = document.getElementById('connAutoSync').checked;
@@ -228,6 +267,9 @@ function connToggleAutoSync() {
       localStorage.setItem('zmt_cloud_autosync', '0');
       document.getElementById('connAutoSyncSettings').style.display = 'none';
       return;
+    }
+    if (typeof CloudService.isLanSubDevice === 'function' && CloudService.isLanSubDevice()) {
+      alert(t('connection.lanSubUploadMsg') || 'هذا الجهاز فرعي (LAN): رفع البيانات للسحابة يتم من السيرفر الرئيسي لهذا الموقع');
     }
     const interval = parseInt(document.getElementById('connSyncInterval').value);
     localStorage.setItem('zmt_cloud_autosync_interval', interval);

@@ -77,6 +77,9 @@ function addOrdersProduct(barcode, qtyRaw) {
   _ordOrdersCache = DB.getOrders();
   renderOrdersList();
   updateOrdersBadge();
+  if (typeof window.notifyWebPush === 'function') {
+    window.notifyWebPush('order', { productName: p.name, qty: qty, unitPrice: p.sellPrice || 0 });
+  }
 }
 
 // ===== MY ORDERS =====

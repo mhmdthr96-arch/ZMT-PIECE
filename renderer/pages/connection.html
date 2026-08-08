@@ -76,6 +76,30 @@
           </div>
         </div>
       </div>
+
+      <!-- Push Notifications -->
+      <div class="conn-card">
+        <div class="conn-card-header">
+          <i class="fas fa-bell"></i> <span data-i18n="connection.pushTitle">إشعارات الجوال</span>
+        </div>
+        <div class="conn-card-body">
+          <p class="conn-info-text" data-i18n="connection.pushDesc">عند إنشاء طلب منتج أو استرجاع سلعة فاسدة، يُرسل إشعار فوري لهاتفك حتى عندما يكون الموقع مغلقًا. أدخل رابط الموقع والمفتاح السري الخاص بك.</p>
+          <div class="form-group">
+            <label data-i18n="connection.siteUrlLabel">رابط الموقع</label>
+            <input type="text" class="form-input" id="connPushSiteUrl" dir="ltr" placeholder="https://..." data-i18n-placeholder="connection.siteUrlPlaceholder">
+          </div>
+          <div class="form-group">
+            <label data-i18n="connection.pushSecretLabel">المفتاح السري</label>
+            <input type="password" class="form-input" id="connPushSecret" dir="ltr" placeholder="••••••••" data-i18n-placeholder="connection.pushSecretPlaceholder">
+          </div>
+          <div class="conn-actions">
+            <button class="btn btn-primary" onclick="connSavePushSettings()">
+              <i class="fas fa-save"></i> <span data-i18n="connection.pushSaveBtn">حفظ</span>
+            </button>
+          </div>
+          <div class="conn-sync-result" id="connPushResult"></div>
+        </div>
+      </div>
     </div>
 
     <!-- TAB: SYNC -->
