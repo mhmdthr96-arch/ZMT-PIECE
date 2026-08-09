@@ -34,6 +34,22 @@ const CloudService = (() => {
     }
   }
 
+  // Supabase serves objects with `Cache-Control: public, max-age=3600` by
+  // default, and Chromium's HTTP cache honors it for up to an hour. That made
+  // the desktop poll a stale command/backup file and miss website changes
+  // (e.g. an order deleted on the website kept showing in the program). This
+  // helper bypasses the HTTP cache with a unique cache-busting query string so
+  // every poll/merge reads the live object.
+  async function _downloadFresh(path) {
+    const url = SUPABASE_URL + '/storage/v1/object/' + BUCKET + '/' + path + '?ts=' + Date.now();
+    const resp = await fetch(url, {
+      cache: 'no-store',
+      headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY },
+    });
+    if (!resp.ok) throw new Error('storage download failed: ' + resp.status + ' ' + path);
+    return await resp.blob();
+  }
+
   function getStoreCode() {
     if (typeof Auth !== 'undefined' && Auth.isLoggedIn()) {
       return Auth.getUserCode() || '';
@@ -288,6 +304,7 @@ const CloudService = (() => {
     const { error } = await supabase.storage.from(BUCKET).upload(path, blob, {
       contentType: 'application/gzip',
       upsert: true,
+      cacheControl: 'no-cache',
     });
 
     if (error) throw error;
@@ -309,8 +326,7 @@ const CloudService = (() => {
 
     let file;
     try {
-      const { data, error } = await supabase.storage.from(BUCKET).download(getCommandsPath());
-      if (error || !data) return 0;
+      const data = await _downloadFresh(getCommandsPath());
       file = JSON.parse(await data.text());
     } catch (e) {
       return 0;
@@ -415,11 +431,9 @@ const CloudService = (() => {
     try {
       let existing = [];
       try {
-        const { data, error } = await supabase.storage.from(BUCKET).download(getDesktopCommandsPath());
-        if (!error && data) {
-          const parsed = JSON.parse(await data.text());
-          if (Array.isArray(parsed)) existing = parsed;
-        }
+        const data = await _downloadFresh(getDesktopCommandsPath());
+        const parsed = JSON.parse(await data.text());
+        if (Array.isArray(parsed)) existing = parsed;
       } catch (e) { /* first push: no file yet */ }
 
       const merged = existing.concat(pending);
@@ -428,6 +442,7 @@ const CloudService = (() => {
       const { error } = await supabase.storage.from(BUCKET).upload(getDesktopCommandsPath(), blob, {
         contentType: 'application/json',
         upsert: true,
+        cacheControl: 'no-cache',
       });
       if (error) throw error;
     } catch (e) {
@@ -455,10 +470,10 @@ const CloudService = (() => {
     }
 
     for (const path of paths) {
-      const { data, error } = await supabase.storage.from(BUCKET).download(path);
-      if (!error && data) {
+      try {
+        const data = await _downloadFresh(path);
         return await window._zmtParseBlob(data);
-      }
+      } catch (e) { /* try the next path */ }
     }
 
     throw new Error('لم يتم العثور على نسخة احتياطية لهذا الرمز');
