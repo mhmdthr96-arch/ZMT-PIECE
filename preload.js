@@ -30,7 +30,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   licenseTimeTamper: () => ipcRenderer.invoke('license-time-tamper'),
   licenseRemaining: () => ipcRenderer.invoke('license-remaining'),
   licenseMachineId: () => ipcRenderer.invoke('license-machine-id'),
-  licenseSaveSnapshot: (time) => ipcRenderer.invoke('license-save-snapshot', time),
   // LAN Sync (main/sub server)
   lanConfigure: (config) => ipcRenderer.invoke('lan-configure', config),
   lanSend: (payload) => ipcRenderer.invoke('lan-send', payload),

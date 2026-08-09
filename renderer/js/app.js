@@ -3533,10 +3533,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }, 5 * 60 * 1000);
 
-  // Save time snapshot on window close
-  window.addEventListener('beforeunload', () => {
-    window.electronAPI.licenseSaveSnapshot(Date.now());
-  });
 });
 
 // ===== BOOT =====

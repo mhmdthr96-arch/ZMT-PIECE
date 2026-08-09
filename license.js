@@ -6,6 +6,21 @@ const LICENSE_FILE = 'zmt_license.dat';
 const TIME_FILE = 'zmt_time.dat';
 const DEVICE_FILE = 'zmt_device.dat';
 
+// ===== TIME-TAMPER PROTECTION (local-only) =====
+// A monotonic watermark W = the highest epoch time this machine has ever
+// reached. W can only move forward and is HMAC-signed (with the machineId) so
+// editing or deleting the saved state cannot reset the anchor. It is stored in
+// TWO places: zmt_time.dat and a redundant copy inside the signed license file.
+// Expiry is computed from max(now, W), so rolling the clock back — even while
+// offline — cannot resurrect an expired license, and jumping forward expires
+// it immediately (expiresAt is absolute). Small backward corrections within
+// BACK_TOLERANCE_MS are tolerated (NTP/DST: epoch ms are unaffected by timezone).
+const BACK_TOLERANCE_MS = 5 * 60 * 1000;
+// Absolute floor for activation: a device clock before the build's era means a
+// back-dated clock (or a broken CMOS). Refuse activation instead of minting a
+// license from a fake past date.
+const BUILD_TS = Date.parse('2026-01-01T00:00:00Z');
+
 let _userDataPath = null;
 let _memoryDeviceId = null;
 
@@ -66,6 +81,8 @@ function _deobf(hex) {
 const _KSRC = '007e93de4e7b7684b2416803f5b541090084d32d0e6c8cb2470565f5';
 // License-file signature secret (v2 — obfuscated, distinct from key secret)
 const _SSRC = '007e93de4e7b7684b241090280cf2a0e6695b2410c0198b32e6805';
+// Time-watermark signing secret (v2.1 — obfuscated, distinct from the two above)
+const _WMSRC = '205eb3af693b47a2f3733b41acaf68681db3e4732a54b2e06c3e1df2b2276f0af0b0296300';
 
 function _hmac(key, machineId) {
   const secret = _deobf(_KSRC);
@@ -133,6 +150,18 @@ function activate(key) {
   if (!result.valid) return { success: false, message: 'مفتاح التفعيل غير صالح' };
 
   const now = Date.now();
+  if (now < BUILD_TS - 5 * 60 * 1000) {
+    return {
+      success: false,
+      message: 'ساعة الجهاز أقدم من تاريخ إصدار البرنامج — صحّح التاريخ والوقت ثم أعد المحاولة',
+    };
+  }
+
+  // Preserve the watermark: re-activating (new key) must NOT reset the anchor,
+  // otherwise rolling the clock back and re-entering a key would cheat expiry.
+  const prevWm = _loadWatermark();
+  const w = Math.max(prevWm.maxTime, now);
+
   const licenseData = {
     keyHash: result.hash,
     machineId: getMachineFingerprint(),
@@ -140,14 +169,16 @@ function activate(key) {
     expiresAt: now + (result.days * 24 * 60 * 60 * 1000),
     type: result.type,
     label: result.label,
+    w,
   };
   licenseData.sig = _licenseSig(licenseData);
+  licenseData.wsig = _wmSig(w, licenseData.machineId);
 
   if (!saveLicense(licenseData)) {
     return { success: false, message: 'خطأ في حفظ بيانات التفعيل' };
   }
 
-  saveTimeSnapshot(now);
+  saveTimeSnapshot(w);
   return { success: true, message: 'تم التفعيل بنجاح — ' + result.label, license: licenseData };
 }
 
@@ -165,11 +196,13 @@ function checkLicense() {
   }
 
   const now = Date.now();
-  if (now > license.expiresAt) {
+  const effectiveNow = Math.max(now, _loadWatermark().maxTime);
+
+  if (effectiveNow > license.expiresAt) {
     return { status: 'expired', valid: false, license, message: 'انتهت مدة التفعيل' };
   }
 
-  const remainingMs = license.expiresAt - now;
+  const remainingMs = license.expiresAt - effectiveNow;
   const remainingDays = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
 
   return {
@@ -184,48 +217,138 @@ function checkLicense() {
   };
 }
 
-function saveTimeSnapshot(now) {
-  try {
-    fs.writeFileSync(getTimePath(), JSON.stringify({ lastTime: now }), 'utf-8');
-  } catch (e) {}
+// ===== TIME-WATERMARK STORAGE =====
+// zmt_time.dat shape: { maxTime, machineId, sig } where sig = HMAC(maxTime).
+// Legacy files written by older builds ({ lastTime }) are migrated on first read.
+
+function _wmSig(maxTime, machineId) {
+  const secret = _deobf(_WMSRC);
+  const data = String(maxTime) + '::' + (machineId || '');
+  return crypto.createHmac('sha256', secret).update(data).digest('hex');
+}
+
+function _verifyWmSig(maxTime, sig, machineId) {
+  if (typeof maxTime !== 'number' || typeof sig !== 'string') return false;
+  return sig === _wmSig(maxTime, machineId);
 }
 
 function loadTimeSnapshot() {
   try {
     const p = getTimePath();
     if (!fs.existsSync(p)) return null;
-    return JSON.parse(fs.readFileSync(p, 'utf-8'));
+    const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    if (parsed && typeof parsed.maxTime === 'number') {
+      return { maxTime: parsed.maxTime, machineId: parsed.machineId || '', sig: parsed.sig || '' };
+    }
+    if (parsed && typeof parsed.lastTime === 'number') {
+      return { legacy: true, maxTime: parsed.lastTime };
+    }
+    return null;
   } catch (e) { return null; }
 }
 
-function checkTimeTamper() {
-  const snapshot = loadTimeSnapshot();
-  if (!snapshot) return { tampered: false };
+function saveTimeSnapshot(now) {
+  // Only ever advances the watermark; a smaller value is ignored. This is the
+  // single write path, so nothing outside the main process can lower the anchor.
+  const snap = loadTimeSnapshot();
+  const prev = snap ? snap.maxTime : 0;
+  _writeTimeFile(Math.max(prev, now));
+}
 
-  const now = Date.now();
-  const lastTime = snapshot.lastTime;
+function _writeTimeFile(maxTime) {
+  const machineId = getMachineFingerprint();
+  const entry = { maxTime, machineId, sig: _wmSig(maxTime, machineId) };
+  try {
+    fs.writeFileSync(getTimePath(), JSON.stringify(entry), 'utf-8');
+  } catch (e) {}
+  _embedWatermarkInLicense(maxTime);
+}
 
-  if (now < lastTime - 60000) {
-    return {
-      tampered: true,
-      reason: 'clock_back',
-      message: 'تم اكتشاف تلاعب بالوقت — يبدو أن ساعة الجهاز تم تعديلها للوراء',
-    };
+// Redundant signed copy of W inside the license file. The license's existing
+// `sig` payload (machineId|activatedAt|expiresAt|type|keyHash) is unchanged, so
+// older licenses stay valid; `w`/`wsig` are optional extra fields.
+function _embedWatermarkInLicense(maxTime) {
+  try {
+    const license = loadLicense();
+    if (!license) return;
+    const machineId = getMachineFingerprint();
+    const updated = { ...license, w: maxTime, wsig: _wmSig(maxTime, machineId) };
+    if (updated.sig === _licenseSig(updated)) {
+      fs.writeFileSync(getLicensePath(), JSON.stringify(updated), 'utf-8');
+    }
+  } catch (e) {}
+}
+
+// Effective watermark = max(time-file, license copy). A file that exists but has
+// an invalid signature (for the current machine) signals tampering. A machineId
+// mismatch only happens after the device file is regenerated (fresh re-activation)
+// and is ignored rather than deadlocking the flow.
+function _loadWatermark() {
+  const machineId = getMachineFingerprint();
+  let w = 0;
+  let valid = true;
+
+  const snap = loadTimeSnapshot();
+  if (snap) {
+    if (snap.legacy) {
+      w = Math.max(w, snap.maxTime);
+    } else if (snap.machineId === machineId) {
+      if (_verifyWmSig(snap.maxTime, snap.sig, machineId)) {
+        w = Math.max(w, snap.maxTime);
+      } else {
+        valid = false;
+      }
+    }
   }
 
   const license = loadLicense();
-  if (license && license.expiresAt && now > license.expiresAt) {
-    return { tampered: false };
+  if (license && typeof license.w === 'number' && license.machineId === machineId) {
+    if (_verifyWmSig(license.w, license.wsig, machineId)) {
+      w = Math.max(w, license.w);
+    } else if (license.sig && license.sig === _licenseSig(license)) {
+      // License itself is legitimate but its embedded watermark was altered.
+      valid = false;
+    }
   }
 
-  saveTimeSnapshot(now);
-  return { tampered: false };
+  return { maxTime: w, valid };
+}
+
+function checkTimeTamper() {
+  const now = Date.now();
+  const wm = _loadWatermark();
+
+  if (!wm.valid) {
+    return {
+      tampered: true,
+      reason: 'time_file_tampered',
+      message: 'تم اكتشاف تعديل في بيانات الوقت المحفوظة — أعد ضبط ساعة الجهاز للوقت الصحيح ثم أعد تشغيل البرنامج',
+    };
+  }
+
+  if (now < wm.maxTime - BACK_TOLERANCE_MS) {
+    return {
+      tampered: true,
+      reason: 'clock_back',
+      message: 'تم اكتشاف تلاعب بالوقت — يبدو أن ساعة الجهاز تم تعديلها للوراء. أعد ضبطها للوقت الحالي الصحيح ثم أعد تشغيل البرنامج',
+    };
+  }
+
+  // Advance the watermark ALWAYS (even when expired) so the forward-then-back
+  // toggle cannot resurrect a license. Forward jumps expire the license at once
+  // because expiresAt is absolute, so there is no reason to restrict them here.
+  if (now > wm.maxTime) {
+    _writeTimeFile(now);
+  }
+
+  return { tampered: false, watermark: wm.maxTime, now };
 }
 
 function getRemainingTime() {
   const license = loadLicense();
   if (!license) return null;
-  const remaining = license.expiresAt - Date.now();
+  const effectiveNow = Math.max(Date.now(), _loadWatermark().maxTime);
+  const remaining = license.expiresAt - effectiveNow;
   if (remaining <= 0) return { expired: true, days: 0, hours: 0, minutes: 0 };
   return {
     expired: false,

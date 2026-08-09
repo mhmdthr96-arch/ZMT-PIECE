@@ -55,8 +55,6 @@ async function checkAndEnforceLicense() {
     _licenseState.showWatermark = result.showWatermark;
     _licenseState.urgent = result.urgent;
 
-    window.electronAPI.licenseSaveSnapshot(Date.now());
-
     if (result.showWatermark) {
       startWatermarkCountdown(result);
     }
@@ -205,8 +203,6 @@ async function doFreezeActivate() {
         startWatermarkCountdown({ remainingDays });
       }
     }
-
-    window.electronAPI.licenseSaveSnapshot(Date.now());
 
     if (typeof bootApp === 'function') {
       bootApp();

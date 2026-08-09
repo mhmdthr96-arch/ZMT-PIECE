@@ -335,11 +335,6 @@ ipcMain.handle('license-machine-id', () => {
   return License.getMachineFingerprint();
 });
 
-ipcMain.handle('license-save-snapshot', (event, time) => {
-  License.saveTimeSnapshot(time || Date.now());
-  return true;
-});
-
 // ===== LAN SYNC (main/sub server) =====
 LAN.setWindowGetter(() => mainWindow);
 
