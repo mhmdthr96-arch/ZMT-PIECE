@@ -108,6 +108,9 @@ function connLogout() {
   if (!confirm(t('connection.logoutConfirm'))) return;
   Auth.signOut();
   CloudService.stopAutoSync();
+  if (typeof CloudService.stopCommandPolling === 'function') {
+    CloudService.stopCommandPolling();
+  }
   showLogin();
 }
 

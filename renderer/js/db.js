@@ -1,7 +1,7 @@
 const DB = (() => {
   const DB_NAME = 'zmt_piece_db';
-  const DB_VERSION = 2;
-  const STORES = ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'meta'];
+  const DB_VERSION = 3;
+  const STORES = ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'meta', 'supplierReturns'];
   let db = null;
   let _ready = false;
 
@@ -206,6 +206,13 @@ const DB = (() => {
     return localStorage.getItem('zmt_store_code') || '';
   }
 
+  // Normalize a timestamp (number ms or ISO string) to ms; 0 if invalid.
+  function _normTs(v) {
+    if (v === undefined || v === null || v === '') return 0;
+    const n = typeof v === 'number' ? v : Date.parse(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+
   // ===== IndexedDB Layer =====
   function openDB() {
     return new Promise((resolve, reject) => {
@@ -364,7 +371,7 @@ const DB = (() => {
       };
       const dateStr = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
       const filePath = `${appPath}\\auto_${dateStr}.zmt-backup`;
-      await window.electronAPI.writeFile(filePath, JSON.stringify(backup));
+      await window.electronAPI.writeFileBinary(filePath, window._zmtGzipToBase64(backup));
       try {
         const dirResult = await window.electronAPI.readDirectory(appPath);
         if (dirResult.success) {
@@ -395,9 +402,9 @@ const DB = (() => {
       const autoFiles = dirResult.files.filter(f => f.startsWith('auto_') && f.endsWith('.zmt-backup')).sort();
       if (!autoFiles.length) return { restored: false, reason: 'no-backup' };
       const newest = autoFiles[autoFiles.length - 1];
-      const readResult = await window.electronAPI.readFile(appPath + '\\' + newest);
+      const readResult = await window.electronAPI.readFileBuffer(appPath + '\\' + newest);
       if (!readResult.success) return { restored: false, reason: 'read-fail' };
-      const backup = JSON.parse(readResult.data);
+      const backup = window._zmtParseBase64(readResult.data);
       const data = backup && backup.data ? backup.data : backup;
       if (data._meta && !data.meta) data.meta = data._meta;
       await importAll(data);
@@ -477,6 +484,15 @@ const DB = (() => {
   function _triggerCloudSync() {
     if (typeof CloudService !== 'undefined' && CloudService.isCloudConnected() && CloudService.hasData() && localStorage.getItem('zmt_cloud_autosync') === '1') {
       CloudService.triggerSync();
+    }
+  }
+
+  // Push a local change (order / supplier return) to the website immediately via
+  // the delta channel. NOT gated by autosync: the website should see desktop
+  // changes within seconds even when full-backup auto-upload is off.
+  function _pushLocalChange(kind, op, record) {
+    if (typeof CloudService !== 'undefined' && typeof CloudService.pushLocalChange === 'function') {
+      try { CloudService.pushLocalChange(kind, op, record); } catch (e) { console.warn('[DB] pushLocalChange:', e); }
     }
   }
 
@@ -680,7 +696,7 @@ const DB = (() => {
 
     addPayment(pmt) {
       pmt.id = _genId();
-      pmt.createdAt = Date.now();
+      pmt.createdAt = pmt.createdAt || Date.now();
       _cache.payments.push(pmt);
       _rebuildIndex('payments');
       _queueWrite('payments', pmt);
@@ -861,6 +877,44 @@ const DB = (() => {
       for (const id of toDelete) _queueDelete('returns', id);
     },
 
+    // ===== SUPPLIER RETURNS (spoiled goods) =====
+    getSupplierReturns() { return _cache.supplierReturns; },
+
+    saveSupplierReturns(list) {
+      _cache.supplierReturns = list;
+      _idbClear('supplierReturns').then(() => _idbPut('supplierReturns', list));
+      _triggerCloudSync();
+      _emitStoreReplace('supplierReturns', list);
+    },
+
+    addSupplierReturn(r) {
+      r.id = _genId();
+      r.createdAt = Date.now();
+      _cache.supplierReturns.push(r);
+      _queueWrite('supplierReturns', r);
+      _pushLocalChange('supplierReturn', 'create', r);
+      return r;
+    },
+
+    updateSupplierReturn(id, changes) {
+      const r = _cache.supplierReturns.find(x => x.id === id);
+      if (!r) return null;
+      changes.updatedAt = Date.now();
+      Object.assign(r, changes);
+      _queueWrite('supplierReturns', r);
+      _pushLocalChange('supplierReturn', 'update', r);
+      return r;
+    },
+
+    deleteSupplierReturn(id) {
+      const idx = _cache.supplierReturns.findIndex(r => r.id === id);
+      if (idx === -1) return false;
+      _cache.supplierReturns.splice(idx, 1);
+      _queueDelete('supplierReturns', id);
+      _pushLocalChange('supplierReturn', 'delete', { id });
+      return true;
+    },
+
     // ===== ORDERS =====
     getOrders() {
       const sid = _getStoreId();
@@ -878,6 +932,7 @@ const DB = (() => {
       _cache.orders.push(o);
       _rebuildIndex('orders');
       _queueWrite('orders', o);
+      _pushLocalChange('order', 'create', o);
       return o;
     },
 
@@ -887,6 +942,7 @@ const DB = (() => {
       changes.updatedAt = Date.now();
       Object.assign(o, changes);
       _queueWrite('orders', o);
+      _pushLocalChange('order', 'update', o);
       return o;
     },
 
@@ -896,7 +952,88 @@ const DB = (() => {
       _cache.orders.splice(idx, 1);
       _rebuildIndex('orders');
       _queueDelete('orders', id);
+      _pushLocalChange('order', 'delete', { id });
       return true;
+    },
+
+    // Merge orders that were created/changed on the website into the local DB.
+    // Inserts by id; updates a record only when the remote one is newer (updatedAt).
+    // Never imports orders belonging to another store.
+    mergeOrders(remoteOrders) {
+      if (!Array.isArray(remoteOrders) || remoteOrders.length === 0) return 0;
+      const sid = _getStoreId();
+      let changed = 0;
+      for (const r of remoteOrders) {
+        if (!r || typeof r.id !== 'string' || !r.id) continue;
+        if (sid && r.storeId && r.storeId !== sid) continue;
+        const local = _idx.orders[r.id];
+        if (!local) {
+          const copy = Object.assign({}, r);
+          if (sid && !copy.storeId) copy.storeId = sid;
+          _cache.orders.push(copy);
+          _queueWrite('orders', copy);
+          changed++;
+          continue;
+        }
+        const rTs = _normTs(r.updatedAt || r.createdAt);
+        const lTs = _normTs(local.updatedAt || local.createdAt);
+        if (rTs > lTs) {
+          Object.assign(local, r);
+          _queueWrite('orders', local);
+          changed++;
+        }
+      }
+      if (changed) _rebuildIndex('orders');
+      return changed;
+    },
+
+    // Apply a command issued by the website (create/update/delete) to the local
+    // DB. Idempotent: re-applying an already-applied command is a no-op, so the
+    // desktop can safely re-scan the whole commands file on every poll.
+    applyOrderCommand(op, cmd) {
+      if (!cmd || typeof cmd.op !== 'string') return false;
+      const orderId = cmd.orderId || (cmd.order && cmd.order.id);
+      if (!orderId) return false;
+      const sid = _getStoreId();
+      if (sid && cmd.storeCode && cmd.storeCode !== sid) return false;
+
+      if (op === 'create' || op === 'update') {
+        const order = cmd.order;
+        if (!order || typeof order.id !== 'string') return false;
+        if (sid && order.storeId && order.storeId !== sid) return false;
+        const local = _idx.orders[order.id];
+        if (!local) {
+          const copy = Object.assign({}, order);
+          if (sid && !copy.storeId) copy.storeId = sid;
+          _cache.orders.push(copy);
+          _rebuildIndex('orders');
+          _queueWrite('orders', copy);
+          return true;
+        }
+        const rTs = _normTs(order.updatedAt || order.createdAt);
+        const lTs = _normTs(local.updatedAt || local.createdAt);
+        if (rTs > lTs) {
+          Object.assign(local, order);
+          _queueWrite('orders', local);
+          return true;
+        }
+        return false;
+      }
+
+      if (op === 'delete') {
+        const local = _idx.orders[orderId];
+        if (!local) return false;
+        const idx = _cache.orders.findIndex(o => o.id === orderId);
+        if (idx !== -1) {
+          _cache.orders.splice(idx, 1);
+          _rebuildIndex('orders');
+          _queueDelete('orders', orderId);
+          return true;
+        }
+        return false;
+      }
+
+      return false;
     },
 
     getLowStockProducts(threshold) {
@@ -1221,6 +1358,7 @@ const DB = (() => {
         returns: _cache.returns.slice(),
         transfers: _cache.transfers.slice(),
         orders: _cache.orders.slice(),
+        supplierReturns: _cache.supplierReturns.slice(),
         meta: { ..._cache.meta },
       };
     },
@@ -1246,10 +1384,12 @@ const DB = (() => {
       if (data.discounts) mapped.discounts = data.discounts;
       if (data.returns) mapped.returns = data.returns;
       if (data.transfers) mapped.transfers = data.transfers;
+      if (data.supplierReturns) mapped.supplierReturns = data.supplierReturns;
       if (data.zmt_customers) mapped.customers = data.zmt_customers;
       if (data.zmt_suppliers) mapped.suppliers = data.zmt_suppliers;
       if (data.zmt_payments) mapped.payments = data.zmt_payments;
       if (data.zmt_returns) mapped.returns = data.zmt_returns;
+      if (data.zmt_supplierReturns) mapped.supplierReturns = data.zmt_supplierReturns;
       if (data.zmt_transfers) mapped.transfers = data.zmt_transfers;
       if (data.zmt_discounts) mapped.discounts = data.zmt_discounts;
       if (data.zmt_orders) mapped.orders = data.zmt_orders;
@@ -1263,6 +1403,7 @@ const DB = (() => {
       if (mapped.returns) _cache.returns = mapped.returns;
       if (mapped.transfers) _cache.transfers = mapped.transfers;
       if (mapped.orders) _cache.orders = mapped.orders;
+      if (mapped.supplierReturns) _cache.supplierReturns = mapped.supplierReturns;
       if (mapped.meta) Object.assign(_cache.meta, mapped.meta);
       if (_cache.meta.lanTombstones && typeof _cache.meta.lanTombstones === 'object') {
         _tombstones = _cache.meta.lanTombstones;
@@ -1301,6 +1442,7 @@ const DB = (() => {
         suppliers: _cache.suppliers.length,
         payments: _cache.payments.length,
         returns: _cache.returns.length,
+        supplierReturns: _cache.supplierReturns.length,
         discounts: _cache.discounts.length,
         orders: _cache.orders.length,
       };

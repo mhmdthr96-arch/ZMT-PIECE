@@ -3650,6 +3650,12 @@ async function bootApp() {
     LANSync.start();
   }
 
+  // Initialize cloud command polling (website → desktop orders) on every boot
+  // when connected, independent of the full-backup auto-sync setting.
+  if (typeof CloudService !== 'undefined' && CloudService.isCloudConnected()) {
+    CloudService.startCommandPolling();
+  }
+
   // Initialize cloud auto-sync if enabled
   if (typeof CloudService !== 'undefined' && localStorage.getItem('zmt_cloud_autosync') === '1' && CloudService.isCloudConnected()) {
     CloudService.startAutoSync(CloudService.getAutoSyncInterval());
