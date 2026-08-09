@@ -952,6 +952,7 @@ const DB = (() => {
       _cache.orders.splice(idx, 1);
       _rebuildIndex('orders');
       _queueDelete('orders', id);
+      _recordTombstone('orders', id, Date.now());
       _pushLocalChange('order', 'delete', { id });
       return true;
     },
@@ -966,6 +967,11 @@ const DB = (() => {
       for (const r of remoteOrders) {
         if (!r || typeof r.id !== 'string' || !r.id) continue;
         if (sid && r.storeId && r.storeId !== sid) continue;
+        // Never merge back an order the local user deleted (same tombstone guard
+        // as applyOrderCommand) — otherwise the cloud backup still holding the
+        // stale copy would resurrect it on every full sync.
+        const tts = (_tombstones.orders && _tombstones.orders[r.id]) || 0;
+        if (tts && _normTs(r.updatedAt || r.createdAt) <= tts) continue;
         const local = _idx.orders[r.id];
         if (!local) {
           const copy = Object.assign({}, r);
@@ -1001,6 +1007,10 @@ const DB = (() => {
         const order = cmd.order;
         if (!order || typeof order.id !== 'string') return false;
         if (sid && order.storeId && order.storeId !== sid) return false;
+        // A desktop-side delete is final: never resurrect an order the local
+        // user deleted after the website created/updated it.
+        const tts = (_tombstones.orders && _tombstones.orders[order.id]) || 0;
+        if (tts && _normTs(order.updatedAt || order.createdAt) <= tts) return false;
         const local = _idx.orders[order.id];
         if (!local) {
           const copy = Object.assign({}, order);
@@ -1021,6 +1031,9 @@ const DB = (() => {
       }
 
       if (op === 'delete') {
+        // Record a tombstone so a stale create/update still sitting in the
+        // website's command file cannot resurrect this order on a later poll.
+        _recordTombstone('orders', orderId, Date.now());
         const local = _idx.orders[orderId];
         if (!local) return false;
         const idx = _cache.orders.findIndex(o => o.id === orderId);

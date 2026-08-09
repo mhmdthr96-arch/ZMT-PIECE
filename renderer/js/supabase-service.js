@@ -317,13 +317,29 @@ const CloudService = (() => {
     }
 
     if (!Array.isArray(file) || !file.length) return 0;
+
+    // Watermark: commands carry a monotonic ts from the website. Skipping every
+    // command already seen on an earlier poll keeps the append-only command file
+    // from being re-applied forever, which used to resurrect orders the desktop
+    // user had deleted. Stored locally, so the desktop never races the website's
+    // append while clearing the file.
+    const watermarkKey = 'zmt_applied_commands_ts_' + code;
+    let watermark = 0;
+    try { watermark = parseInt(localStorage.getItem(watermarkKey) || '0', 10) || 0; } catch (e) { watermark = 0; }
+
     let applied = 0;
+    let maxTs = watermark;
     for (const cmd of file) {
       if (!cmd || typeof cmd.op !== 'string') continue;
+      if (typeof cmd.ts === 'number' && cmd.ts <= watermark) continue;
+      if (typeof cmd.ts === 'number' && cmd.ts > maxTs) maxTs = cmd.ts;
       if (typeof DB.applyOrderCommand === 'function' && DB.applyOrderCommand(cmd.op, cmd)) {
         applied++;
       }
     }
+    try {
+      if (maxTs > watermark) localStorage.setItem(watermarkKey, String(maxTs));
+    } catch (e) {}
     return applied;
   }
 
