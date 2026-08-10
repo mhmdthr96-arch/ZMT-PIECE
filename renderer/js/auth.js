@@ -485,8 +485,7 @@ const Auth = (() => {
       if (error) throw new Error('لم يتم العثور على نسخة احتياطية');
       if (!data) throw new Error('النسخة فارغة');
 
-      const text = await data.text();
-      const backup = JSON.parse(text);
+      const backup = await window._zmtParseBlob(data);
       if (!backup.data) throw new Error('النسخة فارغة');
 
       const { data: users } = await supabase.from('app_users')
@@ -506,8 +505,7 @@ const Auth = (() => {
       const { data, error } = await supabase.storage.from('zmt-backups').download(backupPath);
       if (error) throw new Error('لم يتم العثور على نسخة احتياطية');
 
-      const text = await data.text();
-      const backup = JSON.parse(text);
+      const backup = await window._zmtParseBlob(data);
       if (!backup.data) throw new Error('النسخة فارغة');
 
       return { backup, storeType: 'branch', parentCode: mainCode, name: branch.name, users: null, storePassword: '' };
@@ -526,6 +524,7 @@ const Auth = (() => {
     'suppliers': { view: true, edit: true, del: true },
     'brands': { view: true, edit: true, del: true },
     'inventory': { view: true, edit: true, del: true },
+    'supplier-returns': { view: true, edit: true, del: true },
     'debts': { view: true, edit: true, del: true },
     'returns': { view: true, edit: true, del: false },
     'discounts': { view: true, edit: true, del: true },
@@ -548,6 +547,7 @@ const Auth = (() => {
     'suppliers': 'الموردين',
     'brands': 'العلامات التجارية',
     'inventory': 'المخزون',
+    'supplier-returns': 'السلع الفاسدة',
     'debts': 'الديون',
     'returns': 'المرتجعات',
     'discounts': 'التخفيضات',
@@ -583,6 +583,126 @@ const Auth = (() => {
     localStorage.setItem(key, JSON.stringify(users));
   }
 
+  function _loadUsersByCode(code) {
+    if (!code) return [];
+    try {
+      return JSON.parse(localStorage.getItem('zmt_users_' + code) || '[]');
+    } catch {
+      return [];
+    }
+  }
+
+  function _getUsersRev(code) {
+    try {
+      return parseInt(localStorage.getItem('zmt_users_rev_' + code) || '0', 10) || 0;
+    } catch { return 0; }
+  }
+
+  function _setUsersRev(code, rev) {
+    localStorage.setItem('zmt_users_rev_' + code, String(rev));
+  }
+
+  function _bumpUsersRev(code) {
+    const rev = _getUsersRev(code) + 1;
+    _setUsersRev(code, rev);
+    return rev;
+  }
+
+  // ===== USERS SYNC (LAN peers) =====
+  // Collect every store's user list + revision, so LAN peers can exchange them
+  // exactly like DB data and employees can log in from either device.
+  function getAllUsersByCode() {
+    const out = {};
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith('zmt_users_')) continue;
+        const code = key.slice('zmt_users_'.length);
+        if (!code || code.indexOf('_') !== -1) continue;
+        let meta = {};
+        try {
+          meta = JSON.parse(localStorage.getItem('zmt_users_meta_' + code) || '{}');
+        } catch {}
+        out[code] = {
+          list: _loadUsersByCode(code),
+          rev: _getUsersRev(code),
+          meta,
+        };
+      }
+    } catch (e) {
+      console.warn('[Auth] getAllUsersByCode error:', e.message);
+    }
+    return out;
+  }
+
+  // Union-merge two user lists by username, keeping the newest updatedAt entry.
+  function _mergeUserLists(localList, incomingList) {
+    const byName = new Map();
+    for (const u of localList || []) byName.set(u.username, u);
+    for (const u of incomingList || []) {
+      const cur = byName.get(u.username);
+      if (!cur) { byName.set(u.username, u); continue; }
+      const a = (u.updatedAt || 0) - (cur.updatedAt || 0);
+      if (a > 0) byName.set(u.username, u);
+    }
+    return Array.from(byName.values());
+  }
+
+  function _mergeUserMeta(localMeta, incomingMeta) {
+    if (incomingMeta && typeof incomingMeta === 'object') {
+      const merged = Object.assign({}, incomingMeta, localMeta || {});
+      return merged;
+    }
+    return localMeta || incomingMeta || {};
+  }
+
+  function _sameUsersList(a, b) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  // Apply a users payload received from a LAN peer.
+  // Higher revision replaces the whole list (deletes propagate). Equal revision
+  // (simultaneous edits) union-merges by username so no employee is lost.
+  function applyUsersPayload(payload) {
+    if (!payload || typeof payload !== 'object') return 0;
+    let applied = 0;
+    try {
+      for (const code of Object.keys(payload)) {
+        const entry = payload[code];
+        if (!entry || !Array.isArray(entry.list)) continue;
+        const incomingRev = parseInt(entry.rev || '0', 10) || 0;
+        const localRev = _getUsersRev(code);
+        if (incomingRev > localRev) {
+          localStorage.setItem('zmt_users_' + code, JSON.stringify(entry.list));
+          if (entry.meta && typeof entry.meta === 'object' && Object.keys(entry.meta).length) {
+            localStorage.setItem('zmt_users_meta_' + code, JSON.stringify(entry.meta));
+          }
+          _setUsersRev(code, incomingRev);
+          applied++;
+        } else if (incomingRev === localRev && localRev > 0) {
+          const merged = _mergeUserLists(_loadUsersByCode(code), entry.list);
+          if (!_sameUsersList(merged, _loadUsersByCode(code))) {
+            localStorage.setItem('zmt_users_' + code, JSON.stringify(merged));
+            const mergedMeta = _mergeUserMeta(
+              JSON.parse(localStorage.getItem('zmt_users_meta_' + code) || '{}'),
+              entry.meta
+            );
+            localStorage.setItem('zmt_users_meta_' + code, JSON.stringify(mergedMeta));
+            applied++;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Auth] applyUsersPayload error:', e.message);
+    }
+    if (applied > 0) {
+      try {
+        window.dispatchEvent(new CustomEvent('zmt-users-synced', { detail: applied }));
+      } catch (e) {}
+    }
+    return applied;
+  }
+
   function createUser(username, password, permissions) {
     const code = getUserCode();
     if (!code) throw new Error('الرجاء تسجيل الدخول أولاً');
@@ -598,11 +718,13 @@ const Auth = (() => {
       password,
       permissions: permissions || JSON.parse(JSON.stringify(DEFAULT_PAGES)),
       createdAt: Date.now(),
+      updatedAt: Date.now(),
       storeCode: code,
     };
 
     users.push(newUser);
     _saveLocalUsers(users);
+    _bumpUsersRev(code);
 
     // Also save store metadata with users for login lookup
     const metaKey = 'zmt_users_meta_' + code;
@@ -619,16 +741,20 @@ const Auth = (() => {
     const idx = users.findIndex(u => u.id === userId);
     if (idx === -1) throw new Error('المستخدم غير موجود');
 
-    Object.assign(users[idx], updates);
+    Object.assign(users[idx], updates, { updatedAt: Date.now() });
     _saveLocalUsers(users);
+    _bumpUsersRev(users[idx].storeCode || getUserCode());
     return true;
   }
 
   function deleteUser(userId) {
     const users = _loadLocalUsers();
+    const idx = users.findIndex(u => u.id === userId);
+    if (idx === -1) throw new Error('المستخدم غير موجود');
+    const storeCode = users[idx].storeCode || getUserCode();
     const filtered = users.filter(u => u.id !== userId);
-    if (filtered.length === users.length) throw new Error('المستخدم غير موجود');
     _saveLocalUsers(filtered);
+    _bumpUsersRev(storeCode);
     return true;
   }
 
@@ -866,6 +992,8 @@ const Auth = (() => {
     deleteUser,
     listUsers,
     loginAsUser,
+    getAllUsersByCode,
+    applyUsersPayload,
     getPermissions,
     canView,
     canEdit,

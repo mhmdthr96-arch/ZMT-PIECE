@@ -315,6 +315,7 @@ async function settingsSaveUser() {
     document.getElementById('settingsNewUserPass').value = '';
     _settingsEditingUser = null;
     settingsLoadUsers();
+    if (typeof LANSync !== 'undefined' && LANSync.sendUsers) LANSync.sendUsers();
   } catch (e) {
     result.innerHTML = `<span style="color:#dc3545;">${t('settings.errorPrefix')} ${e.message}</span>`;
   }
@@ -370,6 +371,7 @@ async function settingsDeleteUser(userId, username) {
   try {
     await Auth.deleteUser(userId);
     settingsLoadUsers();
+    if (typeof LANSync !== 'undefined' && LANSync.sendUsers) LANSync.sendUsers();
   } catch (e) {
     alert(t('settings.errorPrefix') + ' ' + e.message);
   }
@@ -517,5 +519,11 @@ if (typeof window.addEventListener === 'function') {
     settingsUpdateLanStatus();
   });
 }
+
+// Reload the users list when the other LAN device adds/edits/deletes a user.
+window.addEventListener('zmt-users-synced', () => {
+  const list = document.getElementById('settingsUsersList');
+  if (list && typeof settingsLoadUsers === 'function') settingsLoadUsers();
+});
 
 

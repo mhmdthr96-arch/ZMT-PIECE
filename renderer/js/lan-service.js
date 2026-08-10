@@ -11,7 +11,7 @@ const LANSync = (() => {
   let _reconcileTimer = null;
   let _hookRegistered = false;
 
-  const _SAFE_REFRESH_PAGES = ['dashboard', 'inventory', 'products', 'invoices', 'categories', 'customers', 'suppliers', 'reports', 'net-account', 'branches-monitor', 'shared-inventory', 'debts', 'customer-detail', 'supplier-detail'];
+  const _SAFE_REFRESH_PAGES = ['dashboard', 'inventory', 'products', 'invoices', 'categories', 'customers', 'suppliers', 'reports', 'net-account', 'branches-monitor', 'shared-inventory', 'debts', 'customer-detail', 'supplier-detail', 'orders'];
 
   function getStoreId() {
     if (typeof Auth !== 'undefined' && Auth.isLoggedIn()) return Auth.getUserCode() || '';
@@ -95,6 +95,9 @@ const LANSync = (() => {
     for (const key of ['products', 'invoices']) {
       if (data[key]) data[key] = filterForStore(data[key], key);
     }
+    if (typeof Auth !== 'undefined' && Auth.getAllUsersByCode) {
+      data.users = Auth.getAllUsersByCode();
+    }
     return data;
   }
 
@@ -123,6 +126,17 @@ const LANSync = (() => {
     }).filter(op => (op.put && op.put.length) || (op.del && op.del.length));
     if (!filtered.length) return;
     window.electronAPI.lanSend({ type: 'ops', storeId: getStoreId(), ops: filtered, ts: Date.now() });
+  }
+
+  // Push the full per-store user lists so an employee created/edited/deleted on
+  // either LAN peer can log in from the other one immediately.
+  function sendUsers() {
+    if (!window.electronAPI?.lanSend) return;
+    if (!_role) return;
+    if (typeof Auth === 'undefined' || !Auth.getAllUsersByCode) return;
+    const users = Auth.getAllUsersByCode();
+    if (!Object.keys(users).length) return;
+    window.electronAPI.lanSend({ type: 'users', storeId: getStoreId(), users, ts: Date.now() });
   }
 
   // ===== LOCAL CHANGE HOOK =====
@@ -154,7 +168,7 @@ const LANSync = (() => {
         if (typeof DB !== 'undefined' && DB.applyRemoteChanges) {
           const groups = [];
           const data = msg.data || {};
-          for (const s of ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders']) {
+          for (const s of ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'supplierReturns']) {
             if (Array.isArray(data[s]) && data[s].length) groups.push({ store: s, put: filterForStore(data[s], s) });
           }
           const metaRecs = [];
@@ -165,11 +179,22 @@ const LANSync = (() => {
           if (metaRecs.length) groups.push({ store: 'meta', put: metaRecs });
           if (groups.length) await DB.applyRemoteChanges(groups);
         }
+        if (msg.data.users && typeof Auth !== 'undefined' && Auth.applyUsersPayload) {
+          Auth.applyUsersPayload(msg.data.users);
+        }
       };
       apply().then(() => {
         _lastSync = Date.now();
         scheduleRefresh();
       }).catch(e => console.error('[LAN] Apply snapshot error:', e));
+      return;
+    }
+    if (msg.type === 'users' && msg.users) {
+      if (typeof Auth !== 'undefined' && Auth.applyUsersPayload) {
+        Auth.applyUsersPayload(msg.users);
+      }
+      _lastSync = Date.now();
+      scheduleRefresh();
       return;
     }
     if (msg.type === 'ops' && Array.isArray(msg.ops)) {
@@ -247,6 +272,7 @@ const LANSync = (() => {
     getStatus,
     hookDb,
     sendSnapshot,
+    sendUsers,
   };
 })();
 
