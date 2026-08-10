@@ -113,7 +113,10 @@ const DB = (() => {
     if (store === 'products') {
       for (const p of arr) {
         _idx.products[p.id] = p;
-        if (p.barcode) _idx.products['bc:' + p.barcode] = p;
+        if (p.barcode) {
+          _idx.products['bc:' + p.barcode] = p;
+          _idx.products['bcn:' + canonBarcode(p.barcode)] = p;
+        }
         if (p.storeId) {
           if (!_idx.products['sid:' + p.storeId]) _idx.products['sid:' + p.storeId] = [];
           _idx.products['sid:' + p.storeId].push(p);
@@ -496,6 +499,29 @@ const DB = (() => {
     }
   }
 
+  // Two products are the "same product" only when name, brand and category match.
+  function isSameProductIdentity(a, b) {
+    const na = String(a.name || '').trim().toLowerCase();
+    const nb = String(b.name || '').trim().toLowerCase();
+    const ca = String(a.category || '').trim().toLowerCase();
+    const cb = String(b.category || '').trim().toLowerCase();
+    return na === nb && String(a.brandId || '') === String(b.brandId || '') && ca === cb;
+  }
+
+  // Returns the product (if any) that already holds the same canonical barcode
+  // but with a different identity — i.e. a barcode that must not be reused.
+  function _findBarcodeConflict(item) {
+    const canon = canonBarcode(item.barcode);
+    if (!canon) return null;
+    for (const p of _cache.products) {
+      if (p.id && item.id && p.id === item.id) continue;
+      if (p.barcode && canonBarcode(p.barcode) === canon && !isSameProductIdentity(p, item)) {
+        return p;
+      }
+    }
+    return null;
+  }
+
   // ===== PUBLIC API =====
   return {
     ready() { return _ready; },
@@ -518,7 +544,64 @@ const DB = (() => {
 
     getProduct(id) { return _idx.products[id] || null; },
 
-    getProductByBarcode(code) { return _idx.products['bc:' + code] || null; },
+    getProductByBarcode(code) {
+      const variants = barcodeVariants(code);
+      for (const v of variants) {
+        if (_idx.products['bc:' + v]) return _idx.products['bc:' + v];
+        if (_idx.products['bcn:' + v]) return _idx.products['bcn:' + v];
+      }
+      const canon = variants[variants.length - 1];
+      if (canon) {
+        for (const p of _cache.products) {
+          if (p.barcode && canonBarcode(p.barcode) === canon) return p;
+        }
+      }
+      return null;
+    },
+
+    findProductsByBarcode(code) {
+      const canon = canonBarcode(code);
+      if (!canon) return [];
+      return _cache.products.filter(p => p.barcode && canonBarcode(p.barcode) === canon);
+    },
+
+    isSameProductIdentity(a, b) { return isSameProductIdentity(a, b); },
+
+    // Add a product to stock following the barcode reuse rules:
+    //  - barcode already held by a DIFFERENT product  -> { ok:false, conflict, existing }
+    //  - same product + same buy/sell/wholesale price -> merge quantity into it (one row)
+    //  - same product but different prices            -> separate stock row, same barcode
+    //  - brand new barcode                            -> new product
+    addOrMergeProduct(item) {
+      const barcode = normBarcode(item.barcode);
+      if (!barcode) return { ok: false, conflict: true, existing: null };
+
+      const conflict = _findBarcodeConflict({ id: item.id, barcode, name: item.name, brandId: item.brandId, category: item.category });
+      if (conflict) return { ok: false, conflict: true, existing: conflict };
+
+      const candidates = this.findProductsByBarcode(barcode);
+      const same = candidates.find(c => isSameProductIdentity(c, item)) || null;
+
+      if (!same) {
+        const prod = this.addProduct(Object.assign({}, item, { barcode }));
+        return { ok: true, created: true, product: prod };
+      }
+
+      const samePrices =
+        (parseFloat(same.buyPrice) || 0) === (parseFloat(item.buyPrice) || 0) &&
+        (parseFloat(same.sellPrice) || 0) === (parseFloat(item.sellPrice) || 0) &&
+        (parseFloat(same.wholesalePrice) || 0) === (parseFloat(item.wholesalePrice) || 0);
+
+      if (samePrices) {
+        const changes = { quantity: (same.quantity || 0) + (parseInt(item.qty) || 0) };
+        if (item.supplierId) changes.supplierId = item.supplierId;
+        this.updateProduct(same.id, changes);
+        return { ok: true, created: false, merged: true, product: same };
+      }
+
+      const prod = this.addProduct(Object.assign({}, item, { barcode }));
+      return { ok: true, created: true, separate: true, product: prod };
+    },
 
     getProductsByBrand(brandId) {
       const sid = _getStoreId();
@@ -536,6 +619,7 @@ const DB = (() => {
       prod.id = _genId();
       prod.createdAt = Date.now();
       prod.updatedAt = Date.now();
+      if (prod.barcode) prod.barcode = normBarcode(prod.barcode);
       const sid = _getStoreId();
       if (sid) prod.storeId = sid;
       _cache.products.push(prod);
@@ -552,6 +636,7 @@ const DB = (() => {
         prod.id = _genId() + Math.random().toString(36).substr(2, 3);
         prod.createdAt = now;
         prod.updatedAt = now;
+        if (prod.barcode) prod.barcode = normBarcode(prod.barcode);
         if (sid) prod.storeId = sid;
         _cache.products.push(prod);
         added.push(prod);
@@ -578,6 +663,21 @@ const DB = (() => {
     updateProduct(id, changes) {
       const p = _idx.products[id];
       if (!p) return null;
+      if (changes.barcode != null) {
+        const newBar = normBarcode(changes.barcode);
+        if (canonBarcode(newBar) !== canonBarcode(p.barcode)) {
+          const check = {
+            id,
+            barcode: newBar,
+            name: changes.hasOwnProperty('name') ? changes.name : p.name,
+            brandId: changes.hasOwnProperty('brandId') ? changes.brandId : p.brandId,
+            category: changes.hasOwnProperty('category') ? changes.category : p.category,
+          };
+          const conflict = _findBarcodeConflict(check);
+          if (conflict) return { ok: false, conflict: true, existing: conflict };
+        }
+        changes.barcode = newBar;
+      }
       changes.updatedAt = Date.now();
       Object.assign(p, changes);
       _queueWrite('products', p);

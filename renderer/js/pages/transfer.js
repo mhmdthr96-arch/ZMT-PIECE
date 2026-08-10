@@ -17,6 +17,15 @@ function init_transfer() {
 
   const catSel = document.getElementById('transferItemCategory');
   if (catSel) catSel.innerHTML = DB.getCategories().map(c => `<option value="${c}">${c}</option>`).join('');
+
+  const sc = document.getElementById('transferBarcodeScanner');
+  if (sc && !sc._zmtCleanBound) {
+    sc._zmtCleanBound = true;
+    sc.addEventListener('input', function() {
+      const cleaned = cleanScannedCode(this.value);
+      if (cleaned !== this.value) this.value = cleaned;
+    });
+  }
 }
 
 function renderTransferStoreInfo() {
@@ -119,7 +128,7 @@ function handleTransferBarcodeScan(e) {
   e.preventDefault();
 
   const input = document.getElementById('transferBarcodeScanner');
-  const code = input.value.trim();
+  const code = cleanScannedCode(input.value);
   if (!code) return;
 
   document.getElementById('transferScannerStatus').textContent = t('transfer.scannerProcessing');
@@ -548,6 +557,9 @@ async function executeTransfer() {
     if (donation) successMsg += `✅ ${t('transfer.donationNote')}\n`;
     if (paid > 0) successMsg += `${t('transfer.transferPaid')} DA${paid.toFixed(2)}\n`;
     if (debt > 0) successMsg += `${t('transfer.transferRemaining')} DA${debt.toFixed(2)}\n`;
+    if (typeof CloudService !== 'undefined' && typeof CloudService.isLanSubDevice === 'function' && CloudService.isLanSubDevice()) {
+      successMsg += `\n⚠️ ${t('connection.lanSubUploadMsg') || 'هذا الجهاز فرعي (LAN): رفع البيانات للسحابة يتم من السيرفر الرئيسي لهذا الموقع'}\n`;
+    }
 
     alert(successMsg);
 

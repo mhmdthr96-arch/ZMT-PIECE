@@ -158,8 +158,34 @@
             <input type="checkbox" id="catTimbreCheck" checked>
             <i class="fas fa-stamp"></i> <span data-i18n="catProducts.fiscalStamp">طابع جبائي (Timbre Fiscal)</span>
           </label>
-        </div>
       </div>
     </div>
   </div>
+</div>
+
+<!-- ===== PRINT BARCODE MODAL ===== -->
+<div class="modal-overlay" id="printBarcodeModal" style="display:none">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3><i class="fas fa-barcode"></i> طباعة باركود</h3>
+      <button class="modal-close" onclick="closePrintBarcodeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="selected-prod-info" style="display:flex;margin-bottom:12px">
+        <span><strong id="printBcName"></strong></span>
+        <span class="text-muted" dir="ltr" id="printBcCode"></span>
+      </div>
+      <div class="form-group">
+        <label>عدد النسخ <span style="font-weight:400;color:var(--silver-500)">(الافتراضي = الكمية)</span></label>
+        <input type="number" class="form-input no-spinner" id="printBcQty" value="1" min="1" max="500">
+      </div>
+      <button class="btn btn-primary" onclick="printBarcodeLabels()" style="width:100%;margin-top:8px">
+        <i class="fas fa-print"></i> طباعة الملصقات
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden label print area (filled before opening the print window) -->
+<div id="barcodePrintArea" style="display:none"></div>
 </div>

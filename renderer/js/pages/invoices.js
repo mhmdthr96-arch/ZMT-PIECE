@@ -514,7 +514,7 @@ function handleEditBarcodeKey(e) {
   if (e.key === 'Enter') {
     e.preventDefault();
     const input = document.getElementById('editBarcodeScan');
-    const q = input.value.trim();
+    const q = cleanScannedCode(input.value);
     if (!q) return;
     const status = document.getElementById('editScanStatus');
     const prod = DB.getProductByBarcode(q);
@@ -1851,7 +1851,15 @@ function populatePurCategories() {
 }
 
 function resetPurForm() {
-  document.getElementById('purBarcodeScanner').value = '';
+  const sc = document.getElementById('purBarcodeScanner');
+  if (sc && !sc._zmtCleanBound) {
+    sc._zmtCleanBound = true;
+    sc.addEventListener('input', function() {
+      const cleaned = cleanScannedCode(this.value);
+      if (cleaned !== this.value) this.value = cleaned;
+    });
+  }
+  sc.value = '';
   document.getElementById('purScannerStatus').textContent = 'جاهز للمسح';
   document.getElementById('purScannerResult').style.display = 'none';
   document.getElementById('purProdSearch').value = '';
@@ -1873,11 +1881,11 @@ function resetPurForm() {
 // --- Barcode scan ---
 function handlePurBarcodeScan(e) {
   if (e.key !== 'Enter') return;
-  const val = e.target.value.trim();
+  const val = cleanScannedCode(e.target.value);
   if (!val) return;
   const status = document.getElementById('purScannerStatus');
   const result = document.getElementById('purScannerResult');
-  const prod = DB.getProducts().find(p => p.barcode === val);
+  const prod = DB.getProductByBarcode(val);
   if (prod) {
     status.textContent = '✓ تم العثور على المنتج';
     status.style.color = '#28a745';
@@ -1995,6 +2003,12 @@ function purAddToCart() {
   if (!name) { alert('الرجاء إدخال اسم المنتج'); return; }
   if (!barcode) { alert('الرجاء إدخال الباركود'); return; }
 
+  const conflict = DB.findProductsByBarcode(barcode).find(p => !DB.isSameProductIdentity(p, { name, brandId, category }));
+  if (conflict) {
+    alert(`هذا الباركود مسجّل لمنتج آخر: ${conflict.name} (${conflict.barcode})`);
+    return;
+  }
+
   _purCart.push({ name, barcode, brandId, category, qty, buyPrice, sellPrice, wholesalePrice });
   renderPurCart();
   resetPurForm();
@@ -2075,20 +2089,43 @@ function purConfirmInvoice() {
   let totalAmount = 0;
   const invoiceItems = [];
 
+  for (const item of _purCart) {
+    if (item.barcode) {
+      const conflict = DB.findProductsByBarcode(item.barcode).find(p => !DB.isSameProductIdentity(p, item));
+      if (conflict) {
+        _purCart = [];
+        _purCartSupplierId = null;
+        renderPurCart();
+        closeInvPurModal();
+        alert(`هذا الباركود مسجّل لمنتج آخر: ${conflict.name} (${conflict.barcode})`);
+        return;
+      }
+    }
+  }
+
   _purCart.forEach(item => {
     const itemTotal = item.qty * item.buyPrice;
     totalAmount += itemTotal;
 
-    const prod = DB.addProduct({
+    const res = DB.addOrMergeProduct({
       name: item.name, barcode: item.barcode,
       brandId: item.brandId, category: item.category,
       buyPrice: item.buyPrice, sellPrice: item.sellPrice,
       wholesalePrice: item.wholesalePrice || 0,
       quantity: item.qty, supplierId,
     });
+    if (!res.ok) {
+      _purCart = [];
+      _purCartSupplierId = null;
+      renderPurCart();
+      closeInvPurModal();
+      alert(res.existing ? `هذا الباركود مسجّل لمنتج آخر: ${res.existing.name} (${res.existing.barcode})` : 'الباركود غير صالح');
+      return;
+    }
 
+    const prod = res.product;
     invoiceItems.push({
-      productId: prod.id, barcode: item.barcode,
+      productId: prod.id, barcode: prod.barcode,
       name: item.name, qty: item.qty,
       price: item.buyPrice, total: itemTotal,
     });

@@ -19,6 +19,14 @@ function init_inventory() {
   window._activePager = _invPager;
   setupInvSearch();
   setupTransferButton();
+  const sc = document.getElementById('invBarcodeScanner');
+  if (sc && !sc._zmtCleanBound) {
+    sc._zmtCleanBound = true;
+    sc.addEventListener('input', function() {
+      const cleaned = cleanScannedCode(this.value);
+      if (cleaned !== this.value) this.value = cleaned;
+    });
+  }
 }
 
 function setupTransferButton() {
@@ -69,6 +77,7 @@ function _renderInvRow(p, idx) {
     <td>DA${p.sellPrice.toFixed(2)}</td>
     <td>
       <button class="btn btn-sm ${Auth.isManager() ? '' : 'hide-user'}" onclick="editInventoryItem('${p.id}')"><i class="fas fa-edit"></i></button>
+      <button class="btn btn-sm btn-return ${(Auth.isManager() || Auth.canEdit('supplier-returns')) ? '' : 'hide-user'}" onclick="openSupplierReturnModal('${p.id}')" title="${t('supplierReturns.modalTitle')}"><i class="fas fa-undo-alt"></i></button>
       <button class="btn btn-sm btn-danger ${Auth.isManager() ? '' : 'hide-user'}" onclick="deleteInventoryItem('${p.id}')"><i class="fas fa-trash"></i></button>
     </td>
   </tr>`;
@@ -129,7 +138,7 @@ function handleInvBarcodeScan(e) {
   if (e.key === 'Enter') {
     e.preventDefault();
     const input = document.getElementById('invBarcodeScanner');
-    const code = input.value.trim();
+    const code = cleanScannedCode(input.value);
     if (!code) return;
 
     document.getElementById('invScannerStatus').textContent = t('inventory.scannerProcessing');
@@ -250,6 +259,12 @@ function invAddToCart() {
   if (!name) { alert(t('inventory.enterName')); return; }
   if (!barcode) { alert(t('inventory.enterBarcode')); return; }
 
+  const conflict = DB.findProductsByBarcode(barcode).find(p => !DB.isSameProductIdentity(p, { name, brandId, category }));
+  if (conflict) {
+    alert(`هذا الباركود مسجّل لمنتج آخر: ${conflict.name} (${conflict.barcode})`);
+    return;
+  }
+
   _invCart.push({ name, barcode, brandId, category, qty, buyPrice, sellPrice, wholesalePrice });
   renderInvCart();
   resetInvForm();
@@ -328,20 +343,45 @@ function invConfirmInvoice() {
   let totalAmount = 0;
   const invoiceItems = [];
 
+  for (const item of _invCart) {
+    if (item.barcode) {
+      const conflict = DB.findProductsByBarcode(item.barcode).find(p => !DB.isSameProductIdentity(p, item));
+      if (conflict) {
+        _invCart = [];
+        _invCartSupplierId = null;
+        renderInvCart();
+        closeInvAddModal();
+        renderInventory();
+        alert(`هذا الباركود مسجّل لمنتج آخر: ${conflict.name} (${conflict.barcode})`);
+        return;
+      }
+    }
+  }
+
   _invCart.forEach(item => {
     const itemTotal = item.qty * item.buyPrice;
     totalAmount += itemTotal;
 
-    const prod = DB.addProduct({
+    const res = DB.addOrMergeProduct({
       name: item.name, barcode: item.barcode,
       brandId: item.brandId, category: item.category,
       buyPrice: item.buyPrice, sellPrice: item.sellPrice,
       wholesalePrice: item.wholesalePrice || 0,
       quantity: item.qty, supplierId,
     });
+    if (!res.ok) {
+      _invCart = [];
+      _invCartSupplierId = null;
+      renderInvCart();
+      closeInvAddModal();
+      renderInventory();
+      alert(res.existing ? `هذا الباركود مسجّل لمنتج آخر: ${res.existing.name} (${res.existing.barcode})` : 'الباركود غير صالح');
+      return;
+    }
 
+    const prod = res.product;
     invoiceItems.push({
-      productId: prod.id, barcode: item.barcode,
+      productId: prod.id, barcode: prod.barcode,
       name: item.name, qty: item.qty,
       price: item.buyPrice, total: itemTotal,
     });

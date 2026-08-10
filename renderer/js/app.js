@@ -340,6 +340,79 @@ function debounce(fn, ms) { let t; return function() { clearTimeout(t); const a=
 // Normalize a search query: whitespace-only (or empty) input counts as no filter
 function normSearch(v) { return String(v || '').trim(); }
 
+// ===== BARCODE HELPERS =====
+
+// Normalize a barcode for storage/display: convert Arabic-Indic (٠-٩), Persian
+// (۰-۹) and full-width (０-９) digits to ASCII 0-9, and strip whitespace, NBSP,
+// bidi marks, zero-width characters and control characters. Original letter
+// case is preserved so the value shown/printed matches what was entered.
+function normBarcode(v) {
+  return String(v || '')
+    .replace(/[\u0660-\u0669]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x0660 + 48))
+    .replace(/[\u06F0-\u06F9]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x06F0 + 48))
+    .replace(/[\uFF10-\uFF19]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFF10 + 48))
+    .replace(/[\s\u00A0\u2000-\u200A\u200E\u200F\u202A-\u202E\u200B\u200C\u200D\uFEFF\u0000-\u001F\u007F-\u009F]/g, '');
+}
+
+// Canonical form used for indexing/comparison: normalized + uppercased.
+function canonBarcode(v) {
+  return normBarcode(v).toUpperCase();
+}
+
+function _mapChars(s, map) {
+  let out = '';
+  for (const ch of s) out += map[ch] || ch;
+  return out;
+}
+
+// French AZERTY layout reverse-mapping (scan output -> ASCII).
+var FR_DIGIT_MAP = { '&': '1', '\u00e9': '2', '"': '3', "'": '4', '(': '5', '-': '6', '\u00e8': '7', '_': '8', '\u00e7': '9', '\u00e0': '0' };
+var FR_LETTER_MAP = { 'a': 'q', 'q': 'a', 'z': 'w', 'w': 'z', ';': 'm', ',': 'm' };
+
+function frLayoutToAscii(s) {
+  return _mapChars(normBarcode(s), Object.assign({}, FR_DIGIT_MAP, FR_LETTER_MAP));
+}
+
+// Arabic (101) layout reverse-mapping (scan output -> QWERTY keys).
+var AR_TO_EN = {
+  '\u0636':'q', '\u0635':'w', '\u062b':'e', '\u0642':'r', '\u0641':'t',
+  '\u063a':'y', '\u0639':'u', '\u0647':'i', '\u062e':'o', '\u062d':'p',
+  '\u062c':'[', '\u062f':']', '\u0634':'a', '\u0633':'s', '\u064a':'d',
+  '\u0628':'f', '\u0644':'g', '\u0627':'h', '\u062a':'j', '\u0646':'k',
+  '\u0645':'l', '\u0643':';', '\u0637':"'", '\u0626':'z', '\u0621':'x',
+  '\u0624':'c', '\u0631':'v', '\u0649':'n', '\u0629':'m'
+};
+
+function arLayoutToAscii(s) {
+  const norm = normBarcode(s);
+  const noLig = norm.replace(/\u0644\u0627/g, 'b');
+  return _mapChars(noLig, AR_TO_EN);
+}
+
+// Ordered list of candidate forms of a scanned/typed barcode, tried in order
+// by tolerant lookups: raw, canonical, French-layout, Arabic-layout.
+function barcodeVariants(code) {
+  const raw = String(code || '').trim();
+  const out = [];
+  for (const v of [raw, canonBarcode(raw), canonBarcode(frLayoutToAscii(raw)), canonBarcode(arLayoutToAscii(raw))]) {
+    if (v && out.indexOf(v) === -1) out.push(v);
+  }
+  return out;
+}
+
+// Clean a scanned barcode value so the correct characters show in the field and
+// are stored. Reverses the two common Algerian keyboard-layout garbles (French
+// AZERTY symbols and Arabic letters/digits) when they are clearly present.
+function cleanScannedCode(raw) {
+  const s = normBarcode(raw);
+  if (!s) return '';
+  if (/[\u0600-\u06FF]/.test(s)) return arLayoutToAscii(s);
+  const hasHardFr = /[&\u00e9\u00e8\u00e7\u00e0]/.test(s);
+  const pureFrSymbols = /^[\u0022\u0027\u0028\u005f\u002d&\u00e9\u00e8\u00e7\u00e0]+$/.test(s);
+  if (hasHardFr || pureFrSymbols) return frLayoutToAscii(s);
+  return s;
+}
+
 // ===== ORDERS NAV BADGE =====
 window.updateOrdersBadge = function() {
   const el = document.getElementById('ordersNavBadge');

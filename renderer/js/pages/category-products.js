@@ -15,6 +15,14 @@ function init_category_products() {
 
   renderProducts();
   setupProdSearch();
+  const sc = document.getElementById('barcodeScannerInput');
+  if (sc && !sc._zmtCleanBound) {
+    sc._zmtCleanBound = true;
+    sc.addEventListener('input', function() {
+      const cleaned = cleanScannedCode(this.value);
+      if (cleaned !== this.value) this.value = cleaned;
+    });
+  }
 }
 
 function renderProducts() {
@@ -60,7 +68,9 @@ function renderProducts() {
       <td>DA${p.sellPrice.toFixed(2)}</td>
       <td>${sup ? sup.name : '-'}</td>
       <td>
+        <button class="btn btn-sm" onclick="openPrintBarcodeModal('${p.id}')" title="طباعة باركود"><i class="fas fa-barcode"></i></button>
         <button class="btn btn-sm ${Auth.isManager() ? '' : 'hide-user'}" onclick="editProduct('${p.id}')"><i class="fas fa-edit"></i></button>
+        <button class="btn btn-sm btn-return ${(Auth.isManager() || Auth.canEdit('supplier-returns')) ? '' : 'hide-user'}" onclick="openSupplierReturnModal('${p.id}')" title="${t('supplierReturns.modalTitle')}"><i class="fas fa-undo-alt"></i></button>
         <button class="btn btn-sm btn-danger ${Auth.isManager() ? '' : 'hide-user'}" onclick="deleteProduct('${p.id}')"><i class="fas fa-trash"></i></button>
       </td>
     </tr>`;
@@ -203,7 +213,7 @@ function handleBarcodeScan(e) {
   if (e.key === 'Enter') {
     e.preventDefault();
     const input = document.getElementById('barcodeScannerInput');
-    const code = input.value.trim();
+    const code = cleanScannedCode(input.value);
     if (!code) return;
 
     document.getElementById('scannerStatus').textContent = 'جاري المعالجة...';
@@ -281,6 +291,14 @@ function addToCart() {
   const item = getFormItem();
   if (!item) return;
 
+  if (item.barcode) {
+    const conflict = DB.findProductsByBarcode(item.barcode).find(p => !DB.isSameProductIdentity(p, item));
+    if (conflict) {
+      alert(`هذا الباركود مسجّل لمنتج آخر: ${conflict.name} (${conflict.barcode})`);
+      return;
+    }
+  }
+
   _invoiceCart.push(item);
 
   renderCart();
@@ -341,12 +359,27 @@ function confirmInvoice() {
   let totalAmount = 0;
   const invoiceItems = [];
 
+  for (const item of _invoiceCart) {
+    if (item.barcode) {
+      const conflict = DB.findProductsByBarcode(item.barcode).find(p => !DB.isSameProductIdentity(p, item));
+      if (conflict) {
+        _invoiceCart = [];
+        renderCart();
+        closeAddProduct();
+        renderProducts();
+        alert(`هذا الباركود مسجّل لمنتج آخر: ${conflict.name} (${conflict.barcode})`);
+        return;
+      }
+    }
+  }
+
   _invoiceCart.forEach(item => {
     const itemTotal = item.qty * item.buyPrice;
     totalAmount += itemTotal;
 
-    // Always create a new product entry for each cart item
-    const prod = DB.addProduct({
+    // Follow barcode reuse rules: block other products, merge same product +
+    // same prices, keep a separate row when prices differ.
+    const res = DB.addOrMergeProduct({
       name: item.name, barcode: item.barcode,
       brandId: ctx.brandId, category: ctx.category,
       buyPrice: item.buyPrice, sellPrice: item.sellPrice,
@@ -354,9 +387,22 @@ function confirmInvoice() {
       quantity: item.qty, supplierId,
     });
 
+    if (!res.ok) {
+      const msg = res.existing
+        ? `هذا الباركود مسجّل لمنتج آخر: ${res.existing.name} (${res.existing.barcode})`
+        : 'الباركود غير صالح';
+      _invoiceCart = [];
+      renderCart();
+      closeAddProduct();
+      renderProducts();
+      alert(msg);
+      return;
+    }
+
+    const prod = res.product;
     invoiceItems.push({
       productId: prod.id,
-      barcode: item.barcode,
+      barcode: prod.barcode,
       name: item.name,
       qty: item.qty,
       price: item.buyPrice,
@@ -470,6 +516,114 @@ function _catProdModalHandler(e) {
 document.removeEventListener('click', _catProdModalHandler);
 document.addEventListener('click', _catProdModalHandler);
 if (window._pageListeners) window._pageListeners.push({ type: 'click', fn: _catProdModalHandler });
+
+// ===== BARCODE LABEL PRINTING =====
+
+var _printBarcodeProductId = null;
+
+function openPrintBarcodeModal(id) {
+  const p = DB.getProduct(id);
+  if (!p) return;
+  _printBarcodeProductId = id;
+  document.getElementById('printBcName').textContent = p.name;
+  document.getElementById('printBcCode').textContent = p.barcode || '';
+  document.getElementById('printBcQty').value = Math.max(1, parseInt(p.quantity) || 1);
+  document.getElementById('printBarcodeModal').style.display = 'flex';
+  setTimeout(() => { const q = document.getElementById('printBcQty'); q.focus(); q.select(); }, 50);
+}
+
+function closePrintBarcodeModal() {
+  document.getElementById('printBarcodeModal').style.display = 'none';
+}
+
+function printBarcodeLabels() {
+  const p = DB.getProduct(_printBarcodeProductId);
+  if (!p || !p.barcode) { alert('المنتج أو الباركود غير متوفر'); return; }
+  let qty = parseInt(document.getElementById('printBcQty').value) || 1;
+  if (qty < 1) qty = 1;
+  if (qty > 500) qty = 500;
+
+  const code = p.barcode;
+  let format = 'CODE128';
+  if (/^\d{13}$/.test(code)) format = 'EAN13';
+  else if (/^\d{8}$/.test(code)) format = 'EAN8';
+
+  const area = document.getElementById('barcodePrintArea');
+  area.innerHTML = '';
+
+  for (let i = 0; i < qty; i++) {
+    const label = document.createElement('div');
+    label.className = 'bc-label';
+
+    const svgWrap = document.createElement('div');
+    svgWrap.className = 'bc-svg';
+    let svgHtml = '';
+    try {
+      JsBarcode(svgWrap, code, { format, displayValue: false, width: 2, height: 50, margin: 0 });
+      svgHtml = svgWrap.innerHTML;
+    } catch (e) {
+      svgWrap.innerHTML = '';
+      try {
+        JsBarcode(svgWrap, code, { format: 'CODE128', displayValue: false, width: 2, height: 50, margin: 0 });
+        svgHtml = svgWrap.innerHTML;
+      } catch (e2) {
+        svgHtml = '';
+      }
+    }
+
+    label.innerHTML =
+      `<div class="bc-name">${escHtml(p.name)}</div>` +
+      (svgHtml ? `<div class="bc-svg">${svgHtml}</div>`
+               : `<div class="bc-code" dir="ltr" style="font-size:11px;font-weight:700">${escHtml(code)}</div>`) +
+      `<div class="bc-code" dir="ltr">${escHtml(code)}</div>` +
+      `<div class="bc-price">DA${(parseFloat(p.sellPrice) || 0).toFixed(2)}</div>`;
+    area.appendChild(label);
+  }
+
+  closePrintBarcodeModal();
+  openBarcodePrintWindow();
+  area.innerHTML = '';
+}
+
+function openBarcodePrintWindow() {
+  const content = document.getElementById('barcodePrintArea');
+  if (!content || !content.innerHTML) return;
+  const win = window.open('', '', 'width=500,height=600');
+  if (!win) { alert('الرجاء السماح بالنوافذ المنبثقة للطباعة'); return; }
+  win.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>طباعة الباركود</title>
+      <style>
+        @page { size: 40mm 30mm; margin: 0; }
+        html, body { margin: 0; padding: 0; }
+        .bc-label {
+          width: 40mm; height: 30mm; box-sizing: border-box; padding: 1.5mm;
+          page-break-after: always; display: flex; flex-direction: column;
+          justify-content: center; align-items: center; text-align: center;
+          overflow: hidden;
+        }
+        .bc-label:last-child { page-break-after: auto; }
+        .bc-name { font-size: 8px; font-weight: 600; max-width: 37mm; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .bc-svg svg { width: 34mm; height: 16mm; }
+        .bc-code { font-size: 8px; font-weight: 700; letter-spacing: 1px; }
+        .bc-price { font-size: 7px; color: #333; margin-top: 1px; }
+        @media print {
+          .bc-label { page-break-after: always; }
+          .bc-label:last-child { page-break-after: auto; }
+        }
+      </style>
+    </head>
+    <body>
+      ${content.innerHTML}
+      <script>window.print();window.close();<\/script>
+    </body>
+    </html>
+  `);
+  win.document.close();
+}
 
 // ===== LAN SYNC: re-render product list without closing open modals =====
 window._pageSyncHandlers = window._pageSyncHandlers || {};

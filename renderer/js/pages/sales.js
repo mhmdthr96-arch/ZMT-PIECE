@@ -295,6 +295,10 @@ function setupSalesBarcode() {
   const newInput = input.cloneNode(true);
   input.parentNode.replaceChild(newInput, input);
   newInput.addEventListener('keydown', handleSalesBarcodeScan);
+  newInput.addEventListener('input', function() {
+    const cleaned = cleanScannedCode(this.value);
+    if (cleaned !== this.value) this.value = cleaned;
+  });
   newInput.focus();
 }
 
@@ -302,7 +306,7 @@ function handleSalesBarcodeScan(e) {
   if (e.key === 'Enter') {
     e.preventDefault();
     const input = document.getElementById('salesBarcodeScan');
-    const code = input.value.trim();
+    const code = cleanScannedCode(input.value);
     if (!code) return;
 
     const beam = document.getElementById('salesScannerBeam');
