@@ -76,6 +76,7 @@ function _renderInvRow(p, idx) {
     <td class="hide-user">DA${p.buyPrice.toFixed(2)}</td>
     <td>DA${p.sellPrice.toFixed(2)}</td>
     <td>
+      <button class="btn btn-sm" onclick="openPrintBarcodeModal('${p.id}')" title="طباعة باركود"><i class="fas fa-barcode"></i></button>
       <button class="btn btn-sm ${Auth.isManager() ? '' : 'hide-user'}" onclick="editInventoryItem('${p.id}')"><i class="fas fa-edit"></i></button>
       <button class="btn btn-sm btn-return ${(Auth.isManager() || Auth.canEdit('supplier-returns')) ? '' : 'hide-user'}" onclick="openSupplierReturnModal('${p.id}')" title="${t('supplierReturns.modalTitle')}"><i class="fas fa-undo-alt"></i></button>
       <button class="btn btn-sm btn-danger ${Auth.isManager() ? '' : 'hide-user'}" onclick="deleteInventoryItem('${p.id}')"><i class="fas fa-trash"></i></button>
