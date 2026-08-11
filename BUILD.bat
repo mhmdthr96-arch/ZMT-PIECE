@@ -2,7 +2,7 @@
 title ZMT PIECE Builder
 
 echo ============================================
-echo    ZMT PIECE - Build Installer v2.0.0
+echo    ZMT PIECE - Build Installer v2.2.2
 echo ============================================
 echo.
 
@@ -20,16 +20,16 @@ if not exist "node_modules\.bin\electron-builder*" (
     call npm install
 )
 
-echo [*] Building ZMT PIECE v2.0.0 installer...
+echo [*] Building ZMT PIECE v2.2.2 installer...
 echo.
 
-call npx electron-builder --win --x64
+call npx electron-builder --win --x64 --publish never
 
 if %ERRORLEVEL% EQU 0 (
     echo.
     echo ============================================
     echo    [SUCCESS] Installer created!
-    echo    Location: dist\ZMT PIECE-Setup-2.0.0.exe
+    echo    Location: dist\ZMT PIECE-Setup-2.2.2.exe
     echo ============================================
 ) else (
     echo.

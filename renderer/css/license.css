@@ -127,6 +127,32 @@
   gap: 6px;
 }
 
+.license-switch {
+  margin-top: 16px;
+  text-align: center;
+}
+
+.license-switch-btn {
+  background: transparent;
+  border: 1px dashed rgba(255,255,255,0.25);
+  border-radius: 8px;
+  color: rgba(255,255,255,0.55);
+  font-size: 12px;
+  padding: 9px 16px;
+  cursor: pointer;
+  transition: all 0.25s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.license-switch-btn:hover {
+  border-color: rgba(255,255,255,0.5);
+  color: #fff;
+  background: rgba(255,255,255,0.06);
+}
+
 .license-status {
   padding: 10px 14px;
   border-radius: 8px;

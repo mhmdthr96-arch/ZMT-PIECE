@@ -337,6 +337,26 @@ function doLicenseEnterApp() {
   }
 }
 
+function doLicenseSwitchAccount() {
+  if (typeof Auth !== 'undefined' && typeof Auth.signOut === 'function') {
+    Auth.signOut();
+  }
+  _licenseState.valid = false;
+  _licenseState.noLicense = false;
+  _licenseState.expired = false;
+  _licenseState.machineMismatch = false;
+  _licenseState.invalidLegacy = false;
+  _licenseState.tampered = false;
+  _licenseState.license = null;
+  hideLicenseOverlay();
+  hideFreezeOverlay();
+  if (typeof initLoginView === 'function') {
+    initLoginView();
+  } else if (typeof showLogin === 'function') {
+    showLogin();
+  }
+}
+
 function showLicenseStatus(el, msg, type) {
   if (!el) return;
   el.textContent = msg;
