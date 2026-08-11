@@ -247,7 +247,17 @@ function navigateTo(pageId) {
 
   if (typeof Auth !== 'undefined' && Auth.isLoggedIn() && !Auth.canView(pageId)) {
     console.warn('[Router] Access denied for:', pageId);
-    pageId = 'dashboard';
+    const fallback = (typeof Auth.firstViewablePage === 'function') ? Auth.firstViewablePage() : null;
+    if (fallback) {
+      pageId = fallback;
+    } else {
+      showNoAccess();
+      return;
+    }
+  }
+
+  if (typeof Auth !== 'undefined' && Auth.isLoggedIn()) {
+    document.body.classList.toggle('user-mode', !Auth.isManager());
   }
 
   cleanupPage();
@@ -334,11 +344,86 @@ if (typeof window.escHtml === 'undefined') {
   };
 }
 
+// ===== NO-ACCESS SCREEN (user with zero viewable pages) =====
+function showNoAccess() {
+  cleanupPage();
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const container = document.getElementById('pageContainer');
+  if (!container) return;
+  _currentPageId = 'noaccess';
+  container.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;gap:14px;text-align:center;padding:24px;">
+    <i class="fas fa-ban" style="font-size:56px;color:#dc3545;opacity:.85"></i>
+    <h2 style="margin:0">${t('common.noAccessHint')}</h2>
+  </div>`;
+}
+
 // ===== UTILITIES =====
 function debounce(fn, ms) { let t; return function() { clearTimeout(t); const a=arguments, ctx=this; t = setTimeout(() => fn.apply(ctx, a), ms); }; }
 
 // Normalize a search query: whitespace-only (or empty) input counts as no filter
 function normSearch(v) { return String(v || '').trim(); }
+
+// ===== SMART PRODUCT SEARCH =====
+// Multi-word search: every word in the query must match the product name or
+// barcode, and results can be ranked by match quality (word-start matches rank
+// above plain substrings, name above barcode).
+
+// Escape regex special characters so user input is treated literally.
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Normalize text for matching: lowercase, strip diacritics/tatweel, fold
+// common Arabic letter variants (أ/إ/آ→ا, ة→ه, ى→ي) and collapse whitespace.
+function normalizeSearchText(v) {
+  return String(v || '')
+    .toLowerCase()
+    .replace(/[\u064B-\u0652\u0670\u0640]/g, '')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Split a query into individual search tokens (words).
+function searchTokens(q) {
+  return normalizeSearchText(q).split(' ').filter(Boolean);
+}
+
+// True when every token of the query matches the product name or barcode.
+function productMatchesQuery(name, barcode, q) {
+  const tokens = searchTokens(q);
+  if (!tokens.length) return true;
+  const n = normalizeSearchText(name);
+  const b = normalizeSearchText(barcode);
+  return tokens.every(t => n.includes(t) || b.includes(t));
+}
+
+// Rank a product for a query. Returns 0 when the product does not match.
+// Higher is better: word-start match in name (4) > name substring (3) >
+// barcode prefix (2) > barcode substring (1), summed across tokens, plus a
+// tie-breaker boost when the whole query matches the start of the name.
+function productSearchScore(name, barcode, q) {
+  const tokens = searchTokens(q);
+  if (!tokens.length) return 1;
+  const n = normalizeSearchText(name);
+  const b = normalizeSearchText(barcode);
+  const fullQuery = normalizeSearchText(q);
+  let score = 0;
+  for (const t of tokens) {
+    const nIdx = n.indexOf(t);
+    if (nIdx !== -1) {
+      score += (nIdx === 0 || n[nIdx - 1] === ' ') ? 4 : 3;
+    } else {
+      const bIdx = b.indexOf(t);
+      if (bIdx === -1) return 0;
+      score += (bIdx === 0) ? 2 : 1;
+    }
+  }
+  if (fullQuery && n.startsWith(fullQuery)) score += 10;
+  return score;
+}
 
 // ===== BARCODE HELPERS =====
 
@@ -428,34 +513,46 @@ window.updateOrdersBadge = function() {
 };
 
 // ===== WEB PUSH NOTIFY (fire-and-forget) =====
+// Website URL used by web-push triggers. Not a secret — it may be overridden
+// per-install via localStorage (zmt_push_site_url) from the Connection Settings
+// page. The trigger is authenticated with the store's own login credentials
+// (code + password), so no shared secret is embedded in the app at all.
+const ZMT_PUSH_SITE_URL = 'https://zmt-website.vercel.app';
+window.ZMT_PUSH_SITE_URL = ZMT_PUSH_SITE_URL;
+
 // Notifies the manager's phone (via the website's /api/push-trigger) the
-// moment an order or spoiled-goods return is created on the desktop. Settings
-// live in localStorage (zmt_push_site_url / zmt_push_secret) and are filled in
-// the Connection Settings page. Never blocks or throws.
+// moment an order or spoiled-goods return is created on the desktop. The site
+// URL lives in localStorage (zmt_push_site_url) with a build-in default; the
+// store credentials come from the current login. Never blocks or throws.
 window.notifyWebPush = function(type, payload) {
   try {
-    const siteUrl = localStorage.getItem('zmt_push_site_url');
-    const secret = localStorage.getItem('zmt_push_secret');
-    if (!siteUrl || !secret) return;
+    const siteUrl = localStorage.getItem('zmt_push_site_url') || ZMT_PUSH_SITE_URL;
     if (!/^https?:\/\/.+/.test(siteUrl)) return;
 
     const user = (typeof Auth !== 'undefined' && typeof Auth.getCurrentUser === 'function') ? Auth.getCurrentUser() : null;
     const storeCode = (typeof Auth !== 'undefined' && Auth.getUserCode) ? (Auth.getUserCode() || '') : '';
-    const storeType = (typeof Auth !== 'undefined' && Auth.getStoreType) ? Auth.getStoreType() : 'main';
     const parentCode = (typeof Auth !== 'undefined' && Auth.getParentCode) ? (Auth.getParentCode() || '') : '';
     const storeName = (typeof Auth !== 'undefined' && Auth.getStoreName) ? (Auth.getStoreName() || '') : (user && (user.branchName || ''));
+    const password = (typeof Auth !== 'undefined' && Auth.getStorePassword) ? (Auth.getStorePassword() || '') : '';
+    if (!storeCode || !password) return;
 
     const body = Object.assign({
       type: type,
       parentCode: parentCode || storeCode,
       storeCode: storeCode,
       storeName: storeName || '',
+      code: storeCode,
+      password: password,
       createdAt: Date.now()
     }, payload || {});
 
+    const headers = { 'Content-Type': 'application/json' };
+    const legacySecret = localStorage.getItem('zmt_push_secret');
+    if (legacySecret) headers['x-zmt-secret'] = legacySecret;
+
     fetch(siteUrl.replace(/\/+$/, '') + '/api/push-trigger', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-zmt-secret': secret },
+      headers: headers,
       body: JSON.stringify(body)
     }).catch(function() {});
   } catch (e) { /* ignore */ }
@@ -775,6 +872,7 @@ const LANG = {
       returnsCount: 'المرتجعات',
       avoirReason: 'مرتجع (Avoir)',
       walkin: 'عميل عابر',
+      dispatchNote: 'ملاحظة فاتورة الإرسال', dispatchNotePlaceholder: 'ملاحظة تُطبع على فاتورة الإرسال...',
     },
     brandCat: { brand: 'العلامة', category: 'اختر نوع القطعة', searchPlaceholder: 'بحث عن نوع...', addProduct: 'إضافة منتج' },
     catProducts: { title: 'المنتجات', sub: 'المنتجات المتوفرة', searchPlaceholder: 'بحث عن منتج...', addProduct: 'إضافة منتج', empty: 'لا توجد منتجات في هذا التصنيف', addInvoiceTitle: 'إضافة منتج للفاتورة', scanPlaceholder: 'امسح الباركود ضوئياً...', scannerReady: 'جاهز للمسح', searchProduct: 'بحث عن منتج', newProduct: 'منتج جديد', searchExisting: 'ابحث بالاسم أو الباركود', searchExistingPlaceholder: 'اسم المنتج أو الباركود...', name: 'اسم المنتج', namePlaceholder: 'اسم القطعة', barcode: 'الباركود', barcodePlaceholder: 'أدخل الباركود', generate: 'توليد', qty: 'الكمية', buyPrice: 'سعر الشراء', sellPrice: 'سعر البيع', supplier: 'المورد', supplierPlaceholder: 'ابحث عن مورد بالاسم...', cancel: 'إلغاء', addToCart: 'إضافة إلى سلة الفاتورة', cartTitle: 'سلة الفاتورة', total: 'الإجمالي:', clear: 'تفريغ',       confirmInvoice: 'تأكيد الفاتورة', fiscalStamp: 'طابع جبائي (Timbre Fiscal)', wholesalePrice: 'سعر البيع بالجملة' },
@@ -799,6 +897,8 @@ const LANG = {
       save: 'حفظ', cancel: 'إلغاء', delete: 'حذف', edit: 'تعديل', confirm: 'تأكيد',
       close: 'إغلاق', print: 'طباعة', loading: 'جاري التحميل...', processing: 'جاري المعالجة...',
       noResults: 'لا توجد نتائج', empty: 'فارغ', search: 'بحث',
+      noPermission: 'لا تملك صلاحية للقيام بهذه العملية',
+      noAccessHint: 'لا تملك صلاحية الوصول لأي صفحة. تواصل مع المدير.',
       page: 'صفحة', of: 'من', product: 'منتج', piece: 'قطعة', invoice: 'فاتورة',
       qty: 'الكمية', total: 'الإجمالي', paid: 'المدفوع', remaining: 'المتبقي', debt: 'دين',
       date: 'التاريخ', name: 'الاسم', status: 'الحالة', actions: 'إجراءات',
@@ -877,6 +977,7 @@ const LANG = {
       cannotEditDispatch: 'لا يمكن تعديل فاتورة إرسال',
       cannotEditReception: 'لا يمكن تعديل فاتورة استلام — فاتورة مرجعية فقط',
       cannotEditProformaWaybill: 'لا يمكن تعديل فاتورة طريق شكلية',
+      noPermission: 'غير مصرح لك بعرض هذه الفاتورة',
       editTitle: 'تعديل الفاتورة',
       editHelpSupplier: 'فاتورة مورد: زيادة الكمية تزيد المخزون ورصيد المورد، نقص الكمية يقلل المخزون ورصيد المورد.',
       editHelpCustomer: 'قم بتعديل الكميات. الزيادة تُخصم من المخزون، النقصان يُرجع للمخزون ويُسجل كمرتجع.',
@@ -1120,9 +1221,8 @@ const LANG = {
       logoutBtn: 'تسجيل خروج', uploadCard: 'رفع نسخة احتياطية', uploadDesc: 'سيتم استبدال النسخة الموجودة في السحابة...',
       pushTitle: 'إشعارات الجوال', pushDesc: 'عند إنشاء طلب منتج أو استرجاع سلعة فاسدة، يُرسل إشعار فوري لهاتفك حتى عندما يكون الموقع مغلقًا.',
       siteUrlLabel: 'رابط الموقع', siteUrlPlaceholder: 'https://...',
-      pushSecretLabel: 'المفتاح السري', pushSecretPlaceholder: 'المفتاح السري الخاص بك',
       pushSaveBtn: 'حفظ', pushUrlRequired: 'أدخل رابط الموقع', pushUrlInvalid: 'رابط الموقع غير صالح',
-      pushSecretRequired: 'أدخل المفتاح السري', pushSaved: 'تم حفظ الإعدادات',
+      pushSaved: 'تم حفظ الإعدادات',
       autoBackup: 'النسخ الاحتياطي التلقائي', backupInterval: 'الفترة (بالدقائق)',
       min1: '1 دقيقة', min2: '2 دقيقة', min5: '5 دقائق', min10: '10 دقائق', min30: '30 دقيقة',
       uploadBtn: 'رفع نسخة احتياطية', restoreBtn: 'استرداد نسخة احتياطية',
@@ -1145,7 +1245,7 @@ const LANG = {
       storeCode: 'كود المحل', storeCodePlaceholder: 'أدخل كود المحل (10 أرقام)',
       usernameLabel: 'اسم المستخدم', usernamePlaceholder: 'اسم المستخدم',
       userPassword: 'كلمة المرور', loginAsUser: 'دخول كمستخدم',
-      emailLabel: 'البريد الإلكتروني', createAccount: 'إنشاء حساب',
+      emailLabel: 'البريد الإلكتروني', createAccount: 'إنشاء حساب', createPasswordLabel: 'كلمة مرور المحل (اختياري لكن موصى به — للتفعيل)',
       mainStoreCode: 'الرمز الرئيسي للمحل', branchPassword: 'كلمة مرور الفرع', branchLogin: 'اتصال كفرع',
       accountCreatedTitle: 'تم إنشاء الحساب بنجاح!', accountCreatedDesc: 'احفظ هذا الرمز في مكان آمن. ستحتاجه لاستعادة بياناتك.',
       accountCreatedWarning: 'هذا الرمز لا يمكن استرجاعه. اكتبه أو صوره.', enterApp: 'الدخول للبرنامج',
@@ -1460,6 +1560,7 @@ const LANG = {
       returnsCount: 'Returns',
       avoirReason: 'Return (Avoir)',
       walkin: 'Walk-in customer',
+      dispatchNote: 'Dispatch invoice note', dispatchNotePlaceholder: 'Note printed on the dispatch invoice...',
     },
     brandCat: { brand: 'Brand', category: 'Choose Part Type', searchPlaceholder: 'Search for type...', addProduct: 'Add Product' },
     catProducts: { title: 'Products', sub: 'Available Products', searchPlaceholder: 'Search for product...', addProduct: 'Add Product', empty: 'No products in this category', addInvoiceTitle: 'Add Product to Invoice', scanPlaceholder: 'Scan barcode...', scannerReady: 'Ready to scan', searchProduct: 'Search for product', newProduct: 'New Product', searchExisting: 'Search by name or barcode', searchExistingPlaceholder: 'Product name or barcode...', name: 'Product Name', namePlaceholder: 'Part name', barcode: 'Barcode', barcodePlaceholder: 'Enter barcode', generate: 'Generate', qty: 'Quantity', buyPrice: 'Buy Price', sellPrice: 'Sell Price', supplier: 'Supplier', supplierPlaceholder: 'Search for supplier by name...', cancel: 'Cancel', addToCart: 'Add to Invoice Cart', cartTitle: 'Invoice Cart', total: 'Total:', clear: 'Clear',       confirmInvoice: 'Confirm Invoice', fiscalStamp: 'Fiscal Stamp (Timbre Fiscal)', wholesalePrice: 'Wholesale Price' },
@@ -1484,6 +1585,8 @@ const LANG = {
       save: 'Save', cancel: 'Cancel', delete: 'Delete', edit: 'Edit', confirm: 'Confirm',
       close: 'Close', print: 'Print', loading: 'Loading...', processing: 'Processing...',
       noResults: 'No results', empty: 'Empty', search: 'Search',
+      noPermission: 'You do not have permission to perform this action',
+      noAccessHint: 'You do not have access to any page. Contact the manager.',
       page: 'Page', of: 'of', product: 'Product', piece: 'Piece', invoice: 'Invoice',
       qty: 'Qty', total: 'Total', paid: 'Paid', remaining: 'Remaining', debt: 'Debt',
       date: 'Date', name: 'Name', status: 'Status', actions: 'Actions',
@@ -1562,6 +1665,7 @@ const LANG = {
       cannotEditDispatch: 'Cannot edit dispatch invoice',
       cannotEditReception: 'Cannot edit reception invoice - reference only',
       cannotEditProformaWaybill: 'Cannot edit provisional waybill',
+      noPermission: 'You are not authorized to view this invoice',
       editTitle: 'Edit Invoice',
       editHelpSupplier: 'Supplier invoice: increasing qty increases stock and supplier balance, decreasing reduces both.',
       editHelpCustomer: 'Edit quantities. Increase deducts from stock, decrease returns to stock and records as return.',
@@ -1800,9 +1904,8 @@ const LANG = {
       logoutBtn: 'Logout', uploadCard: 'Upload Backup', uploadDesc: 'The existing backup in the cloud will be replaced...',
       pushTitle: 'Mobile Notifications', pushDesc: 'When a product order or spoiled-goods return is created, an instant notification is sent to your phone even while the website is closed.',
       siteUrlLabel: 'Website URL', siteUrlPlaceholder: 'https://...',
-      pushSecretLabel: 'Secret Key', pushSecretPlaceholder: 'Your secret key',
       pushSaveBtn: 'Save', pushUrlRequired: 'Please enter the website URL', pushUrlInvalid: 'The website URL is not valid',
-      pushSecretRequired: 'Please enter the secret key', pushSaved: 'Settings saved',
+      pushSaved: 'Settings saved',
       autoBackup: 'Auto Backup', backupInterval: 'Interval (minutes)',
       min1: '1 min', min2: '2 min', min5: '5 min', min10: '10 min', min30: '30 min',
       uploadBtn: 'Upload Backup', restoreBtn: 'Restore Backup',
@@ -1825,7 +1928,7 @@ const LANG = {
       storeCode: 'Store Code', storeCodePlaceholder: 'Enter store code (10 digits)',
       usernameLabel: 'Username', usernamePlaceholder: 'Username',
       userPassword: 'Password', loginAsUser: 'Login as User',
-      emailLabel: 'Email', createAccount: 'Create Account',
+      emailLabel: 'Email', createAccount: 'Create Account', createPasswordLabel: 'Store password (optional, recommended for activation)',
       mainStoreCode: 'Main Store Code', branchPassword: 'Branch Password', branchLogin: 'Connect as Branch',
       accountCreatedTitle: 'Account Created Successfully!', accountCreatedDesc: 'Save this code somewhere safe. You will need it to recover your data.',
       accountCreatedWarning: 'This code cannot be recovered. Write it down or take a photo.', enterApp: 'Enter App',
@@ -2140,6 +2243,7 @@ const LANG = {
       returnsCount: 'Retours',
       avoirReason: 'Retour (Avoir)',
       walkin: 'Client de passage',
+      dispatchNote: 'Note du bon d\'envoi', dispatchNotePlaceholder: 'Note imprimée sur le bon d\'envoi...',
     },
     brandCat: { brand: 'Marque', category: 'Choisir le Type de Pièce', searchPlaceholder: 'Rechercher un type...', addProduct: 'Ajouter Produit' },
     catProducts: { title: 'Produits', sub: 'Produits Disponibles', searchPlaceholder: 'Rechercher un produit...', addProduct: 'Ajouter Produit', empty: 'Aucun produit dans cette catégorie', addInvoiceTitle: 'Ajouter un Produit à la Facture', scanPlaceholder: 'Scannez le code-barres...', scannerReady: 'Prêt à scanner', searchProduct: 'Rechercher un produit', newProduct: 'Nouveau Produit', searchExisting: 'Rechercher par nom ou code-barres', searchExistingPlaceholder: 'Nom du produit ou code-barres...', name: 'Nom du Produit', namePlaceholder: 'Nom de la pièce', barcode: 'Code-barres', barcodePlaceholder: 'Entrez le code-barres', generate: 'Générer', qty: 'Quantité', buyPrice: 'Prix d\'Achat', sellPrice: 'Prix de Vente', supplier: 'Fournisseur', supplierPlaceholder: 'Rechercher un fournisseur par nom...', cancel: 'Annuler', addToCart: 'Ajouter au Panier de Facture', cartTitle: 'Panier de Facture', total: 'Total:', clear: 'Vider',       confirmInvoice: 'Confirmer la Facture', fiscalStamp: 'Timbre Fiscal (Timbre Fiscal)', wholesalePrice: 'Prix de Gros' },
@@ -2164,6 +2268,8 @@ const LANG = {
       save: 'Enregistrer', cancel: 'Annuler', delete: 'Supprimer', edit: 'Modifier', confirm: 'Confirmer',
       close: 'Fermer', print: 'Imprimer', loading: 'Chargement...', processing: 'Traitement...',
       noResults: 'Aucun résultat', empty: 'Vide', search: 'Rechercher',
+      noPermission: 'Vous n\'avez pas la permission d\'effectuer cette action',
+      noAccessHint: 'Vous n\'avez accès à aucune page. Contactez le gestionnaire.',
       page: 'Page', of: 'de', product: 'Produit', piece: 'Pièce', invoice: 'Facture',
       qty: 'Qté', total: 'Total', paid: 'Payé', remaining: 'Reste', debt: 'Dette',
       date: 'Date', name: 'Nom', status: 'Statut', actions: 'Actions',
@@ -2242,6 +2348,7 @@ const LANG = {
       cannotEditDispatch: 'Impossible de modifier le bon d\'envoi',
       cannotEditReception: 'Impossible de modifier la facture de réception',
       cannotEditProformaWaybill: 'Impossible de modifier le bon de livraison provisoire',
+      noPermission: 'Vous n\'êtes pas autorisé à consulter cette facture',
       editTitle: 'Modifier la Facture',
       editHelpSupplier: 'Facture fournisseur: augmentation du stock et du solde fournisseur.',
       editHelpCustomer: 'Modifier les quantités. Augmentation déduit du stock, diminution retourne au stock.',
@@ -2480,9 +2587,8 @@ const LANG = {
       logoutBtn: 'Déconnexion', uploadCard: 'Télécharger Sauvegarde', uploadDesc: 'La sauvegarde existante dans le cloud sera remplacée...',
       pushTitle: 'Notifications Mobiles', pushDesc: 'Lorsqu\'une commande de produit ou un retour de marchandise avariée est créé, une notification instantanée est envoyée à votre téléphone même lorsque le site est fermé.',
       siteUrlLabel: 'URL du site', siteUrlPlaceholder: 'https://...',
-      pushSecretLabel: 'Clé secrète', pushSecretPlaceholder: 'Votre clé secrète',
       pushSaveBtn: 'Enregistrer', pushUrlRequired: 'Veuillez saisir l\'URL du site', pushUrlInvalid: 'L\'URL du site est invalide',
-      pushSecretRequired: 'Veuillez saisir la clé secrète', pushSaved: 'Paramètres enregistrés',
+      pushSaved: 'Paramètres enregistrés',
       autoBackup: 'Sauvegarde Auto', backupInterval: 'Intervalle (minutes)',
       min1: '1 min', min2: '2 min', min5: '5 min', min10: '10 min', min30: '30 min',
       uploadBtn: 'Télécharger Sauvegarde', restoreBtn: 'Restaurer la Sauvegarde',
@@ -2505,7 +2611,7 @@ const LANG = {
       storeCode: 'Code du Magasin', storeCodePlaceholder: 'Entrez le code du magasin (10 chiffres)',
       usernameLabel: 'Nom d\'utilisateur', usernamePlaceholder: 'Nom d\'utilisateur',
       userPassword: 'Mot de passe', loginAsUser: 'Connexion en tant qu\'Utilisateur',
-      emailLabel: 'Email', createAccount: 'Créer un Compte',
+      emailLabel: 'Email', createAccount: 'Créer un Compte', createPasswordLabel: 'Mot de passe du magasin (facultatif mais recommandé pour l\'activation)',
       mainStoreCode: 'Code du Magasin Principal', branchPassword: 'Mot de passe de la Succursale', branchLogin: 'Connecter en tant que Succursale',
       accountCreatedTitle: 'Compte Créé avec Succès!', accountCreatedDesc: 'Sauvegardez ce code en lieu sûr. Vous en aurez besoin pour récupérer vos données.',
       accountCreatedWarning: 'Ce code ne peut pas être récupéré. Notez-le ou photographiez-le.', enterApp: 'Entrer dans l\'App',
@@ -2820,6 +2926,7 @@ const LANG = {
       returnsCount: '退货',
       avoirReason: '退货 (Avoir)',
       walkin: '散客',
+      dispatchNote: '发送单备注', dispatchNotePlaceholder: '将打印在发送单上的备注...',
     },
     brandCat: { brand: '品牌', category: '选择零件类型', searchPlaceholder: '搜索类型...', addProduct: '添加产品' },
     catProducts: { title: '产品', sub: '可用产品', searchPlaceholder: '搜索产品...', addProduct: '添加产品', empty: '此分类无产品', addInvoiceTitle: '添加产品到发票', scanPlaceholder: '扫描条码...', scannerReady: '准备扫描', searchProduct: '搜索产品', newProduct: '新产品', searchExisting: '按名称或条码搜索', searchExistingPlaceholder: '产品名称或条码...', name: '产品名称', namePlaceholder: '零件名称', barcode: '条码', barcodePlaceholder: '输入条码', generate: '生成', qty: '数量', buyPrice: '进价', sellPrice: '售价', supplier: '供应商', supplierPlaceholder: '按名称搜索供应商...', cancel: '取消', addToCart: '添加到发票购物车', cartTitle: '发票购物车', total: '总计:', clear: '清空',       confirmInvoice: '确认发票', fiscalStamp: '印花税 (Timbre Fiscal)', wholesalePrice: '批发价' },
@@ -2844,6 +2951,8 @@ const LANG = {
       save: '保存', cancel: '取消', delete: '删除', edit: '编辑', confirm: '确认',
       close: '关闭', print: '打印', loading: '加载中...', processing: '处理中...',
       noResults: '无结果', empty: '空', search: '搜索',
+      noPermission: '您没有权限执行此操作',
+      noAccessHint: '您无权访问任何页面。请联系管理员。',
       page: '页', of: '/', product: '产品', piece: '件', invoice: '发票',
       qty: '数量', total: '总计', paid: '已付', remaining: '剩余', debt: '债务',
       date: '日期', name: '名称', status: '状态', actions: '操作',
@@ -2922,6 +3031,7 @@ const LANG = {
       cannotEditDispatch: '不能编辑发送单',
       cannotEditReception: '不能编辑接收发票',
       cannotEditProformaWaybill: '不能编辑临时发货单',
+      noPermission: '您无权查看此发票',
       editTitle: '编辑发票',
       editHelpSupplier: '供应商发票：增加数量增加库存和供应商余额。',
       editHelpCustomer: '编辑数量。增加从库存扣除，减少返回库存。',
@@ -3160,9 +3270,8 @@ const LANG = {
       logoutBtn: '退出登录', uploadCard: '上传备份', uploadDesc: '云端现有备份将被替换...',
       pushTitle: '手机通知', pushDesc: '创建产品订单或变质商品退货时，即使网站已关闭，也会立即向您的手机发送通知。',
       siteUrlLabel: '网站链接', siteUrlPlaceholder: 'https://...',
-      pushSecretLabel: '密钥', pushSecretPlaceholder: '您的密钥',
       pushSaveBtn: '保存', pushUrlRequired: '请输入网站链接', pushUrlInvalid: '网站链接无效',
-      pushSecretRequired: '请输入密钥', pushSaved: '设置已保存',
+      pushSaved: '设置已保存',
       autoBackup: '自动备份', backupInterval: '间隔（分钟）',
       min1: '1分钟', min2: '2分钟', min5: '5分钟', min10: '10分钟', min30: '30分钟',
       uploadBtn: '上传备份', restoreBtn: '恢复备份',
@@ -3185,7 +3294,7 @@ const LANG = {
       storeCode: '商店代码', storeCodePlaceholder: '输入商店代码（10位数）',
       usernameLabel: '用户名', usernamePlaceholder: '用户名',
       userPassword: '密码', loginAsUser: '以用户身份登录',
-      emailLabel: '邮箱', createAccount: '创建账户',
+      emailLabel: '邮箱', createAccount: '创建账户', createPasswordLabel: '商店密码（可选，但建议填写以用于激活）',
       mainStoreCode: '总店代码', branchPassword: '分店密码', branchLogin: '以分店身份连接',
       accountCreatedTitle: '账户创建成功！', accountCreatedDesc: '请将此代码保存在安全处，恢复数据时需要。',
       accountCreatedWarning: '此代码无法恢复，请写下或拍照。', enterApp: '进入应用',
@@ -3574,6 +3683,25 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ===== LICENSE CHECK =====
   const licenseOk = await checkAndEnforceLicense();
   if (!licenseOk) {
+    if (_licenseState.noLicense) {
+      // No license on this machine yet: close the splash and let the store
+      // log in or register. licenseGateAfterLogin() then routes to the
+      // activation overlay (pre-filled with code + password).
+      if (window.electronAPI?.splashClose) {
+        window.electronAPI.splashClose();
+      }
+      try {
+        const res = await fetch('pages/login.html');
+        if (res.ok) {
+          document.getElementById('loginOverlay').innerHTML = await res.text();
+        }
+      } catch (e) { console.warn('[Auth] Failed to load login.html:', e); }
+      if (typeof Auth !== 'undefined' && Auth.isLoggedIn()) {
+        showLicenseOverlay();
+      } else {
+        initLoginView();
+      }
+    }
     console.log('[License] Not activated or expired — app will boot after activation');
     return;
   }
@@ -3707,7 +3835,7 @@ async function bootApp() {
     if (navShared) navShared.style.display = 'none';
   }
 
-  navigateTo('dashboard');
+  navigateTo(Auth.firstViewablePage() || 'dashboard');
 
   // One-time only: LAN + cloud init must not run again on re-boot after activation
   if (_bootFinalized) return;

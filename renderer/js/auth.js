@@ -124,8 +124,11 @@ const Auth = (() => {
   }
 
   // ===== ACCOUNT CREATION =====
-  async function createAccount(email) {
-    const { ok, data } = await _siteFetch('/api/push-trigger', { action: 'register', email });
+  // `password` is optional but recommended for the license flow: it is stored
+  // server-side at creation (password_hash/password_salt), so the store can
+  // immediately activate its granted license key without a second setup step.
+  async function createAccount(email, password) {
+    const { ok, data } = await _siteFetch('/api/push-trigger', { action: 'register', email, password: password || '' });
     if (!ok || !data) throw new Error('فشل إنشاء الحساب: ' + (data?.error || 'لا يمكن الوصول للخادم'));
 
     const user = {
@@ -139,6 +142,7 @@ const Auth = (() => {
     saveUser(user);
     localStorage.setItem('zmt_store_code', user.code);
     localStorage.setItem('zmt_store_type', 'main');
+    if (password) localStorage.setItem('zmt_store_password', password);
 
     return { user, isNew: !!data.isNew };
   }

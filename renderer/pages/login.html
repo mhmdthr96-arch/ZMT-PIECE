@@ -73,10 +73,17 @@
             <label data-i18n="login.emailLabel">البريد الإلكتروني</label>
             <input type="email" id="loginEmail" placeholder="your-email@gmail.com" dir="ltr">
           </div>
+          <div class="login-field">
+            <label data-i18n="login.createPasswordLabel">كلمة مرور المحل (اختياري لكن موصى به — للتفعيل)</label>
+            <input type="password" id="loginPassword" placeholder="أدخل كلمة المرور (4 أحرف فأكثر)" data-i18n-placeholder="login.passwordPlaceholder">
+          </div>
           <div class="login-status" id="loginCreateStatus"></div>
           <button class="login-btn login-btn-primary" onclick="loginCreateAccount()">
             <i class="fas fa-magic"></i> <span data-i18n="login.createAccount">إنشاء حساب</span>
           </button>
+          <div style="text-align:center;margin-top:10px;">
+            <span style="color:#999;font-size:12px;">أدخل كلمة المرور حتى تتمكن من تفعيل البرنامج بمفتاح المزوّد فور منحه</span>
+          </div>
         </div>
 
         <!-- Branch Connection -->

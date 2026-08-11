@@ -24,12 +24,27 @@
     font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
     min-height: 100vh; padding: 24px;
   }
-  .wrap { max-width: 980px; margin: 0 auto; }
-  header { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
   header img { width: 44px; height: 44px; border-radius: 10px; object-fit: cover; }
   header h1 { font-size: 20px; font-weight: 700; }
   header h1 span { color: var(--accent); }
   header .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+  .tab {
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    color: var(--muted); font-weight: 600; font-size: 14px;
+    padding: 10px 18px; cursor: pointer; margin-bottom: -1px;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab .count {
+    background: rgba(47,129,247,.15); color: var(--accent);
+    border-radius: 20px; padding: 1px 8px; font-size: 11px; margin-right: 4px;
+  }
+  .tab .count.empty { background: rgba(139,148,158,.15); color: var(--muted); }
+
   .card {
     background: var(--panel); border: 1px solid var(--border);
     border-radius: 12px; padding: 18px; margin-bottom: 16px;
@@ -37,7 +52,7 @@
   .card h2 { font-size: 15px; margin-bottom: 14px; color: var(--text); display:flex; align-items:center; gap:8px; }
   .card h2 i { color: var(--accent); }
   .row { display: flex; gap: 12px; flex-wrap: wrap; }
-  .field { flex: 1; min-width: 180px; }
+  .field { flex: 1; min-width: 150px; }
   .field.sm { flex: 0 0 130px; }
   label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
   input, select, button {
@@ -56,6 +71,8 @@
   .btn-primary:hover { filter: brightness(1.1); }
   .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
   .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-green { background: var(--green); color: #fff; }
+  .btn-green:hover { filter: brightness(1.1); }
   .btn-danger { background: transparent; border: 1px solid var(--red); color: var(--red); }
   .btn-danger:hover { background: var(--red); color: #fff; }
   .btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
@@ -72,9 +89,10 @@
   .badge.unused { background: rgba(188,140,255,.15); color: var(--purple); }
   .badge.active { background: rgba(63,185,80,.15); color: var(--green); }
   .badge.revoked { background: rgba(248,81,73,.15); color: var(--red); }
+  .badge.expired { background: rgba(210,153,34,.15); color: var(--orange); }
   .devices { margin-top: 4px; font-size: 12px; color: var(--muted); }
   .devices .dev { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-  .devices .dev .chip { background: var(--panel2); border: 1px solid var(--border); padding: 2px 8px; border-radius: 6px; }
+  .devices .dev .chip { background: var(--panel2); border: 1px solid var(--border); padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
   .devices .dev.released { opacity: .5; }
   .toolbar { display: flex; justify-content: flex-end; margin-bottom: 10px; }
   .empty { color: var(--muted); text-align: center; padding: 24px; font-size: 13px; }
@@ -83,6 +101,32 @@
   details { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-top: 12px; }
   details summary { cursor: pointer; font-size: 13px; color: var(--muted); }
   .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .link-btn { background: none; border: none; color: var(--accent); font-size: 12px; padding: 0; font-weight: 600; }
+  .link-btn:hover { text-decoration: underline; }
+  .summary-box {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 14px; font-size: 13px; margin-top: 12px; display: flex; gap: 18px; flex-wrap: wrap;
+  }
+  .summary-box .item { color: var(--muted); }
+  .summary-box .item b { color: var(--text); }
+  .grant-result { display: none; margin-top: 14px; }
+  .grant-result .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+  /* invoice print surface — hidden on screen */
+  #invoicePrint { display: none; }
+
+  @media print {
+    @page { size: A4; margin: 12mm; }
+    body { background: #fff; padding: 0; }
+    body * { visibility: hidden; }
+    #invoicePrint, #invoicePrint * { visibility: visible; }
+    #invoicePrint {
+      display: block; position: absolute; inset: 0;
+      background: #fff; color: #000;
+      font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+      direction: ltr; text-align: left; padding: 8mm;
+    }
+  }
 </style>
 </head>
 <body>
@@ -91,103 +135,224 @@
     <img src="assets/logo.png" alt="" onerror="this.style.display='none'">
     <div>
       <h1>ZMT <span>PIECE</span> — إدارة التراخيص</h1>
-      <div class="sub">أداة إصدار وإدارة مفاتيح التفعيل حسب المتجر والجهاز (SMBIOS)</div>
+      <div class="sub">أداة منح وإدارة تراخيص المتاجر والفروع والفواتير</div>
     </div>
   </header>
 
-  <div class="card">
-    <h2><i>🔐</i> السر الإداري</h2>
-    <div class="row">
-      <div class="field">
-        <label>السر الإداري (يُحفظ في هذا المتصفح فقط)</label>
-        <input type="password" id="adminSecret" dir="ltr" autocomplete="off" placeholder="أدخل LICENSE_ADMIN_SECRET">
-      </div>
-      <div class="field sm" style="align-self:flex-end">
-        <button class="btn-primary" id="saveSecretBtn" style="width:100%">حفظ السر</button>
-      </div>
-    </div>
-    <div class="hint">لا يُرسل السر إلا إلى خادمك عبر الرأس <code>x-zmt-admin</code>.</div>
-  </div>
+  <nav class="tabs">
+    <button class="tab active" data-tab="licenses">التراخيص والإصدار</button>
+    <button class="tab" data-tab="pending">طلبات جديدة<span class="count" id="pendingCount"></span></button>
+    <button class="tab" data-tab="invoices">الفواتير</button>
+  </nav>
 
-  <div class="card">
-    <h2><i>➕</i> إصدار مفتاح جديد</h2>
-    <div class="row">
-      <div class="field">
-        <label>رمز المتجر (المتجر الرئيسي)</label>
-        <input type="text" id="issueStore" dir="ltr" placeholder="مثال: 7952352123" autocomplete="off">
-      </div>
-      <div class="field sm">
-        <label>النوع</label>
-        <select id="issueType">
-          <option value="monthly">شهر واحد</option>
-          <option value="yearly">سنة واحدة</option>
-          <option value="3years">3 سنوات</option>
-          <option value="custom">مخصص</option>
-        </select>
-      </div>
-      <div class="field sm" id="daysField" style="display:none">
-        <label>عدد الأيام</label>
-        <input type="number" id="issueDays" value="30" min="1" max="3650">
-      </div>
-      <div class="field sm">
-        <label>حد الأجهزة</label>
-        <input type="number" id="issueDevices" value="1" min="1" max="50">
-      </div>
-      <div class="field sm" style="align-self:flex-end">
-        <button class="btn-primary" id="issueBtn" style="width:100%">إصدار</button>
-      </div>
-    </div>
-    <div class="msg" id="issueMsg"></div>
-    <div id="issueResult" style="display:none; margin-top:14px">
-      <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:6px">المفتاح الجديد — سلمه لصاحب المتجر</label>
-      <div class="keybox">
-        <div class="mono" id="issuedKey"></div>
-        <button class="btn-ghost" id="copyKeyBtn">نسخ</button>
-      </div>
-      <div class="hint" id="issuedMeta"></div>
-    </div>
-  </div>
+  <!-- ============================= TAB: LICENSES ============================= -->
+  <section id="tab-licenses" class="tab-content">
 
-  <div class="card">
-    <h2><i>📋</i> التراخيص</h2>
-    <div class="row" style="margin-bottom:12px">
-      <div class="field">
-        <label>رمز المتجر (اتركه فارغاً لعرض الكل)</label>
-        <input type="text" id="listStore" dir="ltr" placeholder="فارغ = كل المتاجر" autocomplete="off">
+    <div class="card">
+      <h2><i>🔐</i> السر الإداري</h2>
+      <div class="row">
+        <div class="field">
+          <label>السر الإداري (يُحفظ في هذا المتصفح فقط)</label>
+          <input type="password" id="adminSecret" dir="ltr" autocomplete="off" placeholder="أدخل LICENSE_ADMIN_SECRET">
+        </div>
+        <div class="field sm" style="align-self:flex-end">
+          <button class="btn-primary" id="saveSecretBtn" style="width:100%">حفظ السر</button>
+        </div>
       </div>
-      <div class="field sm" style="align-self:flex-end">
-        <button class="btn-primary" id="listBtn" style="width:100%">عرض</button>
-      </div>
+      <div class="hint">لا يُرسل السر إلا إلى خادمك عبر الرأس <code>x-zmt-admin</code>.</div>
     </div>
-    <div class="msg" id="listMsg"></div>
-    <div id="listWrap">
-      <div class="empty">اضغط «عرض» لتحميل التراخيص</div>
-    </div>
-  </div>
 
-  <div class="card">
-    <details>
-      <summary>فك ربط أو إلغاء يدوي (نادر)</summary>
+    <div class="card">
+      <h2><i>🎟️</i> منح ترخيص جديد (إنشاء مفتاح + فاتورة)</h2>
+      <div class="row">
+        <div class="field">
+          <label>رمز المتجر الرئيسي</label>
+          <input type="text" id="issueStore" dir="ltr" placeholder="مثال: 7952352123" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>اسم المحل (اختياري — يُحدَّث في حساب العميل)</label>
+          <input type="text" id="issueStoreName" placeholder="مثال: ZMT Auto Parts" autocomplete="off">
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <div class="field sm">
+          <label>النوع</label>
+          <select id="issueType">
+            <option value="monthly">شهر واحد</option>
+            <option value="yearly">سنة واحدة</option>
+            <option value="3years">3 سنوات</option>
+            <option value="custom">مخصص</option>
+          </select>
+        </div>
+        <div class="field sm" id="daysField" style="display:none">
+          <label>عدد الأيام</label>
+          <input type="number" id="issueDays" value="30" min="1" max="3650">
+        </div>
+        <div class="field sm">
+          <label>أجهزة المحل الرئيسي</label>
+          <input type="number" id="issueMainDevices" value="1" min="1" max="50">
+        </div>
+        <div class="field sm">
+          <label>عدد الفروع</label>
+          <input type="number" id="issueBranchCount" value="0" min="0" max="200">
+        </div>
+        <div class="field sm" id="branchDevicesField">
+          <label>أجهزة لكل فرع</label>
+          <input type="number" id="issueBranchDevices" value="0" min="0" max="50">
+        </div>
+      </div>
       <div class="row" style="margin-top:12px">
         <div class="field">
-          <label>فك ربط جهاز — معرف الجهاز (64 حرف)</label>
-          <input type="text" id="relHash" dir="ltr" placeholder="smbios hash..." autocomplete="off">
-        </div>
-        <div class="field sm" style="align-self:flex-end">
-          <button class="btn-ghost" id="relBtn">فك الربط</button>
+          <label>المبلغ المستحق</label>
+          <input type="number" id="issueOwed" value="0" min="0" step="0.01">
         </div>
         <div class="field">
-          <label>إلغاء ترخيص — المفتاح</label>
-          <input type="text" id="revKey" dir="ltr" placeholder="ZMT-XXXX-XXXX-XXXX" autocomplete="off">
+          <label>المبلغ المدفوع</label>
+          <input type="number" id="issuePaid" value="0" min="0" step="0.01">
         </div>
-        <div class="field sm" style="align-self:flex-end">
-          <button class="btn-danger" id="revBtn">إلغاء</button>
+        <div class="field sm">
+          <label>العملة</label>
+          <select id="issueCurrency">
+            <option value="DZD">DZD</option>
+            <option value="EUR">EUR</option>
+            <option value="USD">USD</option>
+            <option value="MAD">MAD</option>
+            <option value="TND">TND</option>
+          </select>
         </div>
       </div>
-      <div class="msg" id="manualMsg"></div>
-    </details>
-  </div>
+      <div class="row" style="margin-top:12px">
+        <div class="field">
+          <label>ملاحظات (تظهر في الفاتورة — اختياري)</label>
+          <input type="text" id="issueNotes" placeholder="مثال: ترخيص سنوي + 3 فروع" autocomplete="off">
+        </div>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <div class="field" style="flex:0 0 auto">
+          <button class="btn-primary" id="issueBtn">منح الترخيص وإصدار الفاتورة</button>
+        </div>
+      </div>
+      <div class="summary-box" id="issueSummary" style="display:none"></div>
+      <div class="msg" id="issueMsg"></div>
+      <div class="grant-result" id="issueResult">
+        <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:6px">المفتاح الجديد — سلمه لصاحب المتجر مع رمز المحل وكلمة المرور</label>
+        <div class="keybox">
+          <div class="mono" id="issuedKey"></div>
+          <button class="btn-ghost" id="copyKeyBtn">نسخ</button>
+        </div>
+        <div class="hint" id="issuedMeta"></div>
+        <div class="actions">
+          <button class="btn-green" id="printInvoiceBtn">🖨️ طباعة الفاتورة (PDF)</button>
+          <button class="btn-ghost" id="copyInvoiceBtn">نسخ رقم الفاتورة</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><i>📋</i> التراخيص</h2>
+      <div class="row" style="margin-bottom:12px">
+        <div class="field">
+          <label>رمز المتجر (اتركه فارغاً لعرض الكل)</label>
+          <input type="text" id="listStore" dir="ltr" placeholder="فارغ = كل المتاجر" autocomplete="off">
+        </div>
+        <div class="field sm" style="align-self:flex-end">
+          <button class="btn-primary" id="listBtn" style="width:100%">عرض</button>
+        </div>
+      </div>
+      <div class="msg" id="listMsg"></div>
+      <div id="listWrap">
+        <div class="empty">اضغط «عرض» لتحميل التراخيص</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <details>
+        <summary>فك ربط أو إلغاء يدوي (نادر)</summary>
+        <div class="row" style="margin-top:12px">
+          <div class="field">
+            <label>فك ربط جهاز — معرف الجهاز (64 حرف)</label>
+            <input type="text" id="relHash" dir="ltr" placeholder="smbios hash..." autocomplete="off">
+          </div>
+          <div class="field sm" style="align-self:flex-end">
+            <button class="btn-ghost" id="relBtn">فك الربط</button>
+          </div>
+          <div class="field">
+            <label>إلغاء ترخيص — المفتاح</label>
+            <input type="text" id="revKey" dir="ltr" placeholder="ZMT-XXXX-XXXX-XXXX" autocomplete="off">
+          </div>
+          <div class="field sm" style="align-self:flex-end">
+            <button class="btn-danger" id="revBtn">إلغاء</button>
+          </div>
+        </div>
+        <div class="msg" id="manualMsg"></div>
+      </details>
+    </div>
+  </section>
+
+  <!-- ============================= TAB: PENDING ============================= -->
+  <section id="tab-pending" class="tab-content" style="display:none">
+    <div class="card">
+      <h2><i>🕐</i> طلبات جديدة — متاجر سجّلت ولم يُمنح لها ترخيص</h2>
+      <div class="hint" style="margin-bottom:12px">عند تسجيل عميل جديد من سطح المكتب يظهر هنا تلقائياً. اضغط «منح ترخيص» لفتح نموذج الإصدار مع بياناته.</div>
+      <div class="msg" id="pendingMsg"></div>
+      <div id="pendingWrap">
+        <div class="empty">جارٍ التحميل...</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================= TAB: INVOICES ============================= -->
+  <section id="tab-invoices" class="tab-content" style="display:none">
+    <div class="card">
+      <h2><i>🏢</i> بيانات المزوّد (تظهر في الفاتورة)</h2>
+      <div class="row">
+        <div class="field">
+          <label>الاسم / الشركة</label>
+          <input type="text" id="vendorName" dir="ltr" value="ZMT SOFTWARE">
+        </div>
+        <div class="field">
+          <label>العنوان</label>
+          <input type="text" id="vendorAddress" dir="ltr" placeholder="Adresse...">
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <div class="field">
+          <label>الهاتف</label>
+          <input type="text" id="vendorPhone" dir="ltr" placeholder="Téléphone...">
+        </div>
+        <div class="field">
+          <label>البريد / الموقع</label>
+          <input type="text" id="vendorEmail" dir="ltr" placeholder="Email / Site...">
+        </div>
+        <div class="field" style="flex:0 0 auto">
+          <label>&nbsp;</label>
+          <button class="btn-ghost" id="vendorSaveBtn" style="width:100%">حفظ البيانات</button>
+        </div>
+      </div>
+      <div class="msg" id="vendorMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2><i>🧾</i> سجل الفواتير</h2>
+      <div class="row" style="margin-bottom:12px">
+        <div class="field">
+          <label>رمز المتجر (اتركه فارغاً لعرض الكل)</label>
+          <input type="text" id="invStore" dir="ltr" placeholder="فارغ = كل المتاجر" autocomplete="off">
+        </div>
+        <div class="field sm" style="align-self:flex-end">
+          <button class="btn-primary" id="invListBtn" style="width:100%">عرض</button>
+        </div>
+      </div>
+      <div class="msg" id="invMsg"></div>
+      <div id="invWrap">
+        <div class="empty">اضغط «عرض» لتحميل الفواتير</div>
+      </div>
+    </div>
+  </section>
 </div>
+
+<!-- hidden invoice print surface -->
+<div id="invoicePrint"></div>
 
 <script>
 (function () {
@@ -195,8 +360,25 @@
 
   var API = 'https://zmt-website.vercel.app/api/push-trigger';
   var SECRET_KEY = 'zmt_admin_secret';
+  var VENDOR_KEY = 'zmt_vendor_info';
 
   var $ = function (id) { return document.getElementById(id); };
+
+  var VENDOR_DEFAULTS = {
+    name: 'ZMT SOFTWARE',
+    address: '',
+    phone: '',
+    email: ''
+  };
+
+  function getVendor() {
+    var v = VENDOR_DEFAULTS;
+    try {
+      var saved = JSON.parse(localStorage.getItem(VENDOR_KEY) || 'null');
+      if (saved) v = Object.assign({}, VENDOR_DEFAULTS, saved);
+    } catch (e) {}
+    return v;
+  }
 
   function getSecret() {
     var s = $('adminSecret').value.trim();
@@ -235,6 +417,19 @@
     return data;
   }
 
+  // ---- tabs ----
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  tabs.forEach(function (t) {
+    t.addEventListener('click', function () {
+      tabs.forEach(function (x) { x.classList.remove('active'); });
+      this.classList.add('active');
+      Array.prototype.slice.call(document.querySelectorAll('.tab-content')).forEach(function (s) {
+        s.style.display = 'none';
+      });
+      $('tab-' + this.getAttribute('data-tab')).style.display = 'block';
+    });
+  });
+
   // ---- secret ----
   $('saveSecretBtn').addEventListener('click', function () {
     var s = $('adminSecret').value.trim();
@@ -249,38 +444,139 @@
     if (saved) $('adminSecret').placeholder = 'محفوظ ✓ — اتركه فارغاً للاستخدام';
   })();
 
+  // ---- vendor info ----
+  (function () {
+    var v = getVendor();
+    $('vendorName').value = v.name;
+    $('vendorAddress').value = v.address;
+    $('vendorPhone').value = v.phone;
+    $('vendorEmail').value = v.email;
+  })();
+  $('vendorSaveBtn').addEventListener('click', function () {
+    localStorage.setItem(VENDOR_KEY, JSON.stringify({
+      name: $('vendorName').value.trim(),
+      address: $('vendorAddress').value.trim(),
+      phone: $('vendorPhone').value.trim(),
+      email: $('vendorEmail').value.trim()
+    }));
+    showMsg($('vendorMsg'), 'تم حفظ بيانات المزوّد', 'ok');
+    setTimeout(function () { hideMsg($('vendorMsg')); }, 2000);
+  });
+
   // ---- type / days ----
   $('issueType').addEventListener('change', function () {
     var t = this.value;
     $('daysField').style.display = t === 'custom' ? 'block' : 'none';
     if (t === 'custom') $('issueDays').value = 30;
   });
+  $('issueBranchCount').addEventListener('input', function () {
+    var n = parseInt(this.value, 10) || 0;
+    $('branchDevicesField').style.opacity = n > 0 ? '1' : '.4';
+    if (n > 0 && (parseInt($('issueBranchDevices').value, 10) || 0) < 1) $('issueBranchDevices').value = 1;
+  });
 
-  // ---- issue ----
+  function typeToDays(type) {
+    if (type === 'monthly') return 30;
+    if (type === 'yearly') return 365;
+    if (type === '3years') return 1095;
+    return parseInt($('issueDays').value, 10) || 30;
+  }
+
+  function updateSummary() {
+    var main = parseInt($('issueMainDevices').value, 10) || 1;
+    var br = parseInt($('issueBranchCount').value, 10) || 0;
+    var bd = parseInt($('issueBranchDevices').value, 10) || 0;
+    var days = typeToDays($('issueType').value);
+    var owed = parseFloat($('issueOwed').value) || 0;
+    var paid = parseFloat($('issuePaid').value) || 0;
+    var curr = $('issueCurrency').value;
+    $('issueSummary').style.display = 'flex';
+    $('issueSummary').innerHTML =
+      '<span class="item">المدة: <b>' + days + ' يوم</b></span>' +
+      '<span class="item">الرئيسي: <b>' + main + '</b></span>' +
+      '<span class="item">الفروع: <b>' + br + (br ? ' × ' + bd + ' أجهزة' : '') + '</b></span>' +
+      '<span class="item">الإجمالي: <b>' + (main + br * bd) + ' جهاز</b></span>' +
+      '<span class="item">الباقي: <b>' + (owed - paid).toFixed(2) + ' ' + curr + '</b></span>';
+  }
+  ['issueType','issueDays','issueMainDevices','issueBranchCount','issueBranchDevices','issueOwed','issuePaid','issueCurrency'].forEach(function (id) {
+    var el = $(id);
+    ['change','input'].forEach(function (ev) {
+      el.addEventListener(ev, updateSummary);
+    });
+  });
+  updateSummary();
+
+  // ---- grant ----
+  function fillIssueForm(store) {
+    $('issueStore').value = store.code || '';
+    $('issueStoreName').value = store.storeName || '';
+    $('issueType').value = 'monthly';
+    $('issueDays').value = 30;
+    $('daysField').style.display = 'none';
+    $('issueMainDevices').value = 1;
+    $('issueBranchCount').value = 0;
+    $('issueBranchDevices').value = 0;
+    $('issueOwed').value = 0;
+    $('issuePaid').value = 0;
+    $('issueNotes').value = '';
+    $('issueResult').style.display = 'none';
+    updateSummary();
+  }
+
   $('issueBtn').addEventListener('click', async function () {
     var secret = getSecret();
     if (!secret) { showMsg($('issueMsg'), 'أدخل السر الإداري أولاً', 'err'); return; }
     var store = $('issueStore').value.trim();
-    var type = $('issueType').value;
-    var days = type === 'custom' ? parseInt($('issueDays').value, 10) || 30 : 0;
-    var dev = parseInt($('issueDevices').value, 10) || 1;
+    if (!store) { showMsg($('issueMsg'), 'أدخل رمز المتجر', 'err'); return; }
     var btn = this;
     hideMsg($('issueMsg'));
     $('issueResult').style.display = 'none';
-    btn.disabled = true; btn.textContent = 'جارٍ الإصدار...';
+    btn.disabled = true; btn.textContent = 'جارٍ المنح...';
     try {
       var res = await api('license_issue', {
-        storeCode: store, type: type, days: days, maxDevices: dev
+        storeCode: store,
+        storeName: $('issueStoreName').value.trim(),
+        type: $('issueType').value,
+        days: typeToDays($('issueType').value),
+        mainDevices: parseInt($('issueMainDevices').value, 10) || 1,
+        branchCount: parseInt($('issueBranchCount').value, 10) || 0,
+        branchDevices: parseInt($('issueBranchDevices').value, 10) || 0,
+        amountOwed: parseFloat($('issueOwed').value) || 0,
+        amountPaid: parseFloat($('issuePaid').value) || 0,
+        currency: $('issueCurrency').value,
+        notes: $('issueNotes').value.trim()
       }, secret);
-      $('issuedKey').textContent = res.license.key;
-      var typeLabel = { monthly: 'شهر واحد', yearly: 'سنة واحدة', '3years': '3 سنوات', custom: res.license.days + ' يوم' }[res.license.type] || (res.license.days + ' يوم');
-      $('issuedMeta').textContent = 'المتجر ' + res.license.storeCode + ' — ' + typeLabel + ' — ' + res.license.maxDevices + ' جهاز';
+      var lic = res.license;
+      var inv = res.invoice || {};
+      $('issuedKey').textContent = lic.key;
+      $('issuedMeta').textContent =
+        'المتجر ' + lic.storeCode +
+        ' — ' + lic.days + ' يوم (من ' + fmtDate(lic.issuedAt) + ' حتى ' + fmtDate(lic.expiresAt) + ')' +
+        ' — ' + lic.maxDevices + ' جهاز' +
+        (inv.number ? ' — فاتورة ' + inv.number : '');
+      window._lastInvoice = {
+        number: inv.number,
+        licenseKey: lic.key,
+        storeCode: lic.storeCode,
+        storeName: lic.storeName,
+        email: lic.email,
+        issuedAt: lic.issuedAt,
+        expiresAt: lic.expiresAt,
+        days: lic.days,
+        mainDevices: lic.mainDevices,
+        branchCount: lic.branchCount,
+        branchDevices: lic.branchDevices,
+        amountOwed: inv.amountOwed,
+        amountPaid: inv.amountPaid,
+        currency: inv.currency,
+        notes: ($('issueNotes').value.trim() || null)
+      };
       $('issueResult').style.display = 'block';
-      showMsg($('issueMsg'), 'تم إصدار المفتاح بنجاح', 'ok');
+      showMsg($('issueMsg'), 'تم منح الترخيص وإصدار الفاتورة بنجاح', 'ok');
     } catch (e) {
       showMsg($('issueMsg'), e.message, 'err');
     } finally {
-      btn.disabled = false; btn.textContent = 'إصدار';
+      btn.disabled = false; btn.textContent = 'منح الترخيص وإصدار الفاتورة';
     }
   });
 
@@ -293,6 +589,112 @@
       b.textContent = 'تم النسخ ✓';
       setTimeout(function () { b.textContent = old; }, 1500);
     }.bind(this)).catch(function () {});
+  });
+
+  $('copyInvoiceBtn').addEventListener('click', function () {
+    var inv = window._lastInvoice;
+    if (!inv || !inv.number) return;
+    navigator.clipboard.writeText(inv.number).then(function () {
+      var b = this;
+      var old = b.textContent;
+      b.textContent = 'تم النسخ ✓';
+      setTimeout(function () { b.textContent = old; }, 1500);
+    }.bind(this)).catch(function () {});
+  });
+
+  // ---- French invoice rendering ----
+  function frDate(v) {
+    if (!v) return '';
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return String(v);
+    return d.toLocaleDateString('fr-FR', { year: 'numeric', month: 'long', day: 'numeric' });
+  }
+
+  function numFmt(n, curr) {
+    return new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n) + ' ' + (curr || 'DZD');
+  }
+
+  function renderInvoice(inv) {
+    var v = getVendor();
+    var rest = (inv.amountOwed || 0) - (inv.amountPaid || 0);
+    var config = '';
+    config += '<tr><td>Licence ZMT PIECE — ' + inv.days + ' jour(s)</td><td style="text-align:right">' + numFmt(inv.amountOwed || 0, inv.currency) + '</td></tr>';
+    if (inv.mainDevices) config += '<tr><td style="padding-left:20px">— Poste(s) principal(aux) : ' + inv.mainDevices + '</td><td></td></tr>';
+    if (inv.branchCount) {
+      config += '<tr><td style="padding-left:20px">— Agence(s) : ' + inv.branchCount + ' × ' + inv.branchDevices + ' poste(s)</td><td></td></tr>';
+    }
+    if (inv.notes) config += '<tr><td style="padding-left:20px;color:#555">' + esc(inv.notes) + '</td><td></td></tr>';
+    if (inv.licenseKey) {
+      config += '<tr><td style="padding-top:10px"><b>Clé de licence :</b></td><td style="padding-top:10px"><b class="lic-key">' + esc(inv.licenseKey) + '</b></td></tr>';
+    }
+
+    return '' +
+      '<div style="font-size:12px;color:#333">' +
+        '<table style="width:100%;border-collapse:collapse"><tr>' +
+          '<td style="vertical-align:top">' +
+            '<div style="font-size:22px;font-weight:700;color:#0b3d91">ZMT <span style="color:#e11">SOFTWARE</span></div>' +
+            '<div style="margin-top:2px;color:#555">' + esc(v.name) + '</div>' +
+            (v.address ? '<div style="color:#555">' + esc(v.address) + '</div>' : '') +
+            (v.phone ? '<div style="color:#555">' + esc(v.phone) + '</div>' : '') +
+            (v.email ? '<div style="color:#555">' + esc(v.email) + '</div>' : '') +
+          '</td>' +
+          '<td style="vertical-align:top;text-align:right">' +
+            '<div style="font-size:26px;font-weight:700;letter-spacing:2px;color:#0b3d91">FACTURE</div>' +
+            '<div style="margin-top:6px;color:#333"><b>N°</b> ' + esc(inv.number || '') + '</div>' +
+            '<div style="color:#333"><b>Date d\'émission :</b> ' + frDate(inv.issuedAt) + '</div>' +
+            '<div style="color:#333"><b>Période :</b> jusqu\'au ' + frDate(inv.expiresAt) + '</div>' +
+          '</td>' +
+        '</tr></table>' +
+
+        '<table style="width:100%;margin-top:22px;border-collapse:collapse">' +
+          '<tr>' +
+            '<td style="vertical-align:top;border:1px solid #999;padding:8px;width:50%">' +
+              '<div style="font-size:10px;color:#777;text-transform:uppercase">Client / Facturé à</div>' +
+              '<div style="font-weight:600;margin-top:2px">' + esc(inv.storeName || '') + '</div>' +
+              '<div>Code client : <b>' + esc(inv.storeCode || '') + '</b></div>' +
+              (inv.email ? '<div>' + esc(inv.email) + '</div>' : '') +
+            '</td>' +
+            '<td style="vertical-align:top;border:1px solid #999;padding:8px;width:50%">' +
+              '<div style="font-size:10px;color:#777;text-transform:uppercase">Conditions / Mode de règlement</div>' +
+              '<div style="margin-top:2px">Paiement à la commande — licence activée à compter de la date d\'émission.</div>' +
+              '<div>Devise : <b>' + esc(inv.currency || 'DZD') + '</b></div>' +
+            '</td>' +
+          '</tr>' +
+        '</table>' +
+
+        '<table style="width:100%;margin-top:14px;border-collapse:collapse">' +
+          '<tr style="background:#f0f3f8">' +
+            '<th style="border:1px solid #999;padding:6px;text-align:left">Désignation</th>' +
+            '<th style="border:1px solid #999;padding:6px;width:140px;text-align:right">Montant HT</th>' +
+          '</tr>' + config +
+          '<tr>' +
+            '<td style="border:1px solid #999;padding:6px;text-align:right"><b>Total HT</b></td>' +
+            '<td style="border:1px solid #999;padding:6px;text-align:right"><b>' + numFmt(inv.amountOwed || 0, inv.currency) + '</b></td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="border:1px solid #999;padding:6px;text-align:right">Acompte / Payé</td>' +
+            '<td style="border:1px solid #999;padding:6px;text-align:right">-' + numFmt(inv.amountPaid || 0, inv.currency) + '</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="border:1px solid #999;padding:8px;text-align:right"><b style="font-size:15px">Reste à payer</b></td>' +
+            '<td style="border:1px solid #999;padding:8px;text-align:right"><b style="font-size:15px;color:#0b3d91">' + numFmt(rest, inv.currency) + '</b></td>' +
+          '</tr>' +
+        '</table>' +
+
+        '<div style="margin-top:14px;font-size:10px;color:#777">' +
+          'Merci de conserver cette facture avec votre clé de licence. Toute reproduction ou distribution non autorisée est interdite.' +
+        '</div>' +
+      '</div>';
+  }
+
+  function doPrint(inv) {
+    $('invoicePrint').innerHTML = renderInvoice(inv);
+    window.print();
+  }
+
+  $('printInvoiceBtn').addEventListener('click', function () {
+    if (!window._lastInvoice) return;
+    doPrint(window._lastInvoice);
   });
 
   // ---- list ----
@@ -309,6 +711,16 @@
     });
   }
 
+  function statusBadge(l) {
+    var label = { unused: 'غير مستخدم', active: 'مفعّل', revoked: 'ملغي' }[l.status] || l.status;
+    var cls = l.status;
+    if (l.status === 'active' && l.expires_at && new Date(l.expires_at).getTime() < Date.now()) {
+      cls = 'expired';
+      label = 'منتهي';
+    }
+    return '<span class="badge ' + cls + '">' + esc(label) + '</span>';
+  }
+
   function renderList(licenses) {
     if (!licenses.length) {
       return '<div class="empty">لا توجد تراخيص</div>';
@@ -317,7 +729,9 @@
       var typeLabel = { monthly: 'شهر', yearly: 'سنة', '3years': '3 سنوات', custom: l.days + ' يوم' }[l.type] || (l.days + ' يوم');
       var devs = (l.devices || []).map(function (d) {
         return '<div class="dev' + (d.status !== 'active' ? ' released' : '') + '">' +
-          '<span class="chip">' + (d.device_type === 'branch' ? 'فرع' : 'رئيسي') + '</span>' +
+          '<span class="chip">' + (d.device_type === 'branch'
+            ? 'فرع' + (d.branch_code ? ' ' + esc(d.branch_code) : '')
+            : 'رئيسي') + '</span>' +
           '<span class="mono">' + esc(d.device_smbios_hash.slice(0, 12)) + '…</span>' +
           '<span style="font-size:11px">' + (d.status === 'active' ? 'مفعّل' : 'مُفرَج') + ' · ' + fmtDate(d.activated_at) + '</span>' +
           (d.status === 'active'
@@ -329,11 +743,12 @@
         '<td class="mono">' + esc(l.key) + '</td>' +
         '<td class="mono">' + esc(l.store_code) + '</td>' +
         '<td>' + typeLabel + '</td>' +
-        '<td>' + l.max_devices + '</td>' +
+        '<td>' + l.max_devices +
+          '<div style="font-size:11px;color:var(--muted)">رئيسي ' + (l.main_devices || 0) + ' · فروع ' + (l.branch_count || 0) + (l.branch_devices ? ' ×' + l.branch_devices : '') + '</div>' +
+        '</td>' +
         '<td>' + fmtDate(l.issued_at) + '</td>' +
         '<td>' + fmtDate(l.expires_at) + '</td>' +
-        '<td><span class="badge ' + esc(l.status) + '">' +
-          ({ unused: 'غير مستخدم', active: 'مفعّل', revoked: 'ملغي' }[l.status] || l.status) + '</span></td>' +
+        '<td>' + statusBadge(l) + '</td>' +
         '<td><div class="devices">' + devs + '</div></td>' +
         '<td style="white-space:nowrap">' +
           (l.status === 'revoked'
@@ -397,6 +812,125 @@
           showMsg($('listMsg'), e.message, 'err');
           this.disabled = false; this.textContent = 'إلغاء';
         }
+      });
+    });
+  }
+
+  // ---- pending ----
+  async function loadPending() {
+    var secret = getSecret();
+    if (!secret) { $('pendingWrap').innerHTML = '<div class="empty">أدخل السر الإداري أولاً</div>'; return; }
+    $('pendingWrap').innerHTML = '<div class="empty">جارٍ التحميل...</div>';
+    try {
+      var res = await api('license_pending', {}, secret);
+      var list = res.pending || [];
+      $('pendingCount').textContent = list.length;
+      $('pendingCount').className = 'count' + (list.length ? '' : ' empty');
+      if (!list.length) {
+        $('pendingWrap').innerHTML = '<div class="empty">لا توجد طلبات معلقة — كل المتاجر لديها ترخيص فعال 🎉</div>';
+        return;
+      }
+      var rows = list.map(function (p) {
+        return '<tr>' +
+          '<td class="mono">' + esc(p.code) + '</td>' +
+          '<td>' + esc(p.storeName || '—') + '</td>' +
+          '<td class="mono" style="direction:ltr;text-align:left">' + esc(p.email || '') + '</td>' +
+          '<td>' + fmtDate(p.createdAt) + '</td>' +
+          '<td style="white-space:nowrap">' +
+            '<button class="btn-green btn-sm grant-btn" data-code="' + esc(p.code) + '" data-name="' + esc(p.storeName || '') + '" data-email="' + esc(p.email || '') + '">منح ترخيص</button>' +
+          '</td></tr>';
+      }).join('');
+      $('pendingWrap').innerHTML = '<table><thead><tr>' +
+        '<th>رمز المتجر</th><th>الاسم</th><th>البريد</th><th>تاريخ التسجيل</th><th></th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+      Array.prototype.forEach.call(document.querySelectorAll('.grant-btn'), function (btn) {
+        btn.addEventListener('click', function () {
+          fillIssueForm({
+            code: this.getAttribute('data-code'),
+            storeName: this.getAttribute('data-name')
+          });
+          $('issueStoreName').focus();
+          // switch to licenses tab
+          document.querySelector('.tab[data-tab="licenses"]').click();
+          document.getElementById('tab-licenses').scrollIntoView({ behavior: 'smooth' });
+        });
+      });
+    } catch (e) {
+      $('pendingWrap').innerHTML = '<div class="empty">—</div>';
+      showMsg($('pendingMsg'), e.message, 'err');
+    }
+  }
+  document.querySelector('.tab[data-tab="pending"]').addEventListener('click', loadPending);
+  loadPending();
+
+  // ---- invoices ----
+  function renderInvoices(invoices) {
+    if (!invoices.length) return '<div class="empty">لا توجد فواتير</div>';
+    var rows = invoices.map(function (inv) {
+      var rest = (inv.amount_owed || 0) - (inv.amount_paid || 0);
+      var lic = inv.license || {};
+      return '<tr>' +
+        '<td class="mono">' + esc(inv.number) + '</td>' +
+        '<td class="mono">' + esc(inv.store_code) + '</td>' +
+        '<td class="mono">' + esc(inv.license_key) + '</td>' +
+        '<td>' + fmtDate(inv.issued_at) + '</td>' +
+        '<td>' + numFmt(inv.amount_owed || 0, inv.currency) + '</td>' +
+        '<td>' + numFmt(inv.amount_paid || 0, inv.currency) + '</td>' +
+        '<td><b style="color:' + (rest > 0 ? 'var(--orange)' : 'var(--green)') + '">' + numFmt(rest, inv.currency) + '</b></td>' +
+        '<td style="white-space:nowrap">' +
+          '<button class="btn-ghost btn-sm print-inv" data-idx="' + invoices.indexOf(inv) + '">طباعة / PDF</button>' +
+        '</td></tr>';
+    }).join('');
+    return '<table><thead><tr>' +
+      '<th>الرقم</th><th>المتجر</th><th>المفتاح</th><th>تاريخ الإصدار</th><th>المستحق</th><th>المدفوع</th><th>الباقي</th><th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  $('invListBtn').addEventListener('click', async function () {
+    var secret = getSecret();
+    if (!secret) { showMsg($('invMsg'), 'أدخل السر الإداري أولاً', 'err'); return; }
+    var store = $('invStore').value.trim();
+    var btn = this;
+    hideMsg($('invMsg'));
+    $('invWrap').innerHTML = '<div class="empty">جارٍ التحميل...</div>';
+    btn.disabled = true;
+    try {
+      var res = await api('invoice_list', { storeCode: store }, secret);
+      var invoices = res.invoices || [];
+      window._invCache = invoices;
+      $('invWrap').innerHTML = renderInvoices(invoices);
+      bindInvoiceActions();
+    } catch (e) {
+      $('invWrap').innerHTML = '<div class="empty">—</div>';
+      showMsg($('invMsg'), e.message, 'err');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  function bindInvoiceActions() {
+    Array.prototype.forEach.call(document.querySelectorAll('.print-inv'), function (btn) {
+      btn.addEventListener('click', function () {
+        var inv = window._invCache && window._invCache[parseInt(this.getAttribute('data-idx'), 10)];
+        if (!inv) return;
+        var lic = inv.license || {};
+        doPrint({
+          number: inv.number,
+          licenseKey: inv.license_key,
+          storeCode: inv.store_code,
+          storeName: '',
+          email: '',
+          issuedAt: inv.issued_at,
+          expiresAt: lic.expires_at || inv.issued_at,
+          days: lic.days || '',
+          mainDevices: lic.main_devices || 0,
+          branchCount: lic.branch_count || 0,
+          branchDevices: lic.branch_devices || 0,
+          amountOwed: inv.amount_owed || 0,
+          amountPaid: inv.amount_paid || 0,
+          currency: inv.currency || 'DZD',
+          notes: inv.notes || null
+        });
       });
     });
   }

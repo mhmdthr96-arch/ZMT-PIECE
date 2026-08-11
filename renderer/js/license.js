@@ -2,6 +2,7 @@ let _licenseState = {
   checked: false,
   valid: false,
   expired: false,
+  noLicense: false,
   license: null,
   remainingDays: 0,
   showWatermark: false,
@@ -25,7 +26,10 @@ async function checkAndEnforceLicense() {
 
   if (result.status === 'no_license') {
     _licenseState.valid = false;
-    showLicenseOverlay();
+    _licenseState.noLicense = true;
+    // No license yet: we DO NOT block startup with the activation overlay.
+    // Instead the login page is shown (see app.js), and after the store logs in
+    // or registers, licenseGateAfterLogin() routes to the activation overlay.
     return false;
   }
 
@@ -108,6 +112,23 @@ function prefillLicenseForm() {
 function hideLicenseOverlay() {
   const overlay = document.getElementById('licenseOverlay');
   if (overlay) overlay.style.display = 'none';
+}
+
+// Called after the login/registration flow completes: a store may be logged in
+// but still have no activated license on this machine. Route to the activation
+// overlay (pre-filled with the store code/password) instead of the dashboard.
+function licenseGateAfterLogin() {
+  if (_licenseState.valid) return true;
+  if (_licenseState.tampered) {
+    showFreezeOverlay('تم اكتشاف تعديل في ملف الترخيص');
+    return false;
+  }
+  if (_licenseState.expired) {
+    showFreezeOverlay('انتهت مدة التفعيل — أدخل مفتاح جديد للاستمرار');
+    return false;
+  }
+  showLicenseOverlay();
+  return false;
 }
 
 function showFreezeOverlay(message) {

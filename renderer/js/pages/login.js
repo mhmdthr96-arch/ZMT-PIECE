@@ -25,7 +25,7 @@ function showLogin() {
 }
 
 function resetLoginForm() {
-  ['loginManagerCode','loginManagerPassword','loginUserCode','loginUserUsername','loginUserPassword','loginEmail','loginBranchCode','loginBranchPassword'].forEach(id => {
+  ['loginManagerCode','loginManagerPassword','loginUserCode','loginUserUsername','loginUserPassword','loginEmail','loginPassword','loginBranchCode','loginBranchPassword'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -169,17 +169,27 @@ async function loginUserDo() {
 
 async function loginCreateAccount() {
   const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword') ? document.getElementById('loginPassword').value : '';
   const status = document.getElementById('loginCreateStatus');
 
   if (!email || !email.includes('@')) {
     status.innerHTML = '<span style="color:#dc3545;">الرجاء إدخال بريد صحيح</span>';
     return;
   }
+  if (password && password.length < 4) {
+    status.innerHTML = '<span style="color:#dc3545;">كلمة المرور يجب أن تكون 4 أحرف على الأقل</span>';
+    return;
+  }
 
   status.innerHTML = '<span style="color:#0066B1;">جاري إنشاء الحساب...</span>';
 
   try {
-    const result = await Auth.createAccount(email);
+    const result = await Auth.createAccount(email, password || '');
+    if (password) {
+      localStorage.setItem('zmt_store_password', password);
+      const { hash, salt } = await Auth.hashPassword(password);
+      localStorage.setItem('zmt_local_pass', JSON.stringify({ code: result.user.code, hash, salt }));
+    }
     document.getElementById('loginGeneratedCode').textContent = result.user.code;
     document.getElementById('loginStep1').style.display = 'none';
     document.getElementById('loginStep2').style.display = '';
@@ -217,6 +227,13 @@ async function loginConnectBranch() {
 function loginShowDashboard() {
   hideLogin();
 
+  // License gate: even after a successful login/registration this machine may
+  // not have an activated license yet. Route to the activation overlay (which
+  // pre-fills code + password) before entering the dashboard.
+  if (typeof licenseGateAfterLogin === 'function' && !licenseGateAfterLogin()) {
+    return;
+  }
+
   document.querySelectorAll('.nav-item').forEach(nav => { nav.style.display = ''; });
   document.body.classList.remove('user-mode');
 
@@ -231,13 +248,14 @@ function loginShowDashboard() {
   }
 
   if (typeof navigateTo === 'function') {
-    navigateTo('dashboard');
+    const landing = (typeof Auth.firstViewablePage === 'function') ? Auth.firstViewablePage() : null;
+    navigateTo(landing || 'dashboard');
   }
   if (typeof LANSync !== 'undefined') {
     LANSync.hookDb();
     LANSync.start();
   }
-  if (typeof CloudService !== 'undefined' && CloudService.isCloudConnected() && CloudService.hasData()) {
+  if (typeof CloudService !== 'undefined' && CloudService.isCloudConnected()) {
     CloudService.startAutoSync(CloudService.getAutoSyncInterval());
   }
 }
@@ -289,7 +307,7 @@ async function recoveryLookup() {
     document.getElementById('recoveryCodeDisplay').textContent = info.code;
 
     if (info.hasPassword) {
-      document.getElementById('recoveryPassDisplay').textContent = info.password;
+      document.getElementById('recoveryPassDisplay').textContent = '••••••••';
     } else {
       document.getElementById('recoveryPassDisplay').textContent = 'لا توجد كلمة مرور';
     }
