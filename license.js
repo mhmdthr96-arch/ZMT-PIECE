@@ -113,6 +113,21 @@ function _loadSmbiosFingerprint() {
   return null;
 }
 
+// Reads the persisted legacy device id WITHOUT generating a new one (the
+// generator must not be used here — it would mint a fresh random id and break
+// the comparison below).
+function _loadLegacyDeviceId() {
+  try {
+    const p = getDevicePath();
+    if (!fs.existsSync(p)) return null;
+    const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    if (parsed && typeof parsed.deviceId === 'string' && parsed.deviceId.length >= 16) {
+      return parsed.deviceId;
+    }
+  } catch (e) {}
+  return null;
+}
+
 function _saveSmbiosFingerprint(fp) {
   try {
     if (!_userDataPath) return;
@@ -261,6 +276,23 @@ function checkLicense() {
 
   const machineId = getMachineFingerprint();
   if (license.machineId !== machineId) {
+    // Legacy migration: licenses activated by builds <= 2.1.x were bound to the
+    // old random per-installation device id (zmt_device.dat). The SMBIOS
+    // fingerprint upgrade changes the id even on the SAME physical machine, so
+    // an upgrade would wrongly look like a different PC. If the stored machine
+    // id matches the persisted legacy id, this is that same machine — rebind
+    // the license to the current hardware fingerprint instead of failing.
+    const legacyId = _loadLegacyDeviceId();
+    if (legacyId && license.machineId === legacyId) {
+      const migrated = { ...license, machineId };
+      migrated.sig = _licenseSig(migrated);
+      if (typeof license.w === 'number') {
+        migrated.wsig = _wmSig(license.w, machineId);
+      }
+      if (saveLicense(migrated)) {
+        return checkLicense();
+      }
+    }
     return { status: 'machine_mismatch', valid: false, message: 'هذا المفتاح مربوط بجهاز آخر' };
   }
 

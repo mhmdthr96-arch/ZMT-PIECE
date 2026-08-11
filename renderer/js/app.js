@@ -3683,10 +3683,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ===== LICENSE CHECK =====
   const licenseOk = await checkAndEnforceLicense();
   if (!licenseOk) {
-    if (_licenseState.noLicense) {
-      // No license on this machine yet: close the splash and let the store
-      // log in or register. licenseGateAfterLogin() then routes to the
-      // activation overlay (pre-filled with code + password).
+    if (_licenseState.noLicense || _licenseState.machineMismatch) {
+      // No license (or a leftover license bound to another machine) on this
+      // machine yet: close the splash and let the store log in or register.
+      // licenseGateAfterLogin() then routes to the activation overlay
+      // (pre-filled with code + password).
       if (window.electronAPI?.splashClose) {
         window.electronAPI.splashClose();
       }
@@ -3697,7 +3698,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       } catch (e) { console.warn('[Auth] Failed to load login.html:', e); }
       if (typeof Auth !== 'undefined' && Auth.isLoggedIn()) {
-        showLicenseOverlay();
+        showLicenseOverlay(_licenseState.machineMismatch ? 'هذا المفتاح مربوط بجهاز آخر' : undefined);
       } else {
         initLoginView();
       }

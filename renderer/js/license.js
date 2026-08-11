@@ -3,6 +3,7 @@ let _licenseState = {
   valid: false,
   expired: false,
   noLicense: false,
+  machineMismatch: false,
   license: null,
   remainingDays: 0,
   showWatermark: false,
@@ -35,7 +36,11 @@ async function checkAndEnforceLicense() {
 
   if (result.status === 'machine_mismatch') {
     _licenseState.valid = false;
-    showLicenseOverlay('هذا المفتاح مربوط بجهاز آخر');
+    _licenseState.machineMismatch = true;
+    // A leftover license bound to a different machine must NOT block startup
+    // with the activation overlay. Route to the login page instead (like
+    // no_license); after the store logs in, licenseGateAfterLogin() shows the
+    // overlay with the mismatch message so the owner can report the device ID.
     return false;
   }
 
@@ -125,6 +130,10 @@ function licenseGateAfterLogin() {
   }
   if (_licenseState.expired) {
     showFreezeOverlay('انتهت مدة التفعيل — أدخل مفتاح جديد للاستمرار');
+    return false;
+  }
+  if (_licenseState.machineMismatch) {
+    showLicenseOverlay('هذا المفتاح مربوط بجهاز آخر');
     return false;
   }
   showLicenseOverlay();
