@@ -284,6 +284,7 @@
       <div class="row" style="margin-top:14px">
         <div class="field" style="flex:0 0 auto">
           <button class="btn-primary" id="issueBtn">منح الترخيص وإصدار الفاتورة</button>
+          <button class="btn-green" id="autoIssueBtn" style="margin-right:8px">⚡ توليد تلقائي (مجاني شهر)</button>
         </div>
       </div>
       <div class="summary-box" id="issueSummary" style="display:none"></div>
@@ -640,31 +641,18 @@
     $('issueStoreName').focus();
   }
 
-  $('issueBtn').addEventListener('click', async function () {
+  // Shared grant runner: posts to license_issue (the key is generated on the
+  // server) and renders the result box for copying.
+  async function doIssue(payload, btn, busyText, idleText) {
     var secret = getSecret();
-    if (!secret) { showMsg($('issueMsg'), 'أدخل السر الإداري أولاً', 'err'); return; }
-    var store = $('issueStore').value.trim();
-    if (!store) { showMsg($('issueMsg'), 'أدخل رمز المتجر', 'err'); return; }
-    var btn = this;
+    if (!secret) { showMsg($('issueMsg'), 'أدخل السر الإداري أولاً', 'err'); return false; }
     hideMsg($('issueMsg'));
     $('issueResult').style.display = 'none';
-    btn.disabled = true; btn.textContent = 'جارٍ المنح...';
+    var old = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = busyText || 'جارٍ المنح...';
     try {
-      var res = await api('license_issue', {
-        storeCode: store,
-        storeName: $('issueStoreName').value.trim(),
-        product: $('issueProduct').value.trim() || 'ZMT PIECE',
-        free: isFreeMode(),
-        type: $('issueType').value,
-        days: typeToDays($('issueType').value),
-        mainDevices: parseInt($('issueMainDevices').value, 10) || 1,
-        branchCount: parseInt($('issueBranchCount').value, 10) || 0,
-        branchDevices: parseInt($('issueBranchDevices').value, 10) || 0,
-        amountOwed: parseFloat($('issueOwed').value) || 0,
-        amountPaid: parseFloat($('issuePaid').value) || 0,
-        currency: $('issueCurrency').value,
-        notes: $('issueNotes').value.trim()
-      }, secret);
+      var res = await api('license_issue', payload, secret);
       rememberProduct();
       var lic = res.license;
       var inv = res.invoice || {};
@@ -692,7 +680,7 @@
         amountOwed: inv.amountOwed,
         amountPaid: inv.amountPaid,
         currency: inv.currency,
-        notes: ($('issueNotes').value.trim() || null)
+        notes: (payload.notes || null)
       };
       $('issueResult').style.display = 'block';
       $('printInvoiceBtn').style.display = inv.number ? '' : 'none';
@@ -700,11 +688,57 @@
       showMsg($('issueMsg'), inv.number
         ? 'تم منح الترخيص وإصدار الفاتورة بنجاح'
         : 'تم منح ترخيص مجاني — لم تُنشأ فاتورة', 'ok');
+      return true;
     } catch (e) {
       showMsg($('issueMsg'), e.message, 'err');
+      return false;
     } finally {
-      btn.disabled = false; btn.textContent = isFreeMode() ? 'منح مجاني (بدون فاتورة)' : 'منح الترخيص وإصدار الفاتورة';
+      btn.disabled = false;
+      btn.textContent = idleText || old;
     }
+  }
+
+  function currentPayload(free) {
+    var main = parseInt($('issueMainDevices').value, 10) || 1;
+    var br = parseInt($('issueBranchCount').value, 10) || 0;
+    var bd = parseInt($('issueBranchDevices').value, 10) || 0;
+    return {
+      storeCode: $('issueStore').value.trim(),
+      storeName: $('issueStoreName').value.trim(),
+      product: $('issueProduct').value.trim() || 'ZMT PIECE',
+      free: !!free,
+      type: $('issueType').value,
+      days: typeToDays($('issueType').value),
+      mainDevices: main,
+      branchCount: br,
+      branchDevices: bd,
+      amountOwed: free ? 0 : (parseFloat($('issueOwed').value) || 0),
+      amountPaid: free ? 0 : (parseFloat($('issuePaid').value) || 0),
+      currency: free ? 'DZD' : $('issueCurrency').value,
+      notes: $('issueNotes').value.trim()
+    };
+  }
+
+  $('issueBtn').addEventListener('click', function () {
+    var secret = getSecret();
+    if (!secret) { showMsg($('issueMsg'), 'أدخل السر الإداري أولاً', 'err'); return; }
+    var store = $('issueStore').value.trim();
+    if (!store) { showMsg($('issueMsg'), 'أدخل رمز المتجر', 'err'); return; }
+    var free = isFreeMode();
+    doIssue(currentPayload(free), this, null, free ? 'منح مجاني (بدون فاتورة)' : 'منح الترخيص وإصدار الفاتورة');
+  });
+
+  // Auto-generate: free monthly grant. Keeps the devices/branches currently
+  // set in the form so the admin controls them per request.
+  $('autoIssueBtn').addEventListener('click', function () {
+    var secret = getSecret();
+    if (!secret) { showMsg($('issueMsg'), 'أدخل السر الإداري أولاً', 'err'); return; }
+    var store = $('issueStore').value.trim();
+    if (!store) { showMsg($('issueMsg'), 'أدخل رمز المتجر', 'err'); return; }
+    var p = currentPayload(true);
+    p.type = 'monthly';
+    p.days = 30;
+    doIssue(p, this, null, '⚡ توليد تلقائي (مجاني شهر)');
   });
 
   $('copyKeyBtn').addEventListener('click', function () {
@@ -1070,7 +1104,8 @@
           '<td class="mono" style="direction:ltr;text-align:left">' + esc(p.email || '') + '</td>' +
           '<td>' + fmtDate(p.createdAt) + '</td>' +
           '<td style="white-space:nowrap">' +
-            '<button class="btn-green btn-sm grant-btn" data-code="' + esc(p.code) + '" data-name="' + esc(p.storeName || '') + '" data-email="' + esc(p.email || '') + '">منح ترخيص</button>' +
+            '<button class="btn-green btn-sm grant-btn" data-code="' + esc(p.code) + '" data-name="' + esc(p.storeName || '') + '" data-email="' + esc(p.email || '') + '">منح ترخيص</button> ' +
+            '<button class="btn-green btn-sm auto-grant-btn" data-code="' + esc(p.code) + '" data-name="' + esc(p.storeName || '') + '">⚡ منح مجاني (شهر)</button>' +
           '</td></tr>';
       }).join('');
       $('pendingWrap').innerHTML = '<table><thead><tr>' +
@@ -1086,6 +1121,33 @@
           // switch to licenses tab
           document.querySelector('.tab[data-tab="licenses"]').click();
           document.getElementById('tab-licenses').scrollIntoView({ behavior: 'smooth' });
+        });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('.auto-grant-btn'), function (btn) {
+        btn.addEventListener('click', async function () {
+          var code = this.getAttribute('data-code');
+          var name = this.getAttribute('data-name');
+          fillIssueForm({ code: code, storeName: name });
+          var ok = await doIssue({
+            storeCode: code,
+            storeName: name,
+            product: 'ZMT PIECE',
+            free: true,
+            type: 'monthly',
+            days: 30,
+            mainDevices: 1,
+            branchCount: 0,
+            branchDevices: 0,
+            amountOwed: 0,
+            amountPaid: 0,
+            currency: 'DZD',
+            notes: ''
+          }, this, null, '⚡ منح مجاني (شهر)');
+          if (ok) {
+            document.querySelector('.tab[data-tab="licenses"]').click();
+            document.getElementById('tab-licenses').scrollIntoView({ behavior: 'smooth' });
+            loadPending();
+          }
         });
       });
     } catch (e) {

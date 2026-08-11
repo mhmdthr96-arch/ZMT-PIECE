@@ -3683,7 +3683,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ===== LICENSE CHECK =====
   const licenseOk = await checkAndEnforceLicense();
   if (!licenseOk) {
-    if (_licenseState.noLicense || _licenseState.machineMismatch) {
+    if (_licenseState.noLicense || _licenseState.machineMismatch || _licenseState.invalidLegacy) {
       // No license (or a leftover license bound to another machine) on this
       // machine yet: close the splash and let the store log in or register.
       // licenseGateAfterLogin() then routes to the activation overlay
@@ -3698,7 +3698,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       } catch (e) { console.warn('[Auth] Failed to load login.html:', e); }
       if (typeof Auth !== 'undefined' && Auth.isLoggedIn()) {
-        showLicenseOverlay(_licenseState.machineMismatch ? 'هذا المفتاح مربوط بجهاز آخر' : undefined);
+        showLicenseOverlay(_licenseState.machineMismatch
+          ? 'هذا المفتاح مربوط بجهاز آخر'
+          : _licenseState.invalidLegacy
+            ? 'المفتاح القديم ملغي — استخدم المفتاح الجديد من الموزّع'
+            : undefined);
       } else {
         initLoginView();
       }

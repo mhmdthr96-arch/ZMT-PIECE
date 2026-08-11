@@ -113,21 +113,6 @@ function _loadSmbiosFingerprint() {
   return null;
 }
 
-// Reads the persisted legacy device id WITHOUT generating a new one (the
-// generator must not be used here — it would mint a fresh random id and break
-// the comparison below).
-function _loadLegacyDeviceId() {
-  try {
-    const p = getDevicePath();
-    if (!fs.existsSync(p)) return null;
-    const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
-    if (parsed && typeof parsed.deviceId === 'string' && parsed.deviceId.length >= 16) {
-      return parsed.deviceId;
-    }
-  } catch (e) {}
-  return null;
-}
-
 function _saveSmbiosFingerprint(fp) {
   try {
     if (!_userDataPath) return;
@@ -178,31 +163,6 @@ function _hmac(key, machineId) {
   return crypto.createHmac('sha512', secret).update(data).digest('hex');
 }
 
-const _VALID_KEYS_SRC = [
-  { enc: '6b01f4b52b6b01f4b52b747088cc',        type: 'monthly', days: 30,   label: 'شهر واحد' },
-  { enc: '0e728fc44c007695b828747088cc',        type: 'yearly',  days: 365,  label: 'سنة واحدة' },
-  { enc: '0e728fc44c007695b82a1a',              type: '3years',  days: 1095, label: '3 سنوات' },
-];
-
-const VALID_KEYS = {};
-for (const src of _VALID_KEYS_SRC) {
-  VALID_KEYS[_deobf(src.enc)] = src;
-}
-
-function validateKey(key) {
-  const norm = key.toUpperCase().trim();
-  const machineId = getMachineFingerprint();
-  const incomingHash = _hmac(norm, machineId);
-
-  for (const [validKey, meta] of Object.entries(VALID_KEYS)) {
-    const expectedHash = _hmac(validKey, machineId);
-    if (expectedHash === incomingHash) {
-      return { valid: true, ...meta, key: validKey, hash: incomingHash };
-    }
-  }
-  return { valid: false };
-}
-
 function loadLicense() {
   try {
     const p = getLicensePath();
@@ -233,66 +193,23 @@ function _verifyLicenseSig(license) {
   return license.sig === _licenseSig(license);
 }
 
-function activate(key) {
-  const result = validateKey(key);
-  if (!result.valid) return { success: false, message: 'مفتاح التفعيل غير صالح' };
-
-  const now = Date.now();
-  if (now < BUILD_TS - 5 * 60 * 1000) {
-    return {
-      success: false,
-      message: 'ساعة الجهاز أقدم من تاريخ إصدار البرنامج — صحّح التاريخ والوقت ثم أعد المحاولة',
-    };
-  }
-
-  // Preserve the watermark: re-activating (new key) must NOT reset the anchor,
-  // otherwise rolling the clock back and re-entering a key would cheat expiry.
-  const prevWm = _loadWatermark();
-  const w = Math.max(prevWm.maxTime, now);
-
-  const licenseData = {
-    keyHash: result.hash,
-    machineId: getMachineFingerprint(),
-    activatedAt: now,
-    expiresAt: now + (result.days * 24 * 60 * 60 * 1000),
-    type: result.type,
-    label: result.label,
-    w,
-  };
-  licenseData.sig = _licenseSig(licenseData);
-  licenseData.wsig = _wmSig(w, licenseData.machineId);
-
-  if (!saveLicense(licenseData)) {
-    return { success: false, message: 'خطأ في حفظ بيانات التفعيل' };
-  }
-
-  saveTimeSnapshot(w);
-  return { success: true, message: 'تم التفعيل بنجاح — ' + result.label, license: licenseData };
-}
-
 function checkLicense() {
   const license = loadLicense();
   if (!license) return { status: 'no_license', valid: false };
 
   const machineId = getMachineFingerprint();
+  // Cloud-issued licenses always carry storeCode. Licenses created by the
+  // pre-cloud embedded keys (builds <= 2.1.x) never did, and those keys are
+  // retired: such a file is rejected outright, regardless of machine or
+  // signature, so no legacy embedded key can ever unlock the app again.
+  if (!license.storeCode) {
+    return {
+      status: 'invalid_legacy',
+      valid: false,
+      message: 'المفتاح القديم ملغي — استخدم المفتاح الجديد من الموزّع',
+    };
+  }
   if (license.machineId !== machineId) {
-    // Legacy migration: licenses activated by builds <= 2.1.x were bound to the
-    // old random per-installation device id (zmt_device.dat). The SMBIOS
-    // fingerprint upgrade changes the id even on the SAME physical machine, so
-    // an upgrade would wrongly look like a different PC. If the stored machine
-    // id matches the persisted legacy id, this is that same machine — rebind
-    // the license to the current hardware fingerprint instead of failing.
-    const legacyId = _loadLegacyDeviceId();
-    if (legacyId && license.machineId === legacyId) {
-      const migrated = { ...license, machineId };
-      migrated.sig = _licenseSig(migrated);
-      if (typeof license.w === 'number') {
-        migrated.wsig = _wmSig(license.w, machineId);
-      }
-      if (saveLicense(migrated)) {
-        return checkLicense();
-      }
-    }
     return { status: 'machine_mismatch', valid: false, message: 'هذا المفتاح مربوط بجهاز آخر' };
   }
 
@@ -579,12 +496,10 @@ async function checkServerStatus(code, password) {
 module.exports = {
   setUserDataPath,
   getMachineFingerprint,
-  activate,
   activateOnline,
   checkServerStatus,
   checkLicense,
   checkTimeTamper,
   saveTimeSnapshot,
   getRemainingTime,
-  validateKey,
 };

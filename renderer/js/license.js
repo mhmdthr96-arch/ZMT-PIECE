@@ -4,6 +4,7 @@ let _licenseState = {
   expired: false,
   noLicense: false,
   machineMismatch: false,
+  invalidLegacy: false,
   license: null,
   remainingDays: 0,
   showWatermark: false,
@@ -41,6 +42,16 @@ async function checkAndEnforceLicense() {
     // with the activation overlay. Route to the login page instead (like
     // no_license); after the store logs in, licenseGateAfterLogin() shows the
     // overlay with the mismatch message so the owner can report the device ID.
+    return false;
+  }
+
+  if (result.status === 'invalid_legacy') {
+    _licenseState.valid = false;
+    _licenseState.invalidLegacy = true;
+    // A license created by a retired pre-cloud embedded key is rejected by the
+    // main process. Do NOT block startup with the overlay: route to the login
+    // page (like no_license); licenseGateAfterLogin() then shows the overlay
+    // with a clear message telling the owner to request a new cloud key.
     return false;
   }
 
@@ -134,6 +145,10 @@ function licenseGateAfterLogin() {
   }
   if (_licenseState.machineMismatch) {
     showLicenseOverlay('هذا المفتاح مربوط بجهاز آخر');
+    return false;
+  }
+  if (_licenseState.invalidLegacy) {
+    showLicenseOverlay('المفتاح القديم ملغي — استخدم المفتاح الجديد من الموزّع');
     return false;
   }
   showLicenseOverlay();
