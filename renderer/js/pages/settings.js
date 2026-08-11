@@ -8,6 +8,14 @@ function init_settings() {
   document.getElementById('settingsTimbreRate').value = localStorage.getItem('zmt_timbre_rate') || '1';
   document.getElementById('settingsTvaRate').value = localStorage.getItem('zmt_tva_rate') || '0';
 
+  // Show the real installed app version (matches the installer).
+  if (window.electronAPI && window.electronAPI.appVersion) {
+    window.electronAPI.appVersion().then(function (v) {
+      const el = document.getElementById('settingsAppVersion');
+      if (el && v) el.textContent = String(v);
+    }).catch(function () {});
+  }
+
   const langSelect = document.getElementById('settingsLang');
   if (langSelect && window.__lang) langSelect.value = window.__lang;
 

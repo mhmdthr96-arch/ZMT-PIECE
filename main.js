@@ -314,6 +314,15 @@ ipcMain.handle('firebird-restore', async (event, backupPath, options) => {
   }
 });
 
+// ===== APP VERSION (matches the installed package.json version) =====
+ipcMain.handle('app-version', () => {
+  try {
+    return app.getVersion();
+  } catch (e) {
+    return '2.1.0';
+  }
+});
+
 // ===== LICENSE SYSTEM =====
 ipcMain.handle('license-check', () => {
   return License.checkLicense();

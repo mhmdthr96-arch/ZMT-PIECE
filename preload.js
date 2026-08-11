@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   firebirdRestore: (backupPath, options) => ipcRenderer.invoke('firebird-restore', backupPath, options),
   // Splash / App Ready
   splashClose: () => ipcRenderer.send('splash-close'),
+  // App version (matches the installed package.json version)
+  appVersion: () => ipcRenderer.invoke('app-version'),
   // License System
   licenseCheck: () => ipcRenderer.invoke('license-check'),
   licenseActivate: (payload) => ipcRenderer.invoke('license-activate', payload),
