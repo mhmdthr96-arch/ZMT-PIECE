@@ -120,9 +120,24 @@
       <div class="license-form-section" id="licenseFormSection">
         <div class="license-status" id="licenseStatus" style="display:none"></div>
         <div class="license-input-group">
-          <label>أدخل مفتاح التفعيل</label>
+          <label>معرف هذا الجهاز (للإخبار به عند الطلب)</label>
+          <input type="text" id="licenseDeviceId" class="license-input license-input-readonly"
+                 readonly dir="ltr" placeholder="جارٍ قراءة الجهاز...">
+        </div>
+        <div class="license-input-group">
+          <label>رمز المتجر</label>
+          <input type="text" id="licenseStoreCode" class="license-input"
+                 placeholder="رمز المتجر..." dir="ltr" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="license-input-group">
+          <label>كلمة مرور المتجر</label>
+          <input type="password" id="licenseStorePassword" class="license-input"
+                 placeholder="كلمة المرور..." dir="ltr" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="license-input-group">
+          <label>مفتاح التفعيل</label>
           <input type="text" id="licenseKeyInput" class="license-input"
-                 placeholder="أدخل المفتاح هنا..." dir="ltr"
+                 placeholder="ZMT-XXXX-XXXX-XXXX" dir="ltr"
                  autocomplete="off" spellcheck="false">
         </div>
         <button class="license-activate-btn" id="licenseActivateBtn" onclick="doLicenseActivate()">
@@ -130,7 +145,7 @@
         </button>
         <div class="license-hint">
           <i class="fas fa-info-circle"></i>
-          تواصل مع المطور للحصول على مفتاح التفعيل
+          تواصل مع المزود للحصول على مفتاح التفعيل ورمز المتجر
         </div>
       </div>
       <div class="license-success-section" id="licenseSuccessSection" style="display:none">
@@ -153,8 +168,16 @@
       <p style="color:var(--silver-500);margin-bottom:8px">يرجى إدخال مفتاح تفعيل جديد لاستمرار العمل</p>
       <p style="color:var(--silver-400);font-size:12px;margin-bottom:20px">بياناتك محفوظة وستعود بعد التفعيل</p>
       <div class="freeze-input-group">
+        <input type="text" id="freezeStoreCode" class="license-input"
+               placeholder="رمز المتجر" dir="ltr" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="freeze-input-group">
+        <input type="password" id="freezeStorePassword" class="license-input"
+               placeholder="كلمة مرور المتجر" dir="ltr" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="freeze-input-group">
         <input type="text" id="freezeKeyInput" class="license-input"
-               placeholder="مفتاح التفعيل الجديد..." dir="ltr" autocomplete="off" spellcheck="false">
+               placeholder="مفتاح التفعيل الجديد (ZMT-XXXX-XXXX-XXXX)" dir="ltr" autocomplete="off" spellcheck="false">
       </div>
       <div class="license-status" id="freezeStatus" style="display:none"></div>
       <button class="license-activate-btn" onclick="doFreezeActivate()">

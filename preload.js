@@ -26,7 +26,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   splashClose: () => ipcRenderer.send('splash-close'),
   // License System
   licenseCheck: () => ipcRenderer.invoke('license-check'),
-  licenseActivate: (key) => ipcRenderer.invoke('license-activate', key),
+  licenseActivate: (payload) => ipcRenderer.invoke('license-activate', payload),
+  licenseServerStatus: (code, password) => ipcRenderer.invoke('license-server-status', code, password),
   licenseTimeTamper: () => ipcRenderer.invoke('license-time-tamper'),
   licenseRemaining: () => ipcRenderer.invoke('license-remaining'),
   licenseMachineId: () => ipcRenderer.invoke('license-machine-id'),

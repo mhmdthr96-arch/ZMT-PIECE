@@ -319,8 +319,14 @@ ipcMain.handle('license-check', () => {
   return License.checkLicense();
 });
 
-ipcMain.handle('license-activate', (event, key) => {
-  return License.activate(key);
+ipcMain.handle('license-activate', (event, payload) => {
+  // Wave 2: activation is validated online against the website API and bound
+  // to this machine's SMBIOS fingerprint. payload = { key, code, password, deviceType }.
+  return License.activateOnline(payload || {});
+});
+
+ipcMain.handle('license-server-status', async (event, code, password) => {
+  return await License.checkServerStatus(code, password);
 });
 
 ipcMain.handle('license-time-tamper', () => {

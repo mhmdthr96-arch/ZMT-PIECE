@@ -70,6 +70,8 @@ function showLicenseOverlay(errorMsg) {
   if (!overlay) return;
   overlay.style.display = 'flex';
 
+  prefillLicenseForm();
+
   if (errorMsg) {
     const status = document.getElementById('licenseStatus');
     if (status) {
@@ -77,6 +79,29 @@ function showLicenseOverlay(errorMsg) {
       status.className = 'license-status error';
       status.style.display = 'block';
     }
+  }
+}
+
+// Pre-fills the activation form: shows this machine's hardware ID (needed by
+// the admin to bind the license) and the last-known store code/password so the
+// owner only has to type the license key.
+function prefillLicenseForm() {
+  const codeEl = document.getElementById('licenseStoreCode');
+  if (codeEl && !codeEl.value) {
+    codeEl.value = localStorage.getItem('zmt_store_code') || '';
+  }
+  const passEl = document.getElementById('licenseStorePassword');
+  if (passEl && !passEl.value) {
+    passEl.value = localStorage.getItem('zmt_store_password') || '';
+  }
+  const idEl = document.getElementById('licenseDeviceId');
+  if (idEl && idEl.value === '') {
+    idEl.value = 'جارٍ قراءة الجهاز...';
+    window.electronAPI.licenseMachineId().then((fp) => {
+      if (idEl) idEl.value = fp || 'غير متاح';
+    }).catch(() => {
+      if (idEl) idEl.value = 'غير متاح';
+    });
   }
 }
 
@@ -133,8 +158,16 @@ function createFreezeOverlay() {
       <p style="color:var(--silver-500);margin-bottom:8px">يرجى إدخال مفتاح تفعيل جديد لاستمرار العمل</p>
       <p style="color:var(--silver-400);font-size:12px;margin-bottom:20px">بياناتك محفوظة وستعود بعد التفعيل</p>
       <div class="freeze-input-group">
+        <input type="text" id="freezeStoreCode" class="license-input"
+               placeholder="رمز المتجر" dir="ltr" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="freeze-input-group">
+        <input type="password" id="freezeStorePassword" class="license-input"
+               placeholder="كلمة مرور المتجر" dir="ltr" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="freeze-input-group">
         <input type="text" id="freezeKeyInput" class="license-input"
-               placeholder="مفتاح التفعيل الجديد..." dir="ltr" autocomplete="off" spellcheck="false">
+               placeholder="مفتاح التفعيل الجديد (ZMT-XXXX-XXXX-XXXX)" dir="ltr" autocomplete="off" spellcheck="false">
       </div>
       <div class="license-status" id="freezeStatus" style="display:none"></div>
       <button class="license-activate-btn" onclick="doFreezeActivate()">
@@ -149,19 +182,36 @@ function createFreezeOverlay() {
 }
 
 async function doLicenseActivate() {
-  const input = document.getElementById('licenseKeyInput');
+  const keyEl = document.getElementById('licenseKeyInput');
+  const codeEl = document.getElementById('licenseStoreCode');
+  const passEl = document.getElementById('licenseStorePassword');
   const status = document.getElementById('licenseStatus');
   const btn = document.getElementById('licenseActivateBtn');
 
-  if (!input || !input.value.trim()) {
+  const key = keyEl ? keyEl.value.trim() : '';
+  const code = codeEl ? codeEl.value.trim() : '';
+  const password = passEl ? passEl.value : '';
+
+  if (!key) {
     showLicenseStatus(status, 'يرجى إدخال مفتاح التفعيل', 'error');
     return;
   }
+  if (!code) {
+    showLicenseStatus(status, 'يرجى إدخال رمز المتجر', 'error');
+    return;
+  }
+  if (!password) {
+    showLicenseStatus(status, 'يرجى إدخال كلمة مرور المتجر', 'error');
+    return;
+  }
+
+  if (codeEl) localStorage.setItem('zmt_store_code', code);
+  if (passEl && password) localStorage.setItem('zmt_store_password', password);
 
   btn.disabled = true;
   btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري التحقق...';
 
-  const result = await window.electronAPI.licenseActivate(input.value.trim());
+  const result = await window.electronAPI.licenseActivate({ key, code, password });
 
   btn.disabled = false;
   btn.innerHTML = '<i class="fas fa-key"></i> تفعيل البرنامج';
@@ -180,15 +230,32 @@ async function doLicenseActivate() {
 }
 
 async function doFreezeActivate() {
-  const input = document.getElementById('freezeKeyInput');
+  const keyEl = document.getElementById('freezeKeyInput');
+  const codeEl = document.getElementById('freezeStoreCode');
+  const passEl = document.getElementById('freezeStorePassword');
   const status = document.getElementById('freezeStatus');
 
-  if (!input || !input.value.trim()) {
+  const key = keyEl ? keyEl.value.trim() : '';
+  const code = codeEl ? codeEl.value.trim() : '';
+  const password = passEl ? passEl.value : '';
+
+  if (!key) {
     showFreezeStatus(status, 'يرجى إدخال مفتاح التفعيل', 'error');
     return;
   }
+  if (!code) {
+    showFreezeStatus(status, 'يرجى إدخال رمز المتجر', 'error');
+    return;
+  }
+  if (!password) {
+    showFreezeStatus(status, 'يرجى إدخال كلمة مرور المتجر', 'error');
+    return;
+  }
 
-  const result = await window.electronAPI.licenseActivate(input.value.trim());
+  if (codeEl) localStorage.setItem('zmt_store_code', code);
+  if (passEl && password) localStorage.setItem('zmt_store_password', password);
+
+  const result = await window.electronAPI.licenseActivate({ key, code, password });
 
   if (result.success) {
     hideFreezeOverlay();

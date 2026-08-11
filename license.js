@@ -1,10 +1,12 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const LICENSE_FILE = 'zmt_license.dat';
 const TIME_FILE = 'zmt_time.dat';
 const DEVICE_FILE = 'zmt_device.dat';
+const SMB_CACHE_FILE = 'zmt_smbios.dat';
 
 // ===== TIME-TAMPER PROTECTION (local-only) =====
 // A monotonic watermark W = the highest epoch time this machine has ever
@@ -41,7 +43,9 @@ function getDevicePath() {
 // Stable per-installation device ID: generated once with crypto.randomBytes
 // and persisted to userData. It never depends on network adapters/hostname,
 // so unplugging Wi-Fi or changing networks cannot break an existing license.
-function getMachineFingerprint() {
+// This is now the FALLBACK only — the primary fingerprint is SMBIOS-derived
+// (see getMachineFingerprint below).
+function legacyDeviceId() {
   try {
     const p = getDevicePath();
     if (fs.existsSync(p)) {
@@ -61,6 +65,75 @@ function getMachineFingerprint() {
     if (!_memoryDeviceId) _memoryDeviceId = crypto.randomBytes(16).toString('hex');
     return _memoryDeviceId;
   }
+}
+
+// ===== SMBIOS HARDWARE FINGERPRINT (Wave 2) =====
+// Reads the motherboard's SMBIOS UUID (a physical hardware identifier that
+// survives reinstalls but changes when the PC itself is replaced) and binds the
+// license to sha256("zmt-smbios:" + UUID). The hash is cached to zmt_smbios.dat
+// so the PowerShell query runs only once per machine. When SMBIOS is
+// unavailable (rare VMs / locked-down OS) we fall back to the legacy random
+// device id — the license then behaves exactly as before.
+let _smbiosCache = null;
+
+function _readSmbiosUuidSync() {
+  if (_smbiosCache !== null) return _smbiosCache;
+  try {
+    const out = execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        '(Get-CimInstance -ClassName Win32_ComputerSystemProduct).UUID',
+      ],
+      { encoding: 'utf8', timeout: 15000, windowsHide: true }
+    );
+    const uuid = String(out || '').trim();
+    if (/^[0-9a-fA-F-]{20,64}$/.test(uuid)) {
+      _smbiosCache = uuid.toUpperCase();
+      return _smbiosCache;
+    }
+  } catch (e) {
+    // fall through
+  }
+  _smbiosCache = '';
+  return _smbiosCache;
+}
+
+function _loadSmbiosFingerprint() {
+  try {
+    const p = path.join(_userDataPath, SMB_CACHE_FILE);
+    if (!fs.existsSync(p)) return null;
+    const fp = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    if (fp && typeof fp.fingerprint === 'string' && /^[0-9a-f]{64}$/.test(fp.fingerprint)) {
+      return fp.fingerprint;
+    }
+  } catch (e) {}
+  return null;
+}
+
+function _saveSmbiosFingerprint(fp) {
+  try {
+    if (!_userDataPath) return;
+    fs.mkdirSync(_userDataPath, { recursive: true });
+    fs.writeFileSync(path.join(_userDataPath, SMB_CACHE_FILE), JSON.stringify({ fingerprint: fp }), 'utf-8');
+  } catch (e) {}
+}
+
+// Primary machine identity: sha256 of the SMBIOS UUID when readable, otherwise
+// the legacy random device id. Used for license binding AND time-watermark
+// signing, so it must be deterministic for the life of the machine.
+function getMachineFingerprint() {
+  const cached = _loadSmbiosFingerprint();
+  if (cached) return cached;
+  const smbios = _readSmbiosUuidSync();
+  if (smbios) {
+    const fp = crypto.createHash('sha256').update('zmt-smbios:' + smbios).digest('hex');
+    _saveSmbiosFingerprint(fp);
+    return fp;
+  }
+  return legacyDeviceId();
 }
 
 // ===== OBFUSCATION =====
@@ -359,10 +432,124 @@ function getRemainingTime() {
   };
 }
 
+// ===== ONLINE ACTIVATION (Wave 2 — SMBIOS licenses) =====
+// The license key is now issued per store by the admin tool and validated by
+// the website API (/api/push-trigger action 'license_activate'), which binds it
+// to this machine's SMBIOS fingerprint and enforces the store's device limit.
+// On success the returned license is stored locally (signed, watermark-protected)
+// exactly like before, so the app keeps working fully offline until expiry.
+const SITE_URL_DEFAULT = 'https://zmt-website.vercel.app';
+
+function _siteBase() {
+  try {
+    const p = path.join(_userDataPath, 'zmt_site_url.txt');
+    if (fs.existsSync(p)) {
+      const url = String(fs.readFileSync(p, 'utf-8') || '').trim();
+      if (/^https:\/\/[A-Za-z0-9.-]+/.test(url)) return url.replace(/\/+$/, '');
+    }
+  } catch (e) {}
+  return SITE_URL_DEFAULT;
+}
+
+async function _post(action, payload) {
+  const resp = await fetch(_siteBase() + '/api/push-trigger', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...payload }),
+  });
+  let data = null;
+  try {
+    data = await resp.json();
+  } catch (e) {
+    data = null;
+  }
+  return { status: resp.status, data };
+}
+
+function _typeLabel(type, days) {
+  switch (type) {
+    case 'monthly':
+      return 'شهر واحد';
+    case 'yearly':
+      return 'سنة واحدة';
+    case '3years':
+      return '3 سنوات';
+    default:
+      return (days || 30) + ' يوم';
+  }
+}
+
+// { key, code, password, deviceType } — validates the key server-side and binds
+// it to this machine. Returns { success, message, license? }.
+async function activateOnline(payload) {
+  const key = String(payload?.key || '').trim();
+  const code = String(payload?.code || '').trim();
+  const password = typeof payload?.password === 'string' ? payload.password : '';
+  const deviceType = payload?.deviceType === 'branch' ? 'branch' : 'main';
+
+  if (!key || !code || !password) {
+    return { success: false, message: 'أدخل رمز المتجر وكلمة المرور ومفتاح التفعيل' };
+  }
+
+  const smbiosHash = getMachineFingerprint();
+  let result;
+  try {
+    result = await _post('license_activate', { key, code, password, smbiosHash, deviceType });
+  } catch (e) {
+    return { success: false, message: 'لا يمكن الاتصال بالخادم — تأكد من الإنترنت ثم أعد المحاولة' };
+  }
+
+  if (result.status !== 200 || !result.data || !result.data.ok || !result.data.license) {
+    return { success: false, message: result.data?.error || 'فشل التفعيل — حاول مجدداً' };
+  }
+
+  const lic = result.data.license;
+  const now = Date.now();
+  const activatedAt = Date.parse(lic.activatedAt) || now;
+  const expiresAt = Date.parse(lic.expiresAt) || now;
+  const prevWm = _loadWatermark();
+  const w = Math.max(prevWm.maxTime, now);
+
+  const licenseData = {
+    keyHash: _hmac(lic.key, smbiosHash),
+    machineId: smbiosHash,
+    storeCode: lic.storeCode,
+    activatedAt,
+    expiresAt,
+    type: lic.type,
+    label: _typeLabel(lic.type, lic.days),
+    w,
+  };
+  licenseData.sig = _licenseSig(licenseData);
+  licenseData.wsig = _wmSig(w, smbiosHash);
+
+  if (!saveLicense(licenseData)) {
+    return { success: false, message: 'خطأ في حفظ بيانات التفعيل' };
+  }
+  saveTimeSnapshot(w);
+
+  return { success: true, message: 'تم التفعيل بنجاح — ' + licenseData.label, license: licenseData };
+}
+
+// { code, password } — server-side status for the current store: which license
+// keys exist, expiry, and which devices are registered. Used by the UI to show
+// the store owner whether their PC is already bound (e.g. after a PC change).
+async function checkServerStatus(code, password) {
+  try {
+    const result = await _post('license_status', { code, password });
+    if (result.status === 200 && result.data && result.data.ok) {
+      return result.data;
+    }
+  } catch (e) {}
+  return null;
+}
+
 module.exports = {
   setUserDataPath,
   getMachineFingerprint,
   activate,
+  activateOnline,
+  checkServerStatus,
   checkLicense,
   checkTimeTamper,
   saveTimeSnapshot,
