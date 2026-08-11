@@ -90,6 +90,28 @@
   .badge.active { background: rgba(63,185,80,.15); color: var(--green); }
   .badge.revoked { background: rgba(248,81,73,.15); color: var(--red); }
   .badge.expired { background: rgba(210,153,34,.15); color: var(--orange); }
+  .badge.none { background: rgba(139,148,158,.15); color: var(--muted); }
+  .badge.free { background: rgba(188,140,255,.15); color: var(--purple); }
+  tr.tr-danger td { background: rgba(248,81,73,.07); }
+  tr.tr-none td { background: rgba(139,148,158,.05); }
+  tr.store-row { cursor: pointer; }
+  tr.store-row:hover td { background: rgba(47,129,247,.06); }
+  td.store-detail-cell { padding: 0 !important; }
+  .store-detail { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; margin: 8px 4px; overflow: hidden; }
+  .store-detail .hd { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .store-detail .hd b { font-size: 14px; }
+  .store-detail .prog { padding: 8px 14px; }
+  .prog-item { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; flex-wrap: wrap; }
+  .prog-item:last-child { border-bottom: none; }
+  .prog-item .pname { font-weight: 700; min-width: 140px; }
+  .prog-item .mono { min-width: 190px; }
+  .prog-item .dur { color: var(--muted); min-width: 120px; }
+  .prog-item .dur.bad { color: var(--red); font-weight: 700; }
+  .prog-empty { padding: 14px; color: var(--muted); font-size: 13px; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; padding: 9px 0; }
+  .checkbox-row input { width: 17px; height: 17px; accent-color: var(--green); cursor: pointer; }
+  .lock-hint { font-size: 12px; color: var(--purple); margin-top: 4px; }
+  .issue-free-on input, .issue-free-on select { background: rgba(188,140,255,.08); }
   .devices { margin-top: 4px; font-size: 12px; color: var(--muted); }
   .devices .dev { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
   .devices .dev .chip { background: var(--panel2); border: 1px solid var(--border); padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
@@ -140,10 +162,28 @@
   </header>
 
   <nav class="tabs">
+    <button class="tab" data-tab="stores">المتاجر<span class="count" id="storesCount"></span></button>
     <button class="tab active" data-tab="licenses">التراخيص والإصدار</button>
     <button class="tab" data-tab="pending">طلبات جديدة<span class="count" id="pendingCount"></span></button>
     <button class="tab" data-tab="invoices">الفواتير</button>
   </nav>
+
+  <!-- ============================= TAB: STORES ============================= -->
+  <section id="tab-stores" class="tab-content" style="display:none">
+
+    <div class="card">
+      <h2><i>🏪</i> دليل المتاجر — كل حسابات المحلات الرئيسية</h2>
+      <div class="hint" style="margin-bottom:10px">انقر على أي متجر لعرض برامجه ومدة التفعيل. الأحمر = انتهت المدة أو أُلغيت (يحتاج تجديداً). الرمادي = لا يملك ترخيصاً.</div>
+      <div class="toolbar">
+        <button class="btn-ghost" id="storesRefreshBtn">↻ تحديث</button>
+      </div>
+      <div class="msg" id="storesMsg"></div>
+      <div id="storesWrap">
+        <div class="empty">أدخل السر الإداري وحفظه لعرض دليل المتاجر</div>
+      </div>
+    </div>
+
+  </section>
 
   <!-- ============================= TAB: LICENSES ============================= -->
   <section id="tab-licenses" class="tab-content">
@@ -172,6 +212,20 @@
         <div class="field">
           <label>اسم المحل (اختياري — يُحدَّث في حساب العميل)</label>
           <input type="text" id="issueStoreName" placeholder="مثال: ZMT Auto Parts" autocomplete="off">
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <div class="field">
+          <label>المنتج / البرنامج</label>
+          <input type="text" id="issueProduct" dir="ltr" value="ZMT PIECE" list="productList" autocomplete="off">
+          <datalist id="productList"></datalist>
+        </div>
+        <div class="field sm">
+          <label>منحة مجانية — بدون فاتورة</label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="issueFree">
+            <span>شهر مجاني (لا يُنشئ فاتورة ولا يُسجل مبلغاً)</span>
+          </label>
         </div>
       </div>
       <div class="row" style="margin-top:12px">
@@ -438,6 +492,7 @@
     $('adminSecret').value = '';
     showMsg($('issueMsg'), 'تم حفظ السر الإداري', 'ok');
     setTimeout(function () { hideMsg($('issueMsg')); }, 2000);
+    loadStores();
   });
   (function () {
     var saved = localStorage.getItem(SECRET_KEY);
@@ -463,6 +518,31 @@
     setTimeout(function () { hideMsg($('vendorMsg')); }, 2000);
   });
 
+  // ---- products ----
+  var PRODUCTS_KEY = 'zmt_products';
+  function getProducts() {
+    var p = ['ZMT PIECE'];
+    try {
+      var saved = JSON.parse(localStorage.getItem(PRODUCTS_KEY) || 'null');
+      if (Array.isArray(saved) && saved.length) {
+        for (var i = 0; i < saved.length; i++) if (saved[i]) p.push(saved[i]);
+      }
+    } catch (e) {}
+    var out = [], seen = {};
+    for (var j = 0; j < p.length; j++) { if (!seen[p[j]]) { seen[p[j]] = 1; out.push(p[j]); } }
+    return out;
+  }
+  function rememberProduct() {
+    var name = $('issueProduct').value.trim();
+    if (!name) return;
+    var list = getProducts();
+    if (list.indexOf(name) === -1) { list.push(name); try { localStorage.setItem(PRODUCTS_KEY, JSON.stringify(list)); } catch (e) {} }
+  }
+  function renderProductList() {
+    $('productList').innerHTML = getProducts().map(function (p) { return '<option value="' + esc(p) + '">'; }).join('');
+  }
+  renderProductList();
+
   // ---- type / days ----
   $('issueType').addEventListener('change', function () {
     var t = this.value;
@@ -473,6 +553,21 @@
     var n = parseInt(this.value, 10) || 0;
     $('branchDevicesField').style.opacity = n > 0 ? '1' : '.4';
     if (n > 0 && (parseInt($('issueBranchDevices').value, 10) || 0) < 1) $('issueBranchDevices').value = 1;
+  });
+
+  function isFreeMode() {
+    return $('issueFree').checked;
+  }
+
+  function setFreeMode(on) {
+    var fields = ['issueOwed', 'issuePaid', 'issueCurrency'];
+    for (var i = 0; i < fields.length; i++) $(fields[i]).disabled = on;
+    $('issueBtn').textContent = on ? 'منح مجاني (بدون فاتورة)' : 'منح الترخيص وإصدار الفاتورة';
+    updateSummary();
+  }
+  $('issueFree').addEventListener('change', function () {
+    setFreeMode(this.checked);
+    if (this.checked) { $('issueOwed').value = 0; $('issuePaid').value = 0; }
   });
 
   function typeToDays(type) {
@@ -487,18 +582,22 @@
     var br = parseInt($('issueBranchCount').value, 10) || 0;
     var bd = parseInt($('issueBranchDevices').value, 10) || 0;
     var days = typeToDays($('issueType').value);
-    var owed = parseFloat($('issueOwed').value) || 0;
-    var paid = parseFloat($('issuePaid').value) || 0;
+    var free = isFreeMode();
+    var owed = free ? 0 : (parseFloat($('issueOwed').value) || 0);
+    var paid = free ? 0 : (parseFloat($('issuePaid').value) || 0);
     var curr = $('issueCurrency').value;
     $('issueSummary').style.display = 'flex';
     $('issueSummary').innerHTML =
+      '<span class="item">المنتج: <b>' + esc($('issueProduct').value.trim() || 'ZMT PIECE') + '</b></span>' +
       '<span class="item">المدة: <b>' + days + ' يوم</b></span>' +
       '<span class="item">الرئيسي: <b>' + main + '</b></span>' +
       '<span class="item">الفروع: <b>' + br + (br ? ' × ' + bd + ' أجهزة' : '') + '</b></span>' +
       '<span class="item">الإجمالي: <b>' + (main + br * bd) + ' جهاز</b></span>' +
-      '<span class="item">الباقي: <b>' + (owed - paid).toFixed(2) + ' ' + curr + '</b></span>';
+      (free
+        ? '<span class="item" style="color:var(--purple)"><b>منحة مجانية — بدون فاتورة</b></span>'
+        : '<span class="item">الباقي: <b>' + (owed - paid).toFixed(2) + ' ' + curr + '</b></span>');
   }
-  ['issueType','issueDays','issueMainDevices','issueBranchCount','issueBranchDevices','issueOwed','issuePaid','issueCurrency'].forEach(function (id) {
+  ['issueType','issueDays','issueMainDevices','issueBranchCount','issueBranchDevices','issueOwed','issuePaid','issueCurrency','issueProduct'].forEach(function (id) {
     var el = $(id);
     ['change','input'].forEach(function (ev) {
       el.addEventListener(ev, updateSummary);
@@ -510,6 +609,7 @@
   function fillIssueForm(store) {
     $('issueStore').value = store.code || '';
     $('issueStoreName').value = store.storeName || '';
+    $('issueProduct').value = store.product || 'ZMT PIECE';
     $('issueType').value = 'monthly';
     $('issueDays').value = 30;
     $('daysField').style.display = 'none';
@@ -519,8 +619,25 @@
     $('issueOwed').value = 0;
     $('issuePaid').value = 0;
     $('issueNotes').value = '';
+    $('issueFree').checked = false;
+    setFreeMode(false);
     $('issueResult').style.display = 'none';
     updateSummary();
+  }
+
+  // "منح تجديد" — prefill same product + month for a store's program.
+  function fillRenewForm(store) {
+    fillIssueForm(store);
+    $('issueStoreName').value = store.storeName || '';
+    $('issueType').value = 'monthly';
+    $('issueDays').value = 30;
+    $('daysField').style.display = 'none';
+    $('issueMainDevices').value = store.mainDevices || 1;
+    $('issueBranchCount').value = store.branchCount || 0;
+    $('issueBranchDevices').value = store.branchDevices || 0;
+    if (store.branchCount > 0 && store.branchDevices > 0) $('branchDevicesField').style.opacity = '1';
+    updateSummary();
+    $('issueStoreName').focus();
   }
 
   $('issueBtn').addEventListener('click', async function () {
@@ -536,6 +653,8 @@
       var res = await api('license_issue', {
         storeCode: store,
         storeName: $('issueStoreName').value.trim(),
+        product: $('issueProduct').value.trim() || 'ZMT PIECE',
+        free: isFreeMode(),
         type: $('issueType').value,
         days: typeToDays($('issueType').value),
         mainDevices: parseInt($('issueMainDevices').value, 10) || 1,
@@ -546,20 +665,24 @@
         currency: $('issueCurrency').value,
         notes: $('issueNotes').value.trim()
       }, secret);
+      rememberProduct();
       var lic = res.license;
       var inv = res.invoice || {};
       $('issuedKey').textContent = lic.key;
       $('issuedMeta').textContent =
-        'المتجر ' + lic.storeCode +
+        'المنتج ' + (lic.product || 'ZMT PIECE') +
+        ' — المتجر ' + lic.storeCode +
         ' — ' + lic.days + ' يوم (من ' + fmtDate(lic.issuedAt) + ' حتى ' + fmtDate(lic.expiresAt) + ')' +
         ' — ' + lic.maxDevices + ' جهاز' +
-        (inv.number ? ' — فاتورة ' + inv.number : '');
+        (inv.number ? ' — فاتورة ' + inv.number : ' — منحة مجانية بدون فاتورة');
       window._lastInvoice = {
         number: inv.number,
         licenseKey: lic.key,
         storeCode: lic.storeCode,
         storeName: lic.storeName,
         email: lic.email,
+        product: lic.product || 'ZMT PIECE',
+        free: !!lic.free,
         issuedAt: lic.issuedAt,
         expiresAt: lic.expiresAt,
         days: lic.days,
@@ -572,11 +695,15 @@
         notes: ($('issueNotes').value.trim() || null)
       };
       $('issueResult').style.display = 'block';
-      showMsg($('issueMsg'), 'تم منح الترخيص وإصدار الفاتورة بنجاح', 'ok');
+      $('printInvoiceBtn').style.display = inv.number ? '' : 'none';
+      $('copyInvoiceBtn').style.display = inv.number ? '' : 'none';
+      showMsg($('issueMsg'), inv.number
+        ? 'تم منح الترخيص وإصدار الفاتورة بنجاح'
+        : 'تم منح ترخيص مجاني — لم تُنشأ فاتورة', 'ok');
     } catch (e) {
       showMsg($('issueMsg'), e.message, 'err');
     } finally {
-      btn.disabled = false; btn.textContent = 'منح الترخيص وإصدار الفاتورة';
+      btn.disabled = false; btn.textContent = isFreeMode() ? 'منح مجاني (بدون فاتورة)' : 'منح الترخيص وإصدار الفاتورة';
     }
   });
 
@@ -618,7 +745,7 @@
     var v = getVendor();
     var rest = (inv.amountOwed || 0) - (inv.amountPaid || 0);
     var config = '';
-    config += '<tr><td>Licence ZMT PIECE — ' + inv.days + ' jour(s)</td><td style="text-align:right">' + numFmt(inv.amountOwed || 0, inv.currency) + '</td></tr>';
+    config += '<tr><td>Licence ' + esc(inv.product || 'ZMT PIECE') + ' — ' + inv.days + ' jour(s)</td><td style="text-align:right">' + numFmt(inv.amountOwed || 0, inv.currency) + '</td></tr>';
     if (inv.mainDevices) config += '<tr><td style="padding-left:20px">— Poste(s) principal(aux) : ' + inv.mainDevices + '</td><td></td></tr>';
     if (inv.branchCount) {
       config += '<tr><td style="padding-left:20px">— Agence(s) : ' + inv.branchCount + ' × ' + inv.branchDevices + ' poste(s)</td><td></td></tr>';
@@ -741,6 +868,7 @@
       }).join('') || '<span style="font-size:11px">لا توجد أجهزة</span>';
       return '<tr>' +
         '<td class="mono">' + esc(l.key) + '</td>' +
+        '<td>' + esc(l.product || 'ZMT PIECE') + (l.free ? ' <span class="badge free">مجاني</span>' : '') + '</td>' +
         '<td class="mono">' + esc(l.store_code) + '</td>' +
         '<td>' + typeLabel + '</td>' +
         '<td>' + l.max_devices +
@@ -758,7 +886,7 @@
     }).join('');
 
     return '<table><thead><tr>' +
-      '<th>المفتاح</th><th>المتجر</th><th>النوع</th><th>أجهزة</th><th>أُصدر</th><th>الانتهاء</th><th>الحالة</th><th>الأجهزة</th><th></th>' +
+      '<th>المفتاح</th><th>المنتج</th><th>المتجر</th><th>النوع</th><th>أجهزة</th><th>أُصدر</th><th>الانتهاء</th><th>الحالة</th><th>الأجهزة</th><th></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table>';
   }
 
@@ -816,6 +944,111 @@
     });
   }
 
+  // ---- stores directory ----
+  var storeDetailOpen = {};
+  function storeStatusBadge(st) {
+    var map = { active: ['active', 'مفعّل'], expired: ['expired', 'منتهي'], none: ['none', 'بدون ترخيص'] };
+    var m = map[st] || map.none;
+    return '<span class="badge ' + m[0] + '">' + m[1] + '</span>';
+  }
+  function progStatusBadge(p) {
+    if (p.status === 'revoked') return '<span class="badge revoked">ملغي</span>';
+    if (p.status === 'active' && p.expiresAt && new Date(p.expiresAt).getTime() < Date.now()) {
+      return '<span class="badge expired">منتهي</span>';
+    }
+    return '<span class="badge active">مفعّل</span>';
+  }
+  function renderStoreDetail(s) {
+    if (!s.programs || !s.programs.length) {
+      return '<div class="prog-empty">لا يملك هذا المتجر أي ترخيص بعد — استخدم «منح مجاني» أو «منح ترخيص».</div>';
+    }
+    return s.programs.map(function (p) {
+      var expired = p.status === 'revoked' || (p.status === 'active' && p.expiresAt && new Date(p.expiresAt).getTime() < Date.now());
+      var typeLabel = { monthly: 'شهر', yearly: 'سنة', '3years': '3 سنوات', custom: p.days + ' يوم' }[p.type] || (p.days + ' يوم');
+      return '<div class="prog-item">' +
+        '<span class="pname">' + esc(p.product || 'ZMT PIECE') + (p.free ? ' <span class="badge free">مجاني</span>' : '') + '</span>' +
+        '<span class="mono">' + esc(p.key) + '</span>' +
+        '<span class="dur' + (expired ? ' bad' : '') + '">' + typeLabel + ' — حتى ' + fmtDate(p.expiresAt) + '</span>' +
+        progStatusBadge(p) +
+        '<span style="color:var(--muted);font-size:12px">' + (p.deviceCount || 0) + ' جهاز مربوط</span>' +
+        '<button class="btn-green btn-sm renew-btn" data-code="' + esc(s.code) + '" data-name="' + esc(s.storeName || '') + '"' +
+          ' data-product="' + esc(p.product || 'ZMT PIECE') + '" data-main="' + (p.mainDevices || 1) + '"' +
+          ' data-branchcount="' + (p.branchCount || 0) + '" data-branchdev="' + (p.branchDevices || 0) + '">منح تجديد</button>' +
+        '</div>';
+    }).join('');
+  }
+  function renderStores(stores) {
+    if (!stores || !stores.length) return '<div class="empty">لا توجد متاجر مسجلة بعد</div>';
+    return '<table><thead><tr>' +
+      '<th>رمز المتجر</th><th>الاسم / العميل</th><th>البريد</th><th>تاريخ التسجيل</th><th>الحالة</th>' +
+      '</tr></thead><tbody>' + stores.map(function (s) {
+        var open = !!storeDetailOpen[s.code];
+        return '<tr class="store-row' + (s.status === 'expired' ? ' tr-danger' : s.status === 'none' ? ' tr-none' : '') + '" data-code="' + esc(s.code) + '">' +
+          '<td class="mono">' + esc(s.code) + '</td>' +
+          '<td>' + esc(s.storeName || '—') + '</td>' +
+          '<td class="mono" style="direction:ltr;text-align:left">' + esc(s.email || '') + '</td>' +
+          '<td>' + fmtDate(s.createdAt) + '</td>' +
+          '<td>' + storeStatusBadge(s.status) + (s.programs ? ' <span style="color:var(--muted);font-size:11px">(' + s.programs.length + ' ترخيص)</span>' : '') + '</td>' +
+          '</tr>' +
+          (open ? '<tr class="store-detail-row" data-code="' + esc(s.code) + '"><td colspan="5" class="store-detail-cell"><div class="store-detail">' +
+            '<div class="hd"><b>' + esc(s.storeName || s.code) + '</b><button class="btn-ghost btn-sm grant-new-btn" data-code="' + esc(s.code) + '" data-name="' + esc(s.storeName || '') + '">منح ترخيص جديد</button></div>' +
+            '<div class="prog">' + renderStoreDetail(s) + '</div></div></td></tr>' : '');
+      }).join('') + '</tbody></table>';
+  }
+  function bindStores() {
+    Array.prototype.forEach.call(document.querySelectorAll('.store-row'), function (tr) {
+      tr.addEventListener('click', function (e) {
+        var code = this.getAttribute('data-code');
+        if (e.target.closest('button')) return;
+        storeDetailOpen[code] = !storeDetailOpen[code];
+        loadStores();
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.renew-btn'), function (btn) {
+      btn.addEventListener('click', function () {
+        fillRenewForm({
+          code: this.getAttribute('data-code'),
+          storeName: this.getAttribute('data-name'),
+          product: this.getAttribute('data-product'),
+          mainDevices: parseInt(this.getAttribute('data-main'), 10) || 1,
+          branchCount: parseInt(this.getAttribute('data-branchcount'), 10) || 0,
+          branchDevices: parseInt(this.getAttribute('data-branchdev'), 10) || 0
+        });
+        document.querySelector('.tab[data-tab="licenses"]').click();
+        document.getElementById('tab-licenses').scrollIntoView({ behavior: 'smooth' });
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.grant-new-btn'), function (btn) {
+      btn.addEventListener('click', function () {
+        fillIssueForm({
+          code: this.getAttribute('data-code'),
+          storeName: this.getAttribute('data-name')
+        });
+        document.querySelector('.tab[data-tab="licenses"]').click();
+        document.getElementById('tab-licenses').scrollIntoView({ behavior: 'smooth' });
+      });
+    });
+  }
+  async function loadStores() {
+    var secret = getSecret();
+    if (!secret) { $('storesWrap').innerHTML = '<div class="empty">أدخل السر الإداري وحفظه لعرض دليل المتاجر</div>'; return; }
+    hideMsg($('storesMsg'));
+    try {
+      var res = await api('store_list', {}, secret);
+      var stores = res.stores || [];
+      $('storesCount').textContent = stores.length;
+      $('storesCount').className = 'count' + (stores.length ? '' : ' empty');
+      $('storesWrap').innerHTML = renderStores(stores);
+      bindStores();
+    } catch (e) {
+      $('storesWrap').innerHTML = '<div class="empty">—</div>';
+      showMsg($('storesMsg'), e.message, 'err');
+    }
+  }
+  $('storesRefreshBtn').addEventListener('click', loadStores);
+  document.querySelector('.tab[data-tab="stores"]').addEventListener('click', loadStores);
+  loadStores();
+
   // ---- pending ----
   async function loadPending() {
     var secret = getSecret();
@@ -871,6 +1104,7 @@
       var lic = inv.license || {};
       return '<tr>' +
         '<td class="mono">' + esc(inv.number) + '</td>' +
+        '<td>' + esc(inv.product || lic.product || 'ZMT PIECE') + '</td>' +
         '<td class="mono">' + esc(inv.store_code) + '</td>' +
         '<td class="mono">' + esc(inv.license_key) + '</td>' +
         '<td>' + fmtDate(inv.issued_at) + '</td>' +
@@ -882,7 +1116,7 @@
         '</td></tr>';
     }).join('');
     return '<table><thead><tr>' +
-      '<th>الرقم</th><th>المتجر</th><th>المفتاح</th><th>تاريخ الإصدار</th><th>المستحق</th><th>المدفوع</th><th>الباقي</th><th></th>' +
+      '<th>الرقم</th><th>المنتج</th><th>المتجر</th><th>المفتاح</th><th>تاريخ الإصدار</th><th>المستحق</th><th>المدفوع</th><th>الباقي</th><th></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table>';
   }
 
@@ -920,6 +1154,7 @@
           storeCode: inv.store_code,
           storeName: '',
           email: '',
+          product: inv.product || lic.product || 'ZMT PIECE',
           issuedAt: inv.issued_at,
           expiresAt: lic.expires_at || inv.issued_at,
           days: lic.days || '',
