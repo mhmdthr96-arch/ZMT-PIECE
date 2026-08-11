@@ -22,10 +22,79 @@ const CloudService = (() => {
     // No-op: credentials are hardcoded
   }
 
-  function getClient() {
-    if (client) return client;
+  // ===== DESKTOP ACCESS TOKEN (RLS) =====
+  // The publishable key alone is useless once RLS is locked: every Supabase
+  // call needs a JWT minted by the website's /api/push-trigger (action 'token',
+  // proving the store password) carrying `store_code` / `parent_code` claims.
+  // store password) carrying `store_code` / `parent_code` claims. The token is
+  // cached locally and refreshed transparently.
+  const SITE_URL_DEFAULT = 'https://zmt-website.vercel.app';
+
+  function _getSiteBase() {
+    const url = localStorage.getItem('zmt_push_site_url') || SITE_URL_DEFAULT;
+    return url.replace(/\/+$/, '');
+  }
+
+  function _getStorePassword() {
+    if (typeof Auth !== 'undefined' && typeof Auth.getStorePassword === 'function') {
+      const p = Auth.getStorePassword();
+      if (p) return p;
+    }
+    return localStorage.getItem('zmt_store_password') || '';
+  }
+
+  function _readCloudToken() {
     try {
-      client = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+      const raw = localStorage.getItem('zmt_cloud_token');
+      if (!raw) return null;
+      const t = JSON.parse(raw);
+      if (t && t.token && t.expiresAt > Date.now() + 60 * 1000) return t.token;
+      return null;
+    } catch { return null; }
+  }
+
+  function _storeCloudToken(token, expiresAt) {
+    localStorage.setItem('zmt_cloud_token', JSON.stringify({ token, expiresAt }));
+  }
+
+  function _clearCloudToken() {
+    localStorage.removeItem('zmt_cloud_token');
+  }
+
+  async function _obtainCloudToken() {
+    const cached = _readCloudToken();
+    if (cached) return cached;
+    const code = getStoreCode();
+    const password = _getStorePassword();
+    const parent = getParentCode();
+    if (!code || !password) return null;
+    try {
+      const resp = await fetch(_getSiteBase() + '/api/push-trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'token', mode: 'auth', code, password, parentCode: parent || undefined }),
+      });
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      if (!data || !data.token) return null;
+      _storeCloudToken(data.token, data.expiresAt);
+      return data.token;
+    } catch (e) {
+      console.warn('[Cloud] token acquisition failed:', e.message);
+      return null;
+    }
+  }
+
+  function getClient() {
+    const token = _readCloudToken();
+    if (client && client._zmtToken === token) return client;
+    try {
+      const opts = {
+        auth: { persistSession: false, autoRefreshToken: false },
+      };
+      if (token) opts.global = { headers: { Authorization: 'Bearer ' + token } };
+      client = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, opts);
+      client._zmtToken = token;
       client._url = SUPABASE_URL;
       return client;
     } catch (e) {
@@ -41,10 +110,12 @@ const CloudService = (() => {
   // helper bypasses the HTTP cache with a unique cache-busting query string so
   // every poll/merge reads the live object.
   async function _downloadFresh(path) {
+    const token = await _obtainCloudToken();
+    const auth = token || SUPABASE_KEY;
     const url = SUPABASE_URL + '/storage/v1/object/' + BUCKET + '/' + path + '?ts=' + Date.now();
     const resp = await fetch(url, {
       cache: 'no-store',
-      headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY },
+      headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + auth },
     });
     if (!resp.ok) throw new Error('storage download failed: ' + resp.status + ' ' + path);
     return await resp.blob();
@@ -229,6 +300,7 @@ const CloudService = (() => {
   }
 
   async function uploadBackup(data) {
+    await _obtainCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -420,6 +492,7 @@ const CloudService = (() => {
     const pending = _pushQueue.splice(0, _pushQueue.length);
     if (!pending.length) { _pushFlushing = false; return; }
 
+    await _obtainCloudToken();
     const supabase = getClient();
     if (!supabase) {
       _pushQueue.unshift(...pending);
@@ -480,6 +553,7 @@ const CloudService = (() => {
   }
 
   async function requestStoreCode() {
+    await _obtainCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -511,6 +585,7 @@ const CloudService = (() => {
   }
 
   async function registerBranch(mainCode) {
+    await _obtainCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -537,6 +612,7 @@ const CloudService = (() => {
   }
 
   async function listBranches(mainCode) {
+    await _obtainCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -555,6 +631,7 @@ const CloudService = (() => {
   }
 
   async function downloadBranchInventory(branchCode) {
+    await _obtainCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -606,6 +683,7 @@ const CloudService = (() => {
   // Download ONLY the inventory (products) of another store for viewing.
   // Never exposes invoices/payments/orders — transaction data stays isolated.
   async function downloadStoreInventory(targetCode) {
+    await _obtainCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -652,6 +730,7 @@ const CloudService = (() => {
   }
 
   async function downloadStoreBackup(targetCode) {
+    await _obtainCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -684,6 +763,7 @@ const CloudService = (() => {
   }
 
   async function listAccessibleStores() {
+    await _obtainCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -771,6 +851,7 @@ const CloudService = (() => {
   }
 
   async function uploadBackupForStore(targetCode, targetStoreType, targetParentCode) {
+    await _obtainCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -833,6 +914,9 @@ const CloudService = (() => {
     getConfig,
     saveConfig,
     getClient,
+    ensureAccessToken: _obtainCloudToken,
+    storeAccessToken: _storeCloudToken,
+    clearAccessToken: _clearCloudToken,
     getStoreCode,
     getStoreType,
     getParentCode,

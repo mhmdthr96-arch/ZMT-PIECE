@@ -88,83 +88,74 @@ const Auth = (() => {
     return supabase;
   }
 
+  // ===== WEBSITE IDENTITY BROKER =====
+  // Account creation, login, recovery and cloud access-token minting all go
+  // through the website's API now — never through the publishable Supabase key
+  // (which is locked behind RLS claims). The site URL reuses the connection
+  // settings value (same as push notifications), with a built-in default.
+  function _getSiteBase() {
+    const url = localStorage.getItem('zmt_push_site_url') ||
+      (typeof window.ZMT_PUSH_SITE_URL === 'string' ? window.ZMT_PUSH_SITE_URL : 'https://zmt-website.vercel.app');
+    return url.replace(/\/+$/, '');
+  }
+
+  async function _siteFetch(path, payload) {
+    let resp;
+    try {
+      resp = await fetch(_getSiteBase() + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      });
+    } catch (e) {
+      throw new Error('لا يمكن الوصول للخادم');
+    }
+    let data = null;
+    try { data = await resp.json(); } catch (e) { data = null; }
+    return { ok: resp.ok, status: resp.status, data };
+  }
+
+  function _storeCloudToken(token, expiresAt) {
+    try {
+      if (typeof CloudService !== 'undefined' && typeof CloudService.storeAccessToken === 'function') {
+        CloudService.storeAccessToken(token, expiresAt);
+      }
+    } catch (e) {}
+  }
+
   // ===== ACCOUNT CREATION =====
   async function createAccount(email) {
-    const supabase = _getDB();
-    if (!supabase) throw new Error('الرجاء الاتصال بالسحابة أولاً');
+    const { ok, data } = await _siteFetch('/api/push-trigger', { action: 'register', email });
+    if (!ok || !data) throw new Error('فشل إنشاء الحساب: ' + (data?.error || 'لا يمكن الوصول للخادم'));
 
-    const { data: existing } = await supabase.from('stores').select('*').eq('email', email).single();
-    if (existing) {
-      const user = {
-        userId: existing.id,
-        code: existing.code,
-        email: existing.email,
-        storeType: 'main',
-        parentCode: '',
-        createdAt: existing.created_at,
-      };
-      saveUser(user);
-      localStorage.setItem('zmt_store_code', user.code);
-      localStorage.setItem('zmt_store_type', 'main');
-      return { user, isNew: false };
-    }
-
-    let code;
-    let codeExists = true;
-    while (codeExists) {
-      code = generateCode();
-      const { data: check } = await supabase.from('stores').select('id').eq('code', code).single();
-      codeExists = !!check;
-    }
-
-    const tempAuthPass = 'zmt_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-
-    const { error: insertErr } = await supabase.from('stores').insert({
-      code,
-      email,
-      store_name: 'ZMT PIECE',
-      auth_password: tempAuthPass,
-    });
-    if (insertErr) throw new Error('فشل إنشاء الحساب: ' + insertErr.message);
-
-    try {
-      const { error: authErr } = await supabase.auth.signUp({
-        email,
-        password: tempAuthPass,
-        options: { data: { store_code: code } },
-      });
-      if (authErr) {
-        console.warn('[Auth] Supabase Auth signUp error:', authErr.message);
-      } else {
-        console.log('[Auth] Supabase Auth signUp success for:', email);
-      }
-    } catch (e) {
-      console.warn('[Auth] Supabase Auth signUp exception:', e.message);
-    }
-
-    const user = { userId: code, code, email, storeType: 'main', parentCode: '', createdAt: new Date().toISOString() };
+    const user = {
+      userId: data.code,
+      code: data.code,
+      email: data.email || email,
+      storeType: 'main',
+      parentCode: '',
+      createdAt: new Date().toISOString(),
+    };
     saveUser(user);
-    localStorage.setItem('zmt_store_code', code);
+    localStorage.setItem('zmt_store_code', user.code);
     localStorage.setItem('zmt_store_type', 'main');
 
-    return { user, isNew: true };
+    return { user, isNew: !!data.isNew };
   }
 
   // ===== LOGIN =====
   async function loginWithCode(code) {
-    const supabase = _getDB();
-    if (!supabase) throw new Error('الرجاء الاتصال بالسحابة أولاً');
+    const { ok, data } = await _siteFetch('/api/push-trigger', { action: 'token', mode: 'lookup', code });
+    if (!ok || !data || !data.found || !data.store) throw new Error('الرمز غير صحيح أو غير موجود');
 
-    const { data: store } = await supabase.from('stores').select('*').eq('code', code).single();
-    if (!store) throw new Error('الرمز غير صحيح أو غير موجود');
-
+    const store = data.store;
     const user = {
-      userId: store.id,
+      userId: store.storeId,
       code: store.code,
-      email: store.email,
+      email: store.email || '',
       storeType: 'main',
       parentCode: '',
-      createdAt: store.created_at,
+      createdAt: store.createdAt,
     };
     saveUser(user);
     localStorage.setItem('zmt_store_code', user.code);
@@ -174,20 +165,20 @@ const Auth = (() => {
   }
 
   async function loginAsBranch(branchCode) {
-    const supabase = _getDB();
-    if (!supabase) throw new Error('الرجاء الاتصال بالسحابة أولاً');
+    const { ok, data } = await _siteFetch('/api/push-trigger', { action: 'token', mode: 'lookup', code: branchCode });
+    if (!ok || !data || !data.found || !data.store || data.store.type !== 'branch') {
+      throw new Error('الرمز غير صحيح أو غير موجود');
+    }
 
-    const { data: branch } = await supabase.from('branches').select('*, stores(*)').eq('code', branchCode).single();
-    if (!branch) throw new Error('الرمز غير صحيح أو غير موجود');
-
+    const s = data.store;
     const user = {
-      userId: branch.code,
-      code: branch.code,
+      userId: s.code,
+      code: s.code,
       email: '',
       storeType: 'branch',
-      parentCode: branch.stores?.code || '',
-      branchName: branch.name,
-      createdAt: branch.created_at,
+      parentCode: s.parentCode || '',
+      branchName: s.storeName,
+      createdAt: s.createdAt || new Date().toISOString(),
     };
     saveUser(user);
     localStorage.setItem('zmt_store_code', user.code);
@@ -198,29 +189,26 @@ const Auth = (() => {
   }
 
   async function connectAsBranch(mainCode, password) {
-    const supabase = _getDB();
-    if (!supabase) throw new Error('الرجاء الاتصال بالسحابة أولاً');
+    const { ok, data } = await _siteFetch('/api/push-trigger', { action: 'token', mode: 'authBranch', code: mainCode, password });
+    if (!ok || !data || !data.token || !data.store) throw new Error('كلمة المرور غير صحيحة');
 
-    const { data: store } = await supabase.from('stores').select('id').eq('code', mainCode).single();
-    if (!store) throw new Error('الرمز الرئيسي غير موجود');
+    _storeCloudToken(data.token, data.expiresAt);
 
-    const { data: branch } = await supabase.from('branches')
-      .select('*').eq('store_id', store.id).eq('password', password).single();
-    if (!branch) throw new Error('كلمة المرور غير صحيحة');
-
+    const s = data.store;
     const user = {
-      userId: branch.code,
-      code: branch.code,
+      userId: s.code,
+      code: s.code,
       email: '',
       storeType: 'branch',
       parentCode: mainCode,
-      branchName: branch.name,
-      createdAt: branch.created_at,
+      branchName: s.storeName,
+      createdAt: s.createdAt || new Date().toISOString(),
     };
     saveUser(user);
     localStorage.setItem('zmt_store_code', user.code);
     localStorage.setItem('zmt_store_type', 'branch');
     localStorage.setItem('zmt_parent_code', mainCode);
+    localStorage.setItem('zmt_store_password', password);
 
     return user;
   }
@@ -232,6 +220,11 @@ const Auth = (() => {
     localStorage.removeItem('zmt_store_type');
     localStorage.removeItem('zmt_parent_code');
     localStorage.removeItem('zmt_store_password');
+    try {
+      if (typeof CloudService !== 'undefined' && typeof CloudService.clearAccessToken === 'function') {
+        CloudService.clearAccessToken();
+      }
+    } catch (e) {}
   }
 
   function isSupabaseConfigured() {
@@ -240,6 +233,11 @@ const Auth = (() => {
 
   // ===== STORE PASSWORD =====
   async function setStorePassword(password) {
+    try {
+      if (typeof CloudService !== 'undefined' && typeof CloudService.ensureAccessToken === 'function') {
+        await CloudService.ensureAccessToken();
+      }
+    } catch (e) {}
     const supabase = _getDB();
     if (!supabase) throw new Error('Supabase غير متصل');
     const code = getUserCode();
@@ -265,6 +263,11 @@ const Auth = (() => {
   }
 
   async function verifyStorePassword(password) {
+    try {
+      if (typeof CloudService !== 'undefined' && typeof CloudService.ensureAccessToken === 'function') {
+        await CloudService.ensureAccessToken();
+      }
+    } catch (e) {}
     const supabase = _getDB();
     if (!supabase) throw new Error('Supabase غير متصل');
     const code = getUserCode();
@@ -280,20 +283,19 @@ const Auth = (() => {
   }
 
   async function verifyCloudPassword(code, password) {
-    const supabase = _getDB();
-    if (!supabase) throw new Error('Supabase غير متصل');
-
-    const { data: store } = await supabase.from('stores').select('password_hash, password_salt').eq('code', code).single();
-    if (!store) {
-      const { data: branch } = await supabase.from('branches').select('password').eq('code', code).single();
-      if (branch) return branch.password === password;
-      throw new Error('الرمز غير موجود');
+    const parent = getParentCode();
+    const { ok, data } = await _siteFetch('/api/push-trigger', {
+      action: 'token',
+      mode: 'auth',
+      code,
+      password,
+      parentCode: parent || undefined,
+    });
+    if (ok && data && data.token) {
+      _storeCloudToken(data.token, data.expiresAt);
+      return true;
     }
-
-    if (store.password_hash && store.password_salt) {
-      return await verifyPasswordHash(password, store.password_hash, store.password_salt);
-    }
-    return !password;
+    return false;
   }
 
   function getStorePassword() {
@@ -327,79 +329,60 @@ const Auth = (() => {
     return data && data.code === code;
   }
 
-  // ===== PASSWORD RECOVERY (Direct lookup by email) =====
+  // ===== PASSWORD RECOVERY (via the website, never the publishable key) =====
+  // Security change: the lookup no longer reveals the stored plaintext
+  // password — it only reports whether one exists, and the owner resets it.
   async function recoverByEmail(email) {
-    const supabase = _getDB();
-    if (!supabase) throw new Error('Supabase غير متصل');
-
-    const { data: store } = await supabase.from('stores').select('code, email, password_plain, store_name').eq('email', email).single();
-    if (!store) throw new Error('البريد الإلكتروني غير مسجل في النظام');
+    const { ok, data } = await _siteFetch('/api/push-trigger', { action: 'recovery', sub: 'lookup', email });
+    if (!ok || !data || !data.found) throw new Error('البريد الإلكتروني غير مسجل في النظام');
 
     return {
-      code: store.code,
-      email: store.email,
-      storeName: store.store_name || 'ZMT PIECE',
-      password: store.password_plain || '',
-      hasPassword: !!(store.password_plain),
+      code: data.code,
+      email,
+      storeName: data.storeName || 'ZMT PIECE',
+      password: '',
+      hasPassword: !!data.hasPassword,
     };
   }
 
   async function resetPasswordByEmail(email, newPassword) {
-    const supabase = _getDB();
-    if (!supabase) throw new Error('Supabase غير متصل');
-
-    const { data: store } = await supabase.from('stores').select('*').eq('email', email).single();
-    if (!store) throw new Error('البريد غير مسجل');
+    const { ok, data } = await _siteFetch('/api/push-trigger', { action: 'recovery', sub: 'reset', email, newPassword });
+    if (!ok || !data || !data.found) throw new Error('البريد غير مسجل');
 
     const { hash, salt } = await hashPassword(newPassword);
+    _saveLocalPassData(data.code, hash, salt);
 
-    const { error } = await supabase.from('stores').update({
-      password_hash: hash,
-      password_salt: salt,
-      password_plain: newPassword,
-      last_password_hash: store.password_hash || '',
-      last_password_salt: store.password_salt || '',
-    }).eq('id', store.id);
-    if (error) throw new Error('فشل حفظ كلمة المرور: ' + error.message);
-
-    _saveLocalPassData(store.code, hash, salt);
-
-    return store.code;
+    return data.code;
   }
 
   async function removePasswordByEmail(email) {
-    const supabase = _getDB();
-    if (!supabase) throw new Error('Supabase غير متصل');
+    const { ok, data } = await _siteFetch('/api/push-trigger', { action: 'recovery', sub: 'remove', email });
+    if (!ok || !data || !data.found) throw new Error('البريد غير مسجل');
 
-    const { data: store } = await supabase.from('stores').select('id, code').eq('email', email).single();
-    if (!store) throw new Error('البريد غير مسجل');
-
-    const { error } = await supabase.from('stores').update({
-      password_hash: '',
-      password_salt: '',
-      password_plain: '',
-    }).eq('id', store.id);
-    if (error) throw new Error('فشل حفظ التغييرات: ' + error.message);
-
-    return store.code;
+    return data.code;
   }
 
   async function getRecoveryInfo(email) {
-    const supabase = _getDB();
-    if (!supabase) return null;
-
-    const { data: store } = await supabase.from('stores').select('*').eq('email', email).single();
-    if (!store) return null;
-    return {
-      code: store.code,
-      email: store.email,
-      storeType: 'main',
-      hasPassword: !!(store.password_hash && store.password_salt),
-    };
+    try {
+      const info = await recoverByEmail(email);
+      return {
+        code: info.code,
+        email,
+        storeType: 'main',
+        hasPassword: info.hasPassword,
+      };
+    } catch (e) {
+      return null;
+    }
   }
 
   // ===== BRANCHES =====
   async function createBranch(name, password) {
+    try {
+      if (typeof CloudService !== 'undefined' && typeof CloudService.ensureAccessToken === 'function') {
+        await CloudService.ensureAccessToken();
+      }
+    } catch (e) {}
     const supabase = _getDB();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -422,6 +405,7 @@ const Auth = (() => {
       name,
       password,
       store_id: store.id,
+      parent_code: mainCode,
     });
     if (error) throw new Error('فشل إنشاء الفرع: ' + error.message);
 
@@ -429,6 +413,11 @@ const Auth = (() => {
   }
 
   async function listBranchesFull(mainCode) {
+    try {
+      if (typeof CloudService !== 'undefined' && typeof CloudService.ensureAccessToken === 'function') {
+        await CloudService.ensureAccessToken();
+      }
+    } catch (e) {}
     const supabase = _getDB();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -443,12 +432,17 @@ const Auth = (() => {
       code: b.code,
       name: b.name,
       password: b.password,
-      parentCode: code,
+      parentCode: b.parent_code || code,
       createdAt: b.created_at,
     }));
   }
 
   async function deleteBranch(branchCode) {
+    try {
+      if (typeof CloudService !== 'undefined' && typeof CloudService.ensureAccessToken === 'function') {
+        await CloudService.ensureAccessToken();
+      }
+    } catch (e) {}
     const supabase = _getDB();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -829,6 +823,13 @@ const Auth = (() => {
     return perms[page]?.del === true;
   }
 
+  function firstViewablePage() {
+    for (const page of Object.keys(DEFAULT_PAGES)) {
+      if (canView(page)) return page;
+    }
+    return null;
+  }
+
   function isManager() {
     const user = getCurrentUser();
     return user && user.role !== 'user';
@@ -998,6 +999,7 @@ const Auth = (() => {
     canView,
     canEdit,
     canDelete,
+    firstViewablePage,
     isManager,
     DEFAULT_PAGES,
     PAGE_NAMES,
