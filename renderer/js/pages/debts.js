@@ -162,6 +162,9 @@ function showDebtsDetail(type, id) {
               </div>
               <div style="font-size:10px">${statusHtml}</div>
               <div class="debts-inv-amount" style="color:${invRem > 0 ? '#e65100' : '#28a745'}">DA${invRem.toFixed(2)}</div>
+              ${invRem > 0 && !inv.isProvisional && inv.type !== 'transfer_receive'
+                ? `<button class="btn btn-sm btn-primary" onclick="openDebtPay('customer','${inv.id}')" style="font-size:11px"><i class="fas fa-hand-holding-usd"></i> ${t('debts.payBtn')}</button>`
+                : ''}
             </div>`;
           }).join('')
       }
@@ -218,6 +221,9 @@ function showDebtsDetail(type, id) {
               </div>
               <div style="font-size:10px">${statusHtml}</div>
               <div class="debts-inv-amount" style="color:${invRem > 0 ? '#e65100' : '#28a745'}">DA${invRem.toFixed(2)}</div>
+              ${invRem > 0 && !inv.isProvisional && inv.type !== 'transfer_receive'
+                ? `<button class="btn btn-sm btn-primary" onclick="openDebtPay('supplier','${inv.id}')" style="font-size:11px"><i class="fas fa-hand-holding-usd"></i> ${t('debts.payBtn')}</button>`
+                : ''}
             </div>`;
           }).join('')
       }
@@ -242,6 +248,74 @@ function showDebtsDetail(type, id) {
 
 function closeDebtsDetail() {
   document.getElementById('debtsDetailPanel').classList.remove('open');
+}
+
+// ===== PAY FROM DEBTS =====
+var _debtPayInvId = null;
+
+function openDebtPay(type, invId) {
+  const inv = DB.getInvoice(invId);
+  if (!inv) return;
+  if (inv.isProvisional) { alert(t('invoices.cannotPayProforma')); return; }
+  const paid = DB.getInvoicePaidAmount(invId);
+  const remaining = Math.max(0, (inv.totalAmount || 0) - paid);
+  if (remaining <= 0) { alert(t('invoices.fullyPaidAlert')); return; }
+  _debtPayInvId = invId;
+  document.getElementById('debtPayTotal').textContent = 'DA' + (inv.totalAmount || 0).toFixed(2);
+  document.getElementById('debtPayPaid').textContent = 'DA' + paid.toFixed(2);
+  document.getElementById('debtPayRemaining').textContent = 'DA' + remaining.toFixed(2);
+  document.getElementById('debtPayAmount').value = remaining.toFixed(2);
+  document.getElementById('debtPayModal').style.display = 'flex';
+}
+
+function closeDebtPay() {
+  _debtPayInvId = null;
+  document.getElementById('debtPayModal').style.display = 'none';
+}
+
+function confirmDebtPayment() {
+  if (!_debtPayInvId) return;
+  const inv = DB.getInvoice(_debtPayInvId);
+  if (!inv) return;
+  const paid = DB.getInvoicePaidAmount(_debtPayInvId);
+  const remaining = Math.max(0, (inv.totalAmount || 0) - paid);
+  const amount = parseFloat(document.getElementById('debtPayAmount').value) || 0;
+  if (amount <= 0 || amount > remaining) { alert(t('invoices.invalidAmount')); return; }
+
+  DB.addPayment({
+    customerId: inv.customerId || undefined,
+    supplierId: inv.supplierId || undefined,
+    invoiceId: _debtPayInvId,
+    amount,
+    method: (document.getElementById('debtPayMethod')?.value) || 'cash',
+    note: 'دفع من صفحة الديون',
+  });
+
+  if (inv.customerId) {
+    const customers = DB.getCustomers();
+    const cIdx = customers.findIndex(c => c.id === inv.customerId);
+    if (cIdx !== -1) {
+      customers[cIdx].balance = (parseFloat(customers[cIdx].balance) || 0) - amount;
+      DB.saveCustomers(customers);
+    }
+  }
+  if (inv.supplierId) {
+    const suppliers = DB.getSuppliers();
+    const sIdx = suppliers.findIndex(s => s.id === inv.supplierId);
+    if (sIdx !== -1) {
+      suppliers[sIdx].balance = (parseFloat(suppliers[sIdx].balance) || 0) - amount;
+      DB.saveSuppliers(suppliers);
+    }
+  }
+
+  DB.updateInvoice(_debtPayInvId, { paidAmount: paid + amount });
+
+  const partyId = inv.customerId || inv.supplierId;
+  const partyType = inv.customerId ? 'customer' : 'supplier';
+  closeDebtPay();
+  renderDebts();
+  if (partyId) showDebtsDetail(partyType, partyId);
+  alert(t('invoices.paymentSaved'));
 }
 
 function escHtml(str) {

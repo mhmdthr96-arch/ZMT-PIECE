@@ -563,6 +563,46 @@ document.getElementById('btnMinimize')?.addEventListener('click', () => api.mini
 document.getElementById('btnMaximize')?.addEventListener('click', () => api.maximize?.());
 document.getElementById('btnClose')?.addEventListener('click', () => api.close?.());
 
+// ===== PROFESSIONAL SUPPORT =====
+const SUPPORT_WHATSAPP = 'https://wa.me/213000000000?text=' + encodeURIComponent('السلام عليكم، أحتاج دعم من فريق ZMT PIECE');
+const SUPPORT_EMAIL = 'mailto:support@zmtpiece.com?subject=' + encodeURIComponent('دعم ZMT PIECE');
+
+function setupSupportButton() {
+  const btn = document.getElementById('btnSupport');
+  const dropdown = document.getElementById('supportDropdown');
+  if (!btn || !dropdown) return;
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dropdown.classList.toggle('open');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('tbSupport')?.contains(e.target)) dropdown.classList.remove('open');
+  });
+
+  const anydesk = document.getElementById('supportAnyDesk');
+  if (anydesk) anydesk.addEventListener('click', async () => {
+    dropdown.classList.remove('open');
+    try {
+      const res = await window.electronAPI?.openAnyDesk?.();
+      if (res && !res.success) alert('تعذر فتح AnyDesk: ' + (res.error || ''));
+    } catch (err) { console.warn('openAnyDesk failed', err); }
+  });
+
+  const wa = document.getElementById('supportWhatsapp');
+  if (wa) wa.addEventListener('click', async () => {
+    dropdown.classList.remove('open');
+    try { await window.electronAPI?.openExternal?.(SUPPORT_WHATSAPP); } catch (err) { console.warn(err); }
+  });
+
+  const mail = document.getElementById('supportEmail');
+  if (mail) mail.addEventListener('click', async () => {
+    dropdown.classList.remove('open');
+    try { await window.electronAPI?.openExternal?.(SUPPORT_EMAIL); } catch (err) { console.warn(err); }
+  });
+}
+
 // ===== NAVIGATION =====
 document.addEventListener('click', (e) => {
   const item = e.target.closest('.nav-item');
@@ -649,7 +689,7 @@ const LANG = {
       empty: 'لا توجد معاملات',
       totalInvoices: 'إجمالي الفواتير', totalPurchases: 'إجمالي المشتريات',
       balance: 'الرصيد', paid: 'المدفوع', paidToThem: 'المدفوع لهم',
-      invoices: 'الفواتير', noInvoices: 'لا توجد فواتير',
+      invoices: 'الفواتير', noInvoices: 'لا توجد فواتير', payBtn: 'دفع',
       payments: 'الدفعات', noPayments: 'لا توجد دفعات',
       net: 'صافي الذمم', chooseSide: 'اختر طرفاً من القائمة', back: 'رجوع',
       searchPlaceholder: 'ابحث بالاسم أو رقم الهاتف...', tabCustomers: 'العملاء', tabSuppliers: 'الموردين',
@@ -1337,7 +1377,7 @@ const LANG = {
       empty: 'No transactions',
       totalInvoices: 'Total Invoices', totalPurchases: 'Total Purchases',
       balance: 'Balance', paid: 'Paid', paidToThem: 'Paid to them',
-      invoices: 'Invoices', noInvoices: 'No invoices',
+      invoices: 'Invoices', noInvoices: 'No invoices', payBtn: 'Pay',
       payments: 'Payments', noPayments: 'No payments',
       net: 'Net Receivables', chooseSide: 'Choose a party from the list', back: 'Back',
       searchPlaceholder: 'Search by name or phone number...', tabCustomers: 'Customers', tabSuppliers: 'Suppliers',
@@ -2020,7 +2060,7 @@ const LANG = {
       empty: 'Aucune transaction',
       totalInvoices: 'Total Factures', totalPurchases: 'Total Achats',
       balance: 'Solde', paid: 'Payé', paidToThem: 'Payé à eux',
-      invoices: 'Factures', noInvoices: 'Aucune facture',
+      invoices: 'Factures', noInvoices: 'Aucune facture', payBtn: 'Payer',
       payments: 'Paiements', noPayments: 'Aucun paiement',
       net: 'Créances Nettes', chooseSide: 'Choisir une partie de la liste', back: 'Retour',
       searchPlaceholder: 'Rechercher par nom ou numéro de téléphone...', tabCustomers: 'Clients', tabSuppliers: 'Fournisseurs',
@@ -2703,7 +2743,7 @@ const LANG = {
       empty: '无交易',
       totalInvoices: '发票总额', totalPurchases: '采购总额',
       balance: '余额', paid: '已付', paidToThem: '已付给他们',
-      invoices: '发票', noInvoices: '无发票',
+      invoices: '发票', noInvoices: '无发票', payBtn: '支付',
       payments: '付款', noPayments: '无付款',
       net: '净应收', chooseSide: '从列表中选择一方', back: '返回',
       searchPlaceholder: '按姓名或电话号码搜索...', tabCustomers: '客户', tabSuppliers: '供应商',
@@ -3679,6 +3719,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (btn) { btn.innerHTML = '<i class="fas fa-sun"></i>'; btn.title = 'الوضع النهاري'; }
   }
   document.getElementById('btnTheme')?.addEventListener('click', toggleTheme);
+
+  // ===== PROFESSIONAL SUPPORT (dropdown) =====
+  setupSupportButton();
 
   // ===== LICENSE CHECK =====
   const licenseOk = await checkAndEnforceLicense();

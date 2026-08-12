@@ -1268,7 +1268,7 @@ async function importInvoices(role) {
     if (!isSales && supplierId) {
       const list = DB.getSuppliers();
       const si = list.findIndex(s => s.id === supplierId);
-      if (si >= 0) { list[si].balance = (parseFloat(list[si].balance) || 0) + totalAmount; DB.saveSuppliers(list); }
+      if (si >= 0) { list[si].balance = (parseFloat(list[si].balance) || 0) + (totalAmount - paid); DB.saveSuppliers(list); }
     } else if (isSales && customerId) {
       const list = DB.getCustomers();
       const ci = list.findIndex(c => c.id === customerId);
@@ -1720,12 +1720,12 @@ async function createPreImportBackup() {
     };
     const dateStr = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
     const filePath = appPath + '\\pre_import_' + dateStr + '.zmt-backup';
-    const json = JSON.stringify(backup, (k, v) => {
+    const clean = JSON.parse(JSON.stringify(backup, (k, v) => {
       if (typeof v === 'bigint') return String(v);
       if (v === undefined) return null;
       return v;
-    });
-    await window.electronAPI.writeFile(filePath, json);
+    }));
+    await window.electronAPI.writeFileBinary(filePath, window._zmtGzipToBase64(clean));
     return filePath;
   } catch (err) {
     console.warn('[Migration] Pre-import backup failed:', err);
@@ -1735,6 +1735,20 @@ async function createPreImportBackup() {
 
 async function importGestionStockInvoices(ctx) {
   const { dbPath, options, load, num, txt, parseDate, custCodeToId, supCodeToId, prodByRef, prodByBar, ensureProduct, results } = ctx;
+
+  const applyPayment = (pmt) => {
+    const p = DB.addPayment(pmt);
+    if (pmt.customerId) {
+      const list = DB.getCustomers();
+      const ci = list.findIndex(c => c.id === pmt.customerId);
+      if (ci >= 0) { list[ci].balance = (parseFloat(list[ci].balance) || 0) - (pmt.amount || 0); DB.saveCustomers(list); }
+    } else if (pmt.supplierId) {
+      const list = DB.getSuppliers();
+      const si = list.findIndex(s => s.id === pmt.supplierId);
+      if (si >= 0) { list[si].balance = (parseFloat(list[si].balance) || 0) - (pmt.amount || 0); DB.saveSuppliers(list); }
+    }
+    return p;
+  };
 
   // ===== 4) PURCHASE INVOICES =====
   ctx.migrationUpdateStatus((t('migration.rolePurchaseInvoices') || 'فواتير الشراء') + '...', 'info');
@@ -1748,6 +1762,7 @@ async function importGestionStockInvoices(ctx) {
       supCode: txt(r['CODE_FOURNISSEUR']),
       date: parseDate(r['DATE_FACTURE']),
       paid: num(r['VERSEMENT']),
+      total: num(r['MONTANT_TTC']),
     });
   }
   const purItems = new Map();
@@ -1768,13 +1783,13 @@ async function importGestionStockInvoices(ctx) {
       invItems.push({ productId: p.id, barcode: p.barcode, name: p.name || it.ref, qty: it.qty, price: it.price, total: it.qty * it.price });
     }
     if (!invItems.length) continue;
-    const totalAmount = invItems.reduce((s, it) => s + it.total, 0);
+    const totalAmount = (hdr && hdr.total > 0) ? hdr.total : invItems.reduce((s, it) => s + it.total, 0);
     let supplierId = '';
     if (hdr) supplierId = supCodeToId[hdr.supCode] || '';
     if (!supplierId) supplierId = (DB.getSuppliers()[0] || {}).id || '';
     const invData = { type: 'supplier', date: hdr ? hdr.date : Date.now(), items: invItems, totalAmount, extraDiscount: 0, supplierId, note: (t('migration.oldInvoiceNote') || 'فاتورة مستوردة') + ' — ' + n };
     const inv = DB.addInvoice(invData);
-    if (hdr && hdr.paid > 0) DB.addPayment({ amount: hdr.paid, invoiceId: inv.id, supplierId, note: t('migration.oldPaymentNote') || 'مدفوعات مستوردة' });
+    if (hdr && hdr.paid > 0) applyPayment({ amount: hdr.paid, invoiceId: inv.id, supplierId, note: t('migration.oldPaymentNote') || 'مدفوعات مستوردة' });
     for (const it of invItems) {
       const p = DB.getProductByBarcode(it.barcode);
       if (p) DB.updateProduct(p.id, { quantity: (p.quantity || 0) + it.qty });
@@ -1804,6 +1819,7 @@ async function importGestionStockInvoices(ctx) {
       date: parseDate(r['DATE_FACTURE']),
       paid: num(r['VERSEMENT']),
       discount: num(r['TOTAL_REMISE']),
+      total: num(r['MONTANT_TTC']),
     });
   }
   const cliItems = new Map();
@@ -1824,7 +1840,7 @@ async function importGestionStockInvoices(ctx) {
       invItems.push({ productId: p.id, barcode: p.barcode, name: p.name || it.ref, qty: it.qty, price: it.price, total: it.qty * it.price });
     }
     if (!invItems.length) continue;
-    const totalAmount = invItems.reduce((s, it) => s + it.total, 0);
+    const totalAmount = (hdr && hdr.total > 0) ? hdr.total : invItems.reduce((s, it) => s + it.total, 0);
     const paid = hdr ? hdr.paid : 0;
     const discount = hdr ? hdr.discount : 0;
     const invData = { type: 'customer', date: hdr ? hdr.date : Date.now(), items: invItems, totalAmount, extraDiscount: discount, note: (t('migration.oldInvoiceNote') || 'فاتورة مستوردة') + ' — ' + n };
@@ -1841,7 +1857,7 @@ async function importGestionStockInvoices(ctx) {
       return sum + it.total - (p ? it.qty * (p.buyPrice || 0) : 0);
     }, 0);
     const inv = DB.addInvoice(invData);
-    if (paid > 0) DB.addPayment({ amount: paid, invoiceId: inv.id, customerId: customerId || undefined, note: t('migration.oldPaymentNote') || 'مدفوعات مستوردة' });
+    if (paid > 0) applyPayment({ amount: paid, invoiceId: inv.id, customerId: customerId || undefined, note: t('migration.oldPaymentNote') || 'مدفوعات مستوردة' });
     for (const it of invItems) {
       const p = DB.getProductByBarcode(it.barcode);
       if (p) DB.updateProduct(p.id, { quantity: Math.max(0, (p.quantity || 0) - it.qty) });
@@ -1849,7 +1865,7 @@ async function importGestionStockInvoices(ctx) {
     if (customerId) {
       const list = DB.getCustomers();
       const ci = list.findIndex(c => c.id === customerId);
-      if (ci >= 0) { list[ci].balance = (parseFloat(list[ci].balance) || 0) + (totalAmount - paid - discount); DB.saveCustomers(list); }
+      if (ci >= 0) { list[ci].balance = (parseFloat(list[ci].balance) || 0) + (totalAmount - discount); DB.saveCustomers(list); }
     }
     results.saleInvoices++;
     if (results.saleInvoices % 25 === 0) {
@@ -1917,6 +1933,44 @@ async function importGestionStockInvoices(ctx) {
   if (returnsList.length && !returnsSaved) {
     DB.saveReturns(returnsList);
     returnsSaved = true;
+  }
+
+  // ===== 7) RECEIPTS (VERSEMENT_CLIENT / VERSEMENT_FOURNISSEUR) =====
+  ctx.migrationUpdateStatus((t('migration.oldPaymentNote') || 'المدفوعات') + '...', 'info');
+  const versCli = await load('VERSEMENT_CLIENT');
+  for (const r of versCli) {
+    const customerId = custCodeToId[txt(r['CODE_CLIENT'])];
+    const amount = num(r['VERSEMENT']);
+    if (!customerId || amount <= 0) continue;
+    applyPayment({
+      amount,
+      customerId,
+      date: parseDate(r['DATE_VERSEMENT']),
+      note: (t('migration.oldPaymentNote') || 'مدفوعات مستوردة') + ' — R' + txt(r['N_RECU']),
+    });
+  }
+  const versSup = await load('VERSEMENT_FOURNISSEUR');
+  for (const r of versSup) {
+    const supplierId = supCodeToId[txt(r['CODE_FOURNISSEUR'])];
+    const amount = num(r['VERSEMENT']);
+    if (!supplierId || amount <= 0) continue;
+    applyPayment({
+      amount,
+      supplierId,
+      date: parseDate(r['DATE_VERSEMENT']),
+      note: (t('migration.oldPaymentNote') || 'مدفوعات مستوردة') + ' — R' + txt(r['N_RECU_F']),
+    });
+  }
+
+  // ===== 8) SUPPLIER AVOIRS =====
+  const avoirSupHeaders = await load('AVOIR_FOURNISSEUR');
+  for (const r of avoirSupHeaders) {
+    const supplierId = supCodeToId[txt(r['CODE_FOURNISSEUR'])];
+    const total = num(r['TOTAL_TTC']);
+    if (!supplierId || total <= 0) continue;
+    const list = DB.getSuppliers();
+    const si = list.findIndex(s => s.id === supplierId);
+    if (si >= 0) { list[si].balance = (parseFloat(list[si].balance) || 0) - total; DB.saveSuppliers(list); }
   }
 }
 
@@ -1988,6 +2042,7 @@ async function importGestionStockFull(selectedBrands) {
   const clientRows = await load('CLIENT');
   const existingCust = new Set(DB.getCustomers().map(c => norm(c.name)));
   const custCodeToId = {};
+  const importedCustMaster = new Map();
   for (const r of clientRows) {
     const name = txt(r['NOM_CLIENT']);
     if (!name || /vente\s*a\s*comptoir|a\s*comptoir/i.test(name)) continue;
@@ -2003,6 +2058,8 @@ async function importGestionStockFull(selectedBrands) {
       address: txt(r['ADRESSE']) || txt(r['VILLE']),
       discount: 0,
     });
+    c.balance = num(r['CREDIT_INITIAL']) || 0;
+    importedCustMaster.set(c.id, num(r['CREDIT_CLIENT']));
     custCodeToId[txt(r['CODE_CLIENT'])] = c.id;
     results.customers++;
   }
@@ -2015,6 +2072,7 @@ async function importGestionStockFull(selectedBrands) {
   const existingSup = new Set(DB.getSuppliers().map(s => norm(s.name)));
   const supCodeToId = {};
   const newSuppliers = [];
+  const importedSupMaster = new Map();
   for (const r of fourRows) {
     const name = txt(r['NOM_FOURNISSEUR']);
     if (!name) continue;
@@ -2025,8 +2083,9 @@ async function importGestionStockFull(selectedBrands) {
       name: name.trim(),
       phone: txt(r['TEL']) || txt(r['MOBILE']),
       address: txt(r['ADRESSE']) || txt(r['VILLE']),
-      balance: 0,
+      balance: num(r['CREDIT_INITIAL']) || 0,
     };
+    importedSupMaster.set(s.id, num(r['CREDIT_FOURNISSEUR']));
     newSuppliers.push(s);
     supCodeToId[txt(r['CODE_FOURNISSEUR'])] = s.id;
   }
@@ -2122,6 +2181,23 @@ async function importGestionStockFull(selectedBrands) {
 
   try {
     await importGestionStockInvoices({ dbPath, options, load, num, txt, parseDate, custCodeToId, supCodeToId, prodByRef, prodByBar, ensureProduct, results, migrationUpdateStatus, setImportStatus, t });
+    // Enforce the legacy master credit (CREDIT_CLIENT / CREDIT_FOURNISSEUR) as the
+    // authoritative final balance for every newly imported party, including zero
+    // balances, so transaction-derived residuals never inflate the debts.
+    const custs = DB.getCustomers();
+    let custChanged = false;
+    for (const c of custs) {
+      const mc = importedCustMaster.get(c.id);
+      if (mc !== undefined) { c.balance = mc; custChanged = true; }
+    }
+    if (custChanged) DB.saveCustomers(custs);
+    const sups = DB.getSuppliers();
+    let supChanged = false;
+    for (const s of sups) {
+      const mc = importedSupMaster.get(s.id);
+      if (mc !== undefined) { s.balance = mc; supChanged = true; }
+    }
+    if (supChanged) DB.saveSuppliers(sups);
   } finally {
     if (DB && DB.suppressAutoBackup) DB.suppressAutoBackup(false);
   }

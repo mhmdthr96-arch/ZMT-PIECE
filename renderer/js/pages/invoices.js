@@ -11,6 +11,13 @@ function init_invoices() {
   _invAllInvoices = DB.getInvoices().sort((a, b) => b.createdAt - a.createdAt);
   _invCustomersCache = null;
   _invSuppliersCache = null;
+  const isUser = typeof Auth !== 'undefined' && typeof Auth.isManager === 'function' && !Auth.isManager();
+  const typeFilterEl = document.getElementById('invTypeFilter');
+  if (typeFilterEl) {
+    // Employees are restricted to sale invoices only, so the type filter is meaningless to them
+    typeFilterEl.style.display = isUser ? 'none' : '';
+    if (isUser) typeFilterEl.value = 'customer';
+  }
   if (_invPager) { _invPager.destroy(); _invPager = null; }
   _invPager = new InfiniteScrollPager({
     data: _invFiltered,
@@ -30,7 +37,9 @@ function filterInvoices() {
   const q = normSearch(document.getElementById('invSearchInput').value || '').toLowerCase();
   const dateFrom = document.getElementById('invDateFrom').value;
   const dateTo = document.getElementById('invDateTo').value;
-  const typeFilter = document.getElementById('invTypeFilter').value;
+  const isUser = typeof Auth !== 'undefined' && typeof Auth.isManager === 'function' && !Auth.isManager();
+  // Employees granted the invoices permission only see sale (customer) invoices
+  const typeFilter = isUser ? 'customer' : document.getElementById('invTypeFilter').value;
 
   if (!_invCustomersCache) {
     _invCustomersCache = {};
@@ -83,7 +92,8 @@ function resetInvoiceFilters() {
   document.getElementById('invSearchInput').value = '';
   document.getElementById('invDateFrom').value = '';
   document.getElementById('invDateTo').value = '';
-  document.getElementById('invTypeFilter').value = 'all';
+  const isUser = typeof Auth !== 'undefined' && typeof Auth.isManager === 'function' && !Auth.isManager();
+  document.getElementById('invTypeFilter').value = isUser ? 'customer' : 'all';
   filterInvoices();
 }
 
@@ -185,6 +195,11 @@ function closeAddInvoiceMenu() {
 function showInvDetail(invoiceId) {
   const inv = DB.getInvoice(invoiceId);
   if (!inv) return;
+  // Employees may only view sale (customer) invoices — hard guard for any direct access
+  if (typeof Auth !== 'undefined' && typeof Auth.isManager === 'function' && !Auth.isManager() && inv.type !== 'customer') {
+    alert(t('invoices.noPermission'));
+    return;
+  }
   _invDetailId = invoiceId;
 
   const modal = document.getElementById('invDetailModal');
@@ -308,6 +323,12 @@ function buildInvoiceDetailHTML(inv, typeLabel, paidAmount) {
           `).join('')}
         </tbody>
       </table>
+
+      ${inv.note ? `
+      <div style="margin-top:12px;padding:10px 14px;border:1px solid #ddd;border-radius:6px;background:#fafafa;font-size:12px;color:#333;white-space:pre-wrap" dir="ltr">
+        <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Observation</div>
+        ${escHtml(inv.note)}
+      </div>` : ''}
 
       <table style="width:100%;border-collapse:collapse;margin-top:10px" dir="ltr">
         <tr>
@@ -1199,9 +1220,13 @@ function filterWbProducts(q) {
 function renderWbProducts(filter) {
   const grid = document.getElementById('wbProductGrid');
   let list = _wbAllProducts;
-  const f = normSearch(filter || '').toLowerCase();
+  const f = normSearch(filter || '');
   if (f) {
-    list = list.filter(p => p.name.toLowerCase().includes(f) || p.barcode.includes(f));
+    list = list
+      .map(p => ({ p, score: productSearchScore(p.name, p.barcode, f) }))
+      .filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map(x => x.p);
   }
   if (list.length === 0) {
     grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--silver-500)">لا توجد منتجات</div>';
@@ -1555,6 +1580,7 @@ function openInvDispModal() {
   document.getElementById('dispTimbreAmount').style.display = 'none';
   document.getElementById('dispPayAmount').value = '0';
   document.getElementById('dispTotal').textContent = 'DA0';
+  document.getElementById('dispNote').value = '';
   // Default to customer tab
   switchDispTab('customer');
   document.getElementById('invDispModal').style.display = 'flex';
@@ -1716,6 +1742,7 @@ function confirmDispatchInvoice() {
   }];
 
   // Create invoice
+  const note = document.getElementById('dispNote').value.trim();
   const inv = DB.addInvoice({
     supplierId, customerId,
     walkinName, walkinPhone, walkinAddress,
@@ -1727,6 +1754,7 @@ function confirmDispatchInvoice() {
     timbreFiscal,
     isProvisional: false,
     profit: 0,
+    note,
   });
 
   // === HANDLE SUPPLIER DISPATCH ===
@@ -1931,9 +1959,12 @@ function searchPurProduct(q) {
   q = normSearch(q);
   const products = DB.getProducts();
   const matches = q
-    ? products.filter(p =>
-        p.name.toLowerCase().includes(q.toLowerCase()) || p.barcode.includes(q)
-      ).slice(0, 8)
+    ? products
+        .map(p => ({ p, score: productSearchScore(p.name, p.barcode, q) }))
+        .filter(x => x.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 8)
+        .map(x => x.p)
     : products.slice(0, 8);
   results.innerHTML = matches.length === 0
     ? '<div class="search-result-item disabled">لا توجد نتائج</div>'

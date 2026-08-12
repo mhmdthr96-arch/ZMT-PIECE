@@ -28,6 +28,8 @@ function init_settings() {
   settingsLoadUsers();
   settingsUpdateKeyStatus();
   settingsLoadProvider();
+  settingsLoadLicense();
+  loadAuditLog();
 }
 
 const PROVIDER_INFO = {
@@ -314,9 +316,11 @@ async function settingsSaveUser() {
       const updates = { permissions: perms };
       if (password) updates.password = password;
       await Auth.updateUser(_settingsEditingUser.id, updates);
+      if (typeof DB !== 'undefined' && DB.logAudit) DB.logAudit({ action: 'update', entity: 'user', entityId: _settingsEditingUser.id, detail: username });
       result.innerHTML = `<span style="color:#28a745;">${t('settings.userUpdated')}</span>`;
     } else {
-      await Auth.createUser(username, password, perms);
+      const created = await Auth.createUser(username, password, perms);
+      if (typeof DB !== 'undefined' && DB.logAudit) DB.logAudit({ action: 'add', entity: 'user', entityId: (created && created.id) || null, detail: username });
       result.innerHTML = `<span style="color:#28a745;">${t('settings.userCreated')}</span>`;
     }
     document.getElementById('settingsNewUsername').value = '';
@@ -378,6 +382,7 @@ async function settingsDeleteUser(userId, username) {
   if (!confirm(t('settings.delete_user_confirm').replace('...', username))) return;
   try {
     await Auth.deleteUser(userId);
+    if (typeof DB !== 'undefined' && DB.logAudit) DB.logAudit({ action: 'delete', entity: 'user', entityId: userId, detail: username });
     settingsLoadUsers();
     if (typeof LANSync !== 'undefined' && LANSync.sendUsers) LANSync.sendUsers();
   } catch (e) {
@@ -521,6 +526,63 @@ async function settingsTestLan() {
   }
 }
 
+// ===== LICENSE / ACTIVATION =====
+function settingsLoadLicense() {
+  const statusEl = document.getElementById('settingsLicStatus');
+  if (!statusEl || !window.electronAPI?.licenseCheck) return;
+  window.electronAPI.licenseCheck().then(function (res) {
+    const storeRow = document.getElementById('settingsLicStoreRow');
+    const expiryRow = document.getElementById('settingsLicExpiryRow');
+    const deactivateBtn = document.getElementById('settingsDeactivateBtn');
+    if (res && res.status === 'active' && res.license) {
+      statusEl.innerHTML = '<span style="color:#28a745"><i class="fas fa-check-circle"></i> ' + (t('settings.licenseActive') || 'مفعّل') + '</span>';
+      const storeEl = document.getElementById('settingsLicStore');
+      if (storeEl) storeEl.textContent = res.license.storeCode || '—';
+      const expiryEl = document.getElementById('settingsLicExpiry');
+      if (expiryEl) expiryEl.textContent = res.license.expiresAt ? new Date(res.license.expiresAt).toLocaleDateString('fr-DZ') : '—';
+      if (storeRow) storeRow.style.display = '';
+      if (expiryRow) expiryRow.style.display = '';
+      if (deactivateBtn) deactivateBtn.style.display = '';
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--silver-500)"><i class="fas fa-times-circle"></i> ' + (t('settings.licenseInactive') || 'غير مفعّل') + '</span>';
+      if (storeRow) storeRow.style.display = 'none';
+      if (expiryRow) expiryRow.style.display = 'none';
+      if (deactivateBtn) deactivateBtn.style.display = 'none';
+    }
+  }).catch(function () {
+    statusEl.textContent = '—';
+  });
+}
+
+async function settingsDeactivateLicense() {
+  if (!confirm(t('settings.confirmDeactivateLicense') || 'هل تريد إلغاء التفعيل وحذف مفتاح الترخيص نهائياً من هذا الجهاز؟\n\nبعد الحذف سيعود البرنامج إلى شاشة التفعيل ولن يعمل حتى إدخال مفتاح جديد.')) return;
+  const result = document.getElementById('settingsLicResult');
+  const btn = document.getElementById('settingsDeactivateBtn');
+  const adminSecretEl = document.getElementById('settingsLicAdminSecret');
+  const adminSecret = adminSecretEl ? adminSecretEl.value.trim() : '';
+  if (btn) btn.disabled = true;
+  if (result) result.innerHTML = '<span style="color:var(--silver-500)"><i class="fas fa-spinner fa-spin"></i> ' + (t('settings.deactivating') || 'جاري إلغاء التفعيل...') + '</span>';
+  try {
+    const res = await window.electronAPI.licenseDeactivate({ adminSecret });
+    if (res && res.success) {
+      if (result) result.innerHTML = '<span style="color:#28a745"><i class="fas fa-check-circle"></i> ' + res.message + '</span>';
+      if (typeof Auth !== 'undefined' && typeof Auth.signOut === 'function') Auth.signOut();
+      if (typeof resetLicenseAfterDeactivation === 'function') resetLicenseAfterDeactivation();
+      if (typeof CloudService !== 'undefined' && typeof CloudService.stopAutoSync === 'function') CloudService.stopAutoSync();
+      setTimeout(function () {
+        if (typeof initLoginView === 'function') initLoginView();
+        else if (typeof showLogin === 'function') showLogin();
+      }, 900);
+    } else {
+      if (result) result.innerHTML = '<span style="color:#dc3545">' + ((res && res.message) || (t('settings.deactivateFailed') || 'فشل إلغاء التفعيل')) + '</span>';
+      if (btn) btn.disabled = false;
+    }
+  } catch (e) {
+    if (result) result.innerHTML = '<span style="color:#dc3545">' + e.message + '</span>';
+    if (btn) btn.disabled = false;
+  }
+}
+
 // Listen for status changes while settings page is open
 if (typeof window.addEventListener === 'function') {
   window.addEventListener('zmt-lan-status', () => {
@@ -533,5 +595,79 @@ window.addEventListener('zmt-users-synced', () => {
   const list = document.getElementById('settingsUsersList');
   if (list && typeof settingsLoadUsers === 'function') settingsLoadUsers();
 });
+
+// ===== AUDIT LOG (per-manager action trail) =====
+function _auditEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function loadAuditLog() {
+  const mgrSel = document.getElementById('auditManagerFilter');
+  if (!mgrSel) return;
+  const users = (typeof Auth !== 'undefined' && Auth.listUsers) ? Auth.listUsers() : [];
+  const current = mgrSel.value;
+  mgrSel.innerHTML = '<option value="">كل المديرين</option>' +
+    users.map(u => `<option value="${_auditEsc(u.username)}">${_auditEsc(u.username)}</option>`).join('');
+  if (current) mgrSel.value = current;
+  renderAuditLog();
+}
+
+function renderAuditLog() {
+  const container = document.getElementById('auditLogTable');
+  if (!container) return;
+  const mgr = document.getElementById('auditManagerFilter') ? document.getElementById('auditManagerFilter').value : '';
+  const action = document.getElementById('auditActionFilter') ? document.getElementById('auditActionFilter').value : '';
+  const from = document.getElementById('auditFrom') ? document.getElementById('auditFrom').value : '';
+  const to = document.getElementById('auditTo') ? document.getElementById('auditTo').value : '';
+  let logs = (typeof DB !== 'undefined' && DB.getAuditLogs) ? DB.getAuditLogs() : [];
+  if (mgr) logs = logs.filter(l => l.manager === mgr);
+  if (action) logs = logs.filter(l => l.action === action);
+  if (from) { const f = new Date(from).getTime(); logs = logs.filter(l => l.ts >= f); }
+  if (to) { const t = new Date(to).getTime() + 86400000; logs = logs.filter(l => l.ts < t); }
+
+  if (!logs.length) {
+    container.innerHTML = '<div class="placeholder-box" style="padding:20px"><i class="fas fa-inbox"></i><p>لا توجد عمليات مسجلة</p></div>';
+    return;
+  }
+  const actionLabel = { add: 'إضافة', update: 'تعديل', delete: 'حذف', unknown: '—' };
+  const entityLabel = { product: 'منتج', invoice: 'فاتورة', payment: 'دفعة', supplier: 'مورد', customer: 'عميل', branch: 'فرع', user: 'مستخدم' };
+  let html = '<table class="data-table"><thead><tr><th>التاريخ</th><th>المدير</th><th>العملية</th><th>الكيان</th><th>التفاصيل</th></tr></thead><tbody>';
+  for (const l of logs.slice(0, 500)) {
+    const dateStr = new Date(l.ts).toLocaleString('ar-EG-u-nu-latn');
+    const act = actionLabel[l.action] || l.action;
+    const actColor = l.action === 'delete' ? '#dc3545' : (l.action === 'add' ? '#28a745' : '#e69500');
+    const ent = entityLabel[l.entity] || l.entity;
+    html += `<tr><td>${dateStr}</td><td>${_auditEsc(l.manager)}</td>` +
+      `<td><span style="color:${actColor};font-weight:600">${act}</span></td>` +
+      `<td>${_auditEsc(ent)}</td><td>${_auditEsc(l.detail)}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  if (logs.length > 500) html += `<div style="font-size:12px;color:var(--silver-500);padding:8px">عرض أول 500 من ${logs.length} عملية</div>`;
+  container.innerHTML = html;
+}
+
+function exportAuditLogCSV() {
+  const logs = (typeof DB !== 'undefined' && DB.getAuditLogs) ? DB.getAuditLogs() : [];
+  if (!logs.length) { alert('لا توجد عمليات للتصدير'); return; }
+  const header = ['timestamp', 'manager', 'storeCode', 'action', 'entity', 'entityId', 'detail'];
+  const rows = logs.map(l => [new Date(l.ts).toISOString(), l.manager, l.storeCode, l.action, l.entity, l.entityId, l.detail]);
+  const csv = [header, ...rows]
+    .map(r => r.map(c => '"' + String(c == null ? '' : c).replace(/"/g, '""') + '"').join(','))
+    .join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'audit_log_' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function clearAuditLogConfirm() {
+  if (!confirm('سيؤدي مسح السجل إلى حذف كل سجل العمليات نهائياً. متابعة؟')) return;
+  if (typeof DB !== 'undefined' && DB.clearAuditLogs) DB.clearAuditLogs();
+  renderAuditLog();
+}
 
 

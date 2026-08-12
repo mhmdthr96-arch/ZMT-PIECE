@@ -1,7 +1,8 @@
 const DB = (() => {
   const DB_NAME = 'zmt_piece_db';
-  const DB_VERSION = 3;
-  const STORES = ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'meta', 'supplierReturns'];
+  const DB_VERSION = 4;
+  const STORES = ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'meta', 'supplierReturns', 'auditLogs'];
+  const AUDIT_CAP = 2000;
   let db = null;
   let _ready = false;
 
@@ -299,6 +300,20 @@ const DB = (() => {
   function _scheduleFlush() {
     if (_batchTimer) return;
     _batchTimer = setTimeout(_flushBatch, 50);
+  }
+
+  // ===== AUDIT LOG (per-manager action trail) =====
+  // Audit entries are kept in _cache.auditLogs and flushed to their own IDB
+  // store on a short debounce. They never participate in the cloud-sync batch
+  // (to avoid spamming the backup), but are included in exportAll()/importAll()
+  // so a store restore preserves its history.
+  let _auditTimer = null;
+  function _scheduleAuditFlush() {
+    if (_auditTimer) return;
+    _auditTimer = setTimeout(async () => {
+      _auditTimer = null;
+      try { if (db) await _idbPut('auditLogs', _cache.auditLogs); } catch (e) { /* best effort */ }
+    }, 1500);
   }
 
   async function _flushBatch() {
@@ -625,6 +640,7 @@ const DB = (() => {
       _cache.products.push(prod);
       _rebuildIndex('products');
       _queueWrite('products', prod);
+      this.logAudit({ action: 'add', entity: 'product', entityId: prod.id, detail: prod.name || '' });
       return prod;
     },
 
@@ -657,12 +673,14 @@ const DB = (() => {
       }
       _triggerCloudSync();
       debounceAutoBackup();
+      this.logAudit({ action: 'add', entity: 'product', detail: `${added.length} منتج (جماعي)` });
       return added;
     },
 
     updateProduct(id, changes) {
       const p = _idx.products[id];
       if (!p) return null;
+      this.logAudit({ action: 'update', entity: 'product', entityId: id, detail: p.name || '' });
       if (changes.barcode != null) {
         const newBar = normBarcode(changes.barcode);
         if (canonBarcode(newBar) !== canonBarcode(p.barcode)) {
@@ -698,12 +716,15 @@ const DB = (() => {
         _triggerCloudSync();
         debounceAutoBackup();
       });
+      this.logAudit({ action: 'update', entity: 'product', detail: `${updates.length} منتج (جماعي)` });
       return results;
     },
 
     deleteProduct(id) {
       const idx = _cache.products.findIndex(p => p.id === id);
       if (idx === -1) return false;
+      const p = _cache.products[idx];
+      this.logAudit({ action: 'delete', entity: 'product', entityId: id, detail: (p && p.name) || '' });
       _cache.products.splice(idx, 1);
       _rebuildIndex('products');
       _queueDelete('products', id);
@@ -733,6 +754,7 @@ const DB = (() => {
       _cache.invoices.push(inv);
       _rebuildIndex('invoices');
       _queueWrite('invoices', inv);
+      this.logAudit({ action: 'add', entity: 'invoice', entityId: inv.id, detail: inv.invoiceNumber || '' });
       return inv;
     },
 
@@ -748,12 +770,15 @@ const DB = (() => {
       if (!inv) return null;
       Object.assign(inv, changes);
       _queueWrite('invoices', inv);
+      this.logAudit({ action: 'update', entity: 'invoice', entityId: id, detail: inv.invoiceNumber || '' });
       return inv;
     },
 
     deleteInvoice(id) {
       const idx = _cache.invoices.findIndex(inv => inv.id === id);
       if (idx === -1) return false;
+      const inv = _cache.invoices[idx];
+      this.logAudit({ action: 'delete', entity: 'invoice', entityId: id, detail: (inv && inv.invoiceNumber) || '' });
       _cache.invoices.splice(idx, 1);
       _rebuildIndex('invoices');
       _queueDelete('invoices', id);
@@ -800,12 +825,15 @@ const DB = (() => {
       _cache.payments.push(pmt);
       _rebuildIndex('payments');
       _queueWrite('payments', pmt);
+      this.logAudit({ action: 'add', entity: 'payment', entityId: pmt.id, detail: (pmt.note || pmt.method || '') });
       return pmt;
     },
 
     deletePayment(id) {
       const idx = _cache.payments.findIndex(p => p.id === id);
       if (idx === -1) return false;
+      const p = _cache.payments[idx];
+      this.logAudit({ action: 'delete', entity: 'payment', entityId: id, detail: (p && (p.note || p.method)) || '' });
       _cache.payments.splice(idx, 1);
       _rebuildIndex('payments');
       _queueDelete('payments', id);
@@ -860,6 +888,7 @@ const DB = (() => {
       _cache.payments = _cache.payments.filter(p => p.invoiceId !== invoiceId);
       _rebuildIndex('payments');
       for (const id of toDelete) _queueDelete('payments', id);
+      this.logAudit({ action: 'delete', entity: 'payment', detail: `فاتورة ${invoiceId}` });
     },
 
     // ===== CUSTOMERS =====
@@ -1472,8 +1501,44 @@ const DB = (() => {
         transfers: _cache.transfers.slice(),
         orders: _cache.orders.slice(),
         supplierReturns: _cache.supplierReturns.slice(),
+        auditLogs: _cache.auditLogs.slice(),
         meta: { ..._cache.meta },
       };
+    },
+
+    // ===== AUDIT LOG API =====
+    // Records a per-manager action. `manager`/`storeCode` are captured from the
+    // active session automatically; `entry` carries { action, entity, entityId, detail }.
+    logAudit(entry) {
+      try {
+        const user = (typeof Auth !== 'undefined' && Auth.getCurrentUser && Auth.getCurrentUser()) || null;
+        const rec = {
+          id: _genId(),
+          ts: Date.now(),
+          manager: user ? (user.username || user.name || '—') : '—',
+          storeCode: (typeof Auth !== 'undefined' && Auth.getUserCode && Auth.getUserCode()) || '',
+          action: (entry && entry.action) || 'unknown',
+          entity: (entry && entry.entity) || '',
+          entityId: entry && entry.entityId != null ? String(entry.entityId) : '',
+          detail: (entry && entry.detail) || '',
+        };
+        if (!_cache.auditLogs) _cache.auditLogs = [];
+        _cache.auditLogs.push(rec);
+        if (_cache.auditLogs.length > AUDIT_CAP) _cache.auditLogs.shift();
+        _scheduleAuditFlush();
+        return rec;
+      } catch (e) { return null; }
+    },
+
+    getAuditLogs() {
+      const list = (_cache.auditLogs || []).slice();
+      list.sort((a, b) => b.ts - a.ts);
+      return list;
+    },
+
+    clearAuditLogs() {
+      _cache.auditLogs = [];
+      try { if (db) _idbClear('auditLogs'); } catch (e) {}
     },
 
     async importAll(data) {

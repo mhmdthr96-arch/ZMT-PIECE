@@ -1,7 +1,8 @@
 const path = require('path');
 const fs = require('fs');
+const { spawn } = require('child_process');
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const License = require('./license');
 const Firebird = require('./firebird');
 const LAN = require('./lan-server');
@@ -350,6 +351,10 @@ ipcMain.handle('license-machine-id', () => {
   return License.getMachineFingerprint();
 });
 
+ipcMain.handle('license-deactivate', (event, payload) => {
+  return License.deactivateLicense(payload || {});
+});
+
 // ===== LAN SYNC (main/sub server) =====
 LAN.setWindowGetter(() => mainWindow);
 
@@ -372,6 +377,41 @@ ipcMain.handle('lan-get-status', () => {
 
 ipcMain.handle('lan-test-connection', (event, ip, port) => {
   return LAN.testConnection(ip, port);
+});
+
+// Open an external URL in the default browser
+ipcMain.handle('open-external', async (event, url) => {
+  try {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+      return { success: false, error: 'رابط غير صالح' };
+    }
+    await shell.openExternal(url);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// Launch AnyDesk (remote support). Falls back to the AnyDesk website if not installed.
+ipcMain.handle('open-anydesk', async () => {
+  try {
+    const candidates = [
+      path.join(process.env.LOCALAPPDATA || '', 'AnyDesk', 'AnyDesk.exe'),
+      'C:\\Program Files (x86)\\AnyDesk\\AnyDesk.exe',
+      'C:\\Program Files\\AnyDesk\\AnyDesk.exe'
+    ];
+    for (const c of candidates) {
+      if (c && fs.existsSync(c)) {
+        const child = spawn(c, [], { detached: true, stdio: 'ignore' });
+        child.unref();
+        return { success: true };
+      }
+    }
+    await shell.openExternal('https://anydesk.com');
+    return { success: true, fallback: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
 });
 
 app.on('before-quit', () => {

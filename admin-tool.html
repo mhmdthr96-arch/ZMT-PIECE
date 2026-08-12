@@ -134,6 +134,42 @@
   .grant-result { display: none; margin-top: 14px; }
   .grant-result .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 
+  /* debts page */
+  .stats { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat {
+    flex: 1; min-width: 160px; background: var(--panel2);
+    border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+  }
+  .stat .lbl { font-size: 12px; color: var(--muted); }
+  .stat .val { font-size: 22px; font-weight: 700; margin-top: 4px; color: var(--text); }
+  .stat .val.red { color: var(--red); }
+  .stat .val.green { color: var(--green); }
+  .stat .val.accent { color: var(--accent); }
+  .stat .val.orange { color: var(--orange); }
+  tr.debt-row { cursor: pointer; }
+  tr.debt-row:hover td { background: rgba(47,129,247,.06); }
+  .pay-row { padding: 4px 2px; font-size: 12px; color: var(--text); border-bottom: 1px dashed var(--border); }
+  .pay-row:last-child { border-bottom: none; }
+  .pay-row b { color: var(--green); }
+  .back-btn { margin-bottom: 12px; }
+  .debt-detail-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .debt-detail-hd b { font-size: 16px; }
+
+  /* payment modal */
+  .modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 50;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; width: 100%; max-width: 440px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.5);
+  }
+  .modal-card h3 { font-size: 16px; margin-bottom: 6px; }
+  .modal-card .sub { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+  .modal-card .row + .row { margin-top: 12px; }
+  .modal-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+
   /* invoice print surface — hidden on screen */
   #invoicePrint { display: none; }
 
@@ -166,6 +202,7 @@
     <button class="tab active" data-tab="licenses">التراخيص والإصدار</button>
     <button class="tab" data-tab="pending">طلبات جديدة<span class="count" id="pendingCount"></span></button>
     <button class="tab" data-tab="invoices">الفواتير</button>
+    <button class="tab" data-tab="debts">الديون<span class="count" id="debtsCount"></span></button>
   </nav>
 
   <!-- ============================= TAB: STORES ============================= -->
@@ -404,6 +441,65 @@
       </div>
     </div>
   </section>
+
+  <!-- ============================= TAB: DEBTS ============================= -->
+  <section id="tab-debts" class="tab-content" style="display:none">
+    <div class="card">
+      <h2><i>💳</i> الديون — العملاء الذين لم يسددوا</h2>
+      <div class="hint" style="margin-bottom:12px">مجمع الديون في الأعلى، وتحت كل عميل عليه دين. انقر على أي عميل لعرض فواتيره، تسجيل دفعة أو طباعة الفاتورة.</div>
+      <div class="msg" id="debtsMsg"></div>
+      <div id="debtsSummary"></div>
+      <div id="debtsWrap">
+        <div class="empty">جارٍ التحميل...</div>
+      </div>
+    </div>
+
+    <div class="card" id="debtDetail" style="display:none">
+      <div class="debt-detail-hd">
+        <b id="debtDetailTitle">فواتير العميل</b>
+        <button class="btn-ghost btn-sm" id="debtBackBtn">↩ رجوع للقائمة</button>
+      </div>
+      <div id="debtDetailStats" class="stats" style="margin-top:12px"></div>
+      <div class="msg" id="debtDetailMsg"></div>
+      <div id="debtDetailWrap">
+        <div class="empty">جارٍ التحميل...</div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- payment modal -->
+<div class="modal" id="payModal" style="display:none">
+  <div class="modal-card">
+    <h3>تسجيل دفعة</h3>
+    <div class="sub" id="payInvoiceInfo"></div>
+    <div class="row" style="margin-top:12px">
+      <div class="field">
+        <label>المبلغ المدفوع</label>
+        <input type="number" id="payAmount" min="0.01" step="0.01" dir="ltr">
+      </div>
+      <div class="field sm">
+        <label>طريقة الدفع</label>
+        <select id="payMethod">
+          <option value="cash">نقداً</option>
+          <option value="card">بطاقة</option>
+          <option value="transfer">تحويل بنكي</option>
+          <option value="other">أخرى</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>ملاحظة (اختياري)</label>
+        <input type="text" id="payNote" placeholder="مثال: دفعة أولى / الباقي على الدفعة الثانية" autocomplete="off">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-green" id="payConfirmBtn">✓ تسجيل الدفعة</button>
+      <button class="btn-ghost" id="payCancelBtn">إلغاء</button>
+    </div>
+    <div class="msg" id="payMsg"></div>
+  </div>
 </div>
 
 <!-- hidden invoice print surface -->
@@ -916,6 +1012,7 @@
           (l.status === 'revoked'
             ? '<span style="color:var(--muted);font-size:11px">ملغي</span>'
             : '<button class="btn-danger btn-sm rev-lic" data-key="' + esc(l.key) + '">إلغاء</button>') +
+          ' <button class="btn-danger btn-sm del-lic" data-key="' + esc(l.key) + '">حذف نهائي</button>' +
         '</td></tr>';
     }).join('');
 
@@ -976,6 +1073,27 @@
         }
       });
     });
+    Array.prototype.forEach.call(document.querySelectorAll('.del-lic'), function (btn) {
+      btn.addEventListener('click', function () {
+        delLicenseKey(this, this.getAttribute('data-key'), function () { $('listBtn').click(); });
+      });
+    });
+  }
+
+  // Permanently deletes a license key (admin side). Bound to the licenses list
+  // and the store-detail program rows.
+  function delLicenseKey(btn, key, onDone, msgEl) {
+    if (!confirm('حذف مفتاح التفعيل نهائياً ' + key + '؟\nسيُحذف المفتاح وجميع أجهزته المربوطة نهائياً ولا يمكن التراجع.')) return;
+    var old = btn.textContent;
+    var target = msgEl || $('listMsg');
+    btn.disabled = true; btn.textContent = '...';
+    api('license_delete', { key: key }, getSecret()).then(function (res) {
+      showMsg(target, res.deleted ? 'تم حذف المفتاح نهائياً' : 'المفتاح غير موجود', res.deleted ? 'ok' : 'warn');
+      if (onDone) onDone();
+    }).catch(function (e) {
+      showMsg(target, e.message, 'err');
+      btn.disabled = false; btn.textContent = old;
+    });
   }
 
   // ---- stores directory ----
@@ -1008,6 +1126,7 @@
         '<button class="btn-green btn-sm renew-btn" data-code="' + esc(s.code) + '" data-name="' + esc(s.storeName || '') + '"' +
           ' data-product="' + esc(p.product || 'ZMT PIECE') + '" data-main="' + (p.mainDevices || 1) + '"' +
           ' data-branchcount="' + (p.branchCount || 0) + '" data-branchdev="' + (p.branchDevices || 0) + '">منح تجديد</button>' +
+        '<button class="btn-danger btn-sm del-key-btn" data-key="' + esc(p.key) + '">حذف المفتاح</button>' +
         '</div>';
     }).join('');
   }
@@ -1060,6 +1179,11 @@
         });
         document.querySelector('.tab[data-tab="licenses"]').click();
         document.getElementById('tab-licenses').scrollIntoView({ behavior: 'smooth' });
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.del-key-btn'), function (btn) {
+      btn.addEventListener('click', function () {
+        delLicenseKey(this, this.getAttribute('data-key'), function () { loadStores(); }, $('storesMsg'));
       });
     });
   }
@@ -1159,12 +1283,34 @@
   loadPending();
 
   // ---- invoices ----
+  function invoiceToPrint(inv) {
+    var lic = inv.license || {};
+    return {
+      number: inv.number,
+      licenseKey: inv.license_key,
+      storeCode: inv.store_code,
+      storeName: inv.store_name || '',
+      email: inv.store_email || '',
+      product: inv.product || lic.product || 'ZMT PIECE',
+      issuedAt: inv.issued_at,
+      expiresAt: lic.expires_at || inv.issued_at,
+      days: lic.days || '',
+      mainDevices: lic.main_devices || 0,
+      branchCount: lic.branch_count || 0,
+      branchDevices: lic.branch_devices || 0,
+      amountOwed: inv.amount_owed || 0,
+      amountPaid: inv.amount_paid || 0,
+      currency: inv.currency || 'DZD',
+      notes: inv.notes || null
+    };
+  }
+
   function renderInvoices(invoices) {
     if (!invoices.length) return '<div class="empty">لا توجد فواتير</div>';
     var rows = invoices.map(function (inv) {
       var rest = (inv.amount_owed || 0) - (inv.amount_paid || 0);
       var lic = inv.license || {};
-      return '<tr>' +
+      return '<tr' + (rest > 0 ? ' class="tr-danger"' : '') + '>' +
         '<td class="mono">' + esc(inv.number) + '</td>' +
         '<td>' + esc(inv.product || lic.product || 'ZMT PIECE') + '</td>' +
         '<td class="mono">' + esc(inv.store_code) + '</td>' +
@@ -1174,7 +1320,9 @@
         '<td>' + numFmt(inv.amount_paid || 0, inv.currency) + '</td>' +
         '<td><b style="color:' + (rest > 0 ? 'var(--orange)' : 'var(--green)') + '">' + numFmt(rest, inv.currency) + '</b></td>' +
         '<td style="white-space:nowrap">' +
-          '<button class="btn-ghost btn-sm print-inv" data-idx="' + invoices.indexOf(inv) + '">طباعة / PDF</button>' +
+          (rest > 0 ? '<button class="btn-green btn-sm pay-inv" data-idx="' + invoices.indexOf(inv) + '">دفع</button> ' : '') +
+          '<button class="btn-ghost btn-sm print-inv" data-idx="' + invoices.indexOf(inv) + '">طباعة / PDF</button> ' +
+          '<button class="btn-danger btn-sm del-inv" data-idx="' + invoices.indexOf(inv) + '">حذف</button>' +
         '</td></tr>';
     }).join('');
     return '<table><thead><tr>' +
@@ -1209,28 +1357,285 @@
       btn.addEventListener('click', function () {
         var inv = window._invCache && window._invCache[parseInt(this.getAttribute('data-idx'), 10)];
         if (!inv) return;
-        var lic = inv.license || {};
-        doPrint({
-          number: inv.number,
-          licenseKey: inv.license_key,
-          storeCode: inv.store_code,
-          storeName: '',
-          email: '',
-          product: inv.product || lic.product || 'ZMT PIECE',
-          issuedAt: inv.issued_at,
-          expiresAt: lic.expires_at || inv.issued_at,
-          days: lic.days || '',
-          mainDevices: lic.main_devices || 0,
-          branchCount: lic.branch_count || 0,
-          branchDevices: lic.branch_devices || 0,
-          amountOwed: inv.amount_owed || 0,
-          amountPaid: inv.amount_paid || 0,
-          currency: inv.currency || 'DZD',
-          notes: inv.notes || null
-        });
+        doPrint(invoiceToPrint(inv));
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.pay-inv'), function (btn) {
+      btn.addEventListener('click', function () {
+        var inv = window._invCache && window._invCache[parseInt(this.getAttribute('data-idx'), 10)];
+        if (!inv) return;
+        openPayModal(inv, function () { $('invListBtn').click(); });
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.del-inv'), function (btn) {
+      btn.addEventListener('click', function () {
+        var inv = window._invCache && window._invCache[parseInt(this.getAttribute('data-idx'), 10)];
+        if (!inv) return;
+        deleteInvoice(this, inv.id, function () { $('invListBtn').click(); }, $('invMsg'));
       });
     });
   }
+
+  // Permanently deletes an invoice (admin side). Its payments cascade on the
+  // server; the license is untouched. Bound to the invoices list and the debts
+  // detail table.
+  function deleteInvoice(btn, invoiceId, onDone, msgEl) {
+    if (!confirm('حذف الفاتورة نهائياً؟\nسيُحذف سجل الفاتورة وجميع دفعاتها ولا يمكن التراجع.')) return;
+    var old = btn.textContent;
+    var target = msgEl || $('invMsg');
+    btn.disabled = true; btn.textContent = '...';
+    api('invoice_delete', { invoiceId: invoiceId }, getSecret()).then(function (res) {
+      showMsg(target, res.deleted ? 'تم حذف الفاتورة' : 'الفاتورة غير موجودة', res.deleted ? 'ok' : 'warn');
+      if (onDone) onDone();
+    }).catch(function (e) {
+      showMsg(target, e.message, 'err');
+      btn.disabled = false; btn.textContent = old;
+    });
+  }
+
+  // ---- debts (صفحة الديون) ----
+  var PAY_METHODS = { cash: 'نقداً', card: 'بطاقة', transfer: 'تحويل بنكي', other: 'أخرى' };
+  function methodLabel(m) { return PAY_METHODS[m] || m || ''; }
+
+  function renderDebtsSummary(s) {
+    var html = '<div class="stats">';
+    if (s.currencies && s.currencies.length) {
+      s.currencies.forEach(function (c) {
+        html += '<div class="stat"><div class="lbl">مجموع الديون (' + esc(c.currency) + ')</div>' +
+          '<div class="val red">' + numFmt(c.debt, c.currency) + '</div></div>';
+      });
+      s.currencies.forEach(function (c) {
+        html += '<div class="stat"><div class="lbl">المستحق (' + esc(c.currency) + ')</div>' +
+          '<div class="val accent">' + numFmt(c.owed, c.currency) + '</div></div>';
+      });
+      s.currencies.forEach(function (c) {
+        html += '<div class="stat"><div class="lbl">المدفوع (' + esc(c.currency) + ')</div>' +
+          '<div class="val green">' + numFmt(c.paid, c.currency) + '</div></div>';
+      });
+    } else {
+      html += '<div class="stat"><div class="lbl">مجموع الديون</div><div class="val red">0.00</div></div>';
+    }
+    html += '<div class="stat"><div class="lbl">عملاء مدينون</div><div class="val">' + (s.debtors || 0) + '</div></div>' +
+      '<div class="stat"><div class="lbl">فواتير غير مسددة</div><div class="val">' + (s.invoices || 0) + '</div></div>' +
+      '</div>';
+    $('debtsSummary').innerHTML = html;
+  }
+
+  async function loadDebts() {
+    var secret = getSecret();
+    if (!secret) { $('debtsWrap').innerHTML = '<div class="empty">أدخل السر الإداري أولاً</div>'; return; }
+    hideMsg($('debtsMsg'));
+    $('debtsWrap').innerHTML = '<div class="empty">جارٍ التحميل...</div>';
+    try {
+      var res = await api('debts_list', {}, secret);
+      var debts = res.debts || [];
+      $('debtsCount').textContent = debts.length;
+      $('debtsCount').className = 'count' + (debts.length ? '' : ' empty');
+      renderDebtsSummary(res.summary || {});
+      if (!debts.length) {
+        $('debtsWrap').innerHTML = '<div class="empty">لا يوجد ديون مستحقة — كل العملاء سددوا 🎉</div>';
+        return;
+      }
+      var rows = debts.map(function (d) {
+        return '<tr class="debt-row" data-code="' + esc(d.storeCode) + '" data-name="' + esc(d.storeName || d.storeCode) + '">' +
+          '<td><b>' + esc(d.storeName || '—') + '</b><div class="mono">' + esc(d.storeCode) + '</div></td>' +
+          '<td class="mono" style="direction:ltr;text-align:left">' + esc(d.email || '') + '</td>' +
+          '<td>' + esc(d.currency) + '</td>' +
+          '<td>' + numFmt(d.owed, d.currency) + '</td>' +
+          '<td>' + numFmt(d.paid, d.currency) + '</td>' +
+          '<td><b style="color:var(--red)">' + numFmt(d.debt, d.currency) + '</b></td>' +
+          '<td>' + d.invoiceCount + '</td>' +
+          '<td>' + fmtDate(d.lastInvoiceAt) + '</td>' +
+          '<td style="white-space:nowrap"><button class="btn-ghost btn-sm open-debt" data-code="' + esc(d.storeCode) + '" data-name="' + esc(d.storeName || d.storeCode) + '">فتح الفواتير</button></td>' +
+          '</tr>';
+      }).join('');
+      $('debtsWrap').innerHTML = '<table><thead><tr>' +
+        '<th>العميل</th><th>البريد</th><th>العملة</th><th>المستحق</th><th>المدفوع</th><th>الباقي</th><th>الفواتير</th><th>آخر فاتورة</th><th></th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+      Array.prototype.forEach.call(document.querySelectorAll('.open-debt'), function (btn) {
+        btn.addEventListener('click', function () {
+          openDebtStore(this.getAttribute('data-code'), this.getAttribute('data-name'));
+        });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('.debt-row'), function (tr) {
+        tr.addEventListener('click', function (e) {
+          if (e.target.closest('button')) return;
+          openDebtStore(this.getAttribute('data-code'), this.getAttribute('data-name'));
+        });
+      });
+    } catch (e) {
+      $('debtsWrap').innerHTML = '<div class="empty">—</div>';
+      showMsg($('debtsMsg'), e.message, 'err');
+    }
+  }
+
+  var _debtInvoices = [];
+  function openDebtStore(code, name) {
+    $('debtDetail').style.display = 'block';
+    $('debtDetailTitle').textContent = 'فواتير ' + name + ' — ' + code;
+    $('debtDetailStats').innerHTML = '';
+    $('debtDetailWrap').innerHTML = '<div class="empty">جارٍ تحميل فواتير العميل...</div>';
+    var secret = getSecret();
+    if (!secret) return;
+    api('invoice_list', { storeCode: code, limit: 500 }, secret).then(function (res) {
+      _debtInvoices = res.invoices || [];
+      renderDebtDetail(name);
+    }).catch(function (e) {
+      $('debtDetailWrap').innerHTML = '<div class="empty">—</div>';
+      showMsg($('debtDetailMsg'), e.message, 'err');
+    });
+  }
+
+  function renderDebtDetail(name) {
+    var invoices = _debtInvoices || [];
+    var stats = {};
+    invoices.forEach(function (inv) {
+      var rest = (inv.amount_owed || 0) - (inv.amount_paid || 0);
+      if (rest <= 0) return;
+      var c = inv.currency || 'DZD';
+      if (!stats[c]) stats[c] = { owed: 0, paid: 0, debt: 0 };
+      stats[c].owed += (inv.amount_owed || 0);
+      stats[c].paid += (inv.amount_paid || 0);
+      stats[c].debt += rest;
+    });
+    var statsHtml = '';
+    Object.keys(stats).forEach(function (c) {
+      statsHtml += '<div class="stat"><div class="lbl">الباقي على ' + esc(name) + ' (' + esc(c) + ')</div>' +
+        '<div class="val red">' + numFmt(stats[c].debt, c) + '</div></div>';
+    });
+    $('debtDetailStats').innerHTML = statsHtml;
+
+    if (!invoices.length) {
+      $('debtDetailWrap').innerHTML = '<div class="empty">لا توجد فواتير لهذا العميل</div>';
+      return;
+    }
+    var rows = invoices.map(function (inv, idx) {
+      var rest = (inv.amount_owed || 0) - (inv.amount_paid || 0);
+      var lic = inv.license || {};
+      var pays = inv.payments || [];
+      var paysHtml = pays.length
+        ? '<details style="margin-top:4px"><summary>سجل الدفعات (' + pays.length + ')</summary>' +
+            pays.map(function (p) {
+              return '<div class="pay-row">' + fmtDate(p.paid_at) + ' — <b>' + numFmt(p.amount, inv.currency) + '</b> · ' + esc(methodLabel(p.method)) +
+                (p.note ? ' — ' + esc(p.note) : '') + '</div>';
+            }).join('') +
+          '</details>'
+        : '';
+      return '<tr' + (rest > 0 ? ' class="tr-danger"' : '') + '>' +
+        '<td class="mono">' + esc(inv.number) + '</td>' +
+        '<td>' + esc(inv.product || lic.product || 'ZMT PIECE') + '</td>' +
+        '<td class="mono">' + esc(inv.license_key) + '</td>' +
+        '<td>' + fmtDate(inv.issued_at) + '</td>' +
+        '<td>' + numFmt(inv.amount_owed || 0, inv.currency) + '</td>' +
+        '<td>' + numFmt(inv.amount_paid || 0, inv.currency) + '</td>' +
+        '<td><b style="color:' + (rest > 0 ? 'var(--orange)' : 'var(--green)') + '">' + numFmt(rest, inv.currency) + '</b>' + paysHtml + '</td>' +
+        '<td style="white-space:nowrap">' +
+          (rest > 0 ? '<button class="btn-green btn-sm pay-detail" data-idx="' + idx + '">دفع</button> ' : '') +
+          '<button class="btn-ghost btn-sm print-detail" data-idx="' + idx + '">طباعة</button> ' +
+          '<button class="btn-danger btn-sm del-detail" data-idx="' + idx + '">حذف</button>' +
+        '</td></tr>';
+    }).join('');
+    $('debtDetailWrap').innerHTML = '<table><thead><tr>' +
+      '<th>الرقم</th><th>المنتج</th><th>المفتاح</th><th>تاريخ الإصدار</th><th>المستحق</th><th>المدفوع</th><th>الباقي / الدفعات</th><th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>';
+
+    Array.prototype.forEach.call(document.querySelectorAll('.pay-detail'), function (btn) {
+      btn.addEventListener('click', function () {
+        var inv = _debtInvoices[parseInt(this.getAttribute('data-idx'), 10)];
+        if (!inv) return;
+        openPayModal(inv, function () {
+          var title = $('debtDetailTitle').textContent;
+          var code = '';
+          var m = title.match(/(\d{10})/);
+          if (m) code = m[1];
+          openDebtStore(code, title.split('—')[1] ? title.split('—')[1].trim() : code);
+        });
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.print-detail'), function (btn) {
+      btn.addEventListener('click', function () {
+        var inv = _debtInvoices[parseInt(this.getAttribute('data-idx'), 10)];
+        if (!inv) return;
+        doPrint(invoiceToPrint(inv));
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.del-detail'), function (btn) {
+      btn.addEventListener('click', function () {
+        var inv = _debtInvoices[parseInt(this.getAttribute('data-idx'), 10)];
+        if (!inv) return;
+        deleteInvoice(this, inv.id, function () {
+          var title = $('debtDetailTitle').textContent;
+          var code = '';
+          var m = title.match(/(\d{10})/);
+          if (m) code = m[1];
+          openDebtStore(code, title.split('—')[1] ? title.split('—')[1].trim() : code);
+        }, $('debtDetailMsg'));
+      });
+    });
+  }
+
+  $('debtBackBtn').addEventListener('click', function () {
+    $('debtDetail').style.display = 'none';
+    $('debtDetailWrap').innerHTML = '<div class="empty">—</div>';
+    $('debtDetailStats').innerHTML = '';
+    loadDebts();
+  });
+  document.querySelector('.tab[data-tab="debts"]').addEventListener('click', loadDebts);
+  loadDebts();
+
+  // ---- payment modal ----
+  var _payInvoice = null;
+  var _payDone = null;
+  function openPayModal(inv, onDone) {
+    _payInvoice = inv;
+    _payDone = onDone || null;
+    var rest = (inv.amount_owed || 0) - (inv.amount_paid || 0);
+    $('payInvoiceInfo').textContent = 'فاتورة ' + (inv.number || '') + ' — الباقي: ' + numFmt(rest, inv.currency);
+    $('payAmount').value = rest.toFixed(2);
+    $('payMethod').value = 'cash';
+    $('payNote').value = '';
+    hideMsg($('payMsg'));
+    $('payModal').style.display = 'flex';
+    $('payAmount').focus();
+    $('payAmount').select();
+  }
+
+  $('payCancelBtn').addEventListener('click', function () {
+    $('payModal').style.display = 'none';
+    _payInvoice = null;
+    _payDone = null;
+  });
+
+  $('payConfirmBtn').addEventListener('click', async function () {
+    var secret = getSecret();
+    if (!secret) { showMsg($('payMsg'), 'أدخل السر الإداري أولاً', 'err'); return; }
+    if (!_payInvoice) return;
+    var amount = parseFloat($('payAmount').value);
+    if (!(amount > 0)) { showMsg($('payMsg'), 'أدخل مبلغاً صحيحاً أكبر من صفر', 'err'); return; }
+    var btn = this;
+    btn.disabled = true;
+    hideMsg($('payMsg'));
+    try {
+      var res = await api('invoice_pay', {
+        invoiceId: _payInvoice.id,
+        amount: amount,
+        method: $('payMethod').value,
+        note: $('payNote').value.trim()
+      }, secret);
+      showMsg($('payMsg'), 'تم تسجيل الدفعة بنجاح ✓', 'ok');
+      var done = _payDone;
+      setTimeout(function () {
+        $('payModal').style.display = 'none';
+        _payInvoice = null;
+        _payDone = null;
+        if (done) done();
+      }, 900);
+    } catch (e) {
+      showMsg($('payMsg'), e.message, 'err');
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
   // ---- manual release / revoke ----
   $('relBtn').addEventListener('click', async function () {

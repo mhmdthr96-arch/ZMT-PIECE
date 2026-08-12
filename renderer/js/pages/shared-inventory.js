@@ -19,10 +19,8 @@ async function siLoadStores() {
 
     const loadPromises = _siStores.map(async (s) => {
       try {
-        const backup = await CloudService.downloadStoreBackup(s.code);
-        const data = backup?.data || {};
-        const db = typeof data.zmt_db === 'string' ? JSON.parse(data.zmt_db) : (data.zmt_db || {});
-        _siStoreData[s.code] = { products: db.products || [], loaded: true };
+        const products = await CloudService.downloadStoreInventory(s.code);
+        _siStoreData[s.code] = { products: products || [], loaded: true };
       } catch {
         _siStoreData[s.code] = { products: [], loaded: false };
       }
@@ -139,7 +137,6 @@ function siShowStoreDetail(code, name) {
 function siSearchProduct(q) {
   const resultsEl = document.getElementById('siSearchResults');
   q = normSearch(q);
-  const lowerQ = q.toLowerCase();
   const brands = (typeof BRANDS !== 'undefined') ? [...(BRANDS.global || []), ...(BRANDS.chinese || [])] : [];
   const myCode = Auth.getUserCode();
   const allResults = [];
@@ -151,13 +148,16 @@ function siSearchProduct(q) {
       : (_siStores.find(s => s.code === storeCode)?.name || storeCode);
 
     for (const p of d.products) {
-      const nameMatch = !lowerQ || (p.name || '').toLowerCase().includes(lowerQ);
-      const barMatch = !q || (p.barcode || '').includes(q);
-      if (nameMatch || barMatch) {
-        allResults.push({ ...p, storeCode, storeName, isOwn: d.isOwn });
+      if (!q || productMatchesQuery(p.name, p.barcode, q)) {
+        allResults.push({
+          ...p, storeCode, storeName, isOwn: d.isOwn,
+          score: q ? productSearchScore(p.name, p.barcode, q) : 0,
+        });
       }
     }
   }
+
+  if (q) allResults.sort((a, b) => b.score - a.score);
 
   if (allResults.length === 0) {
     resultsEl.innerHTML = '<div class="search-result-item disabled">لا توجد نتائج في أي محل</div>';

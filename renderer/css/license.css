@@ -153,6 +153,52 @@
   background: rgba(255,255,255,0.06);
 }
 
+.license-switch-btn.license-switch-danger {
+  border-color: rgba(220,53,69,0.4);
+  color: rgba(255,110,120,0.8);
+}
+
+.license-switch-btn.license-switch-danger:hover {
+  border-color: #dc3545;
+  color: #ff6b7a;
+  background: rgba(220,53,69,0.1);
+}
+
+.eula-box {
+  margin: 4px 0 14px;
+}
+
+.eula-text {
+  max-height: 92px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--silver-500, #8a94a6);
+  text-align: right;
+  padding: 10px 12px;
+  border: 1px solid var(--silver-300, #d8dde6);
+  border-radius: 10px;
+  background: var(--silver-50, #f7f9fc);
+  margin-bottom: 10px;
+}
+
+.eula-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--silver-700, #4a5260);
+  cursor: pointer;
+}
+
+.eula-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: #28a745;
+  cursor: pointer;
+}
+
 .license-status {
   padding: 10px 14px;
   border-radius: 8px;

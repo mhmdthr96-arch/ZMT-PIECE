@@ -109,6 +109,8 @@ function confirmAddSupplier() {
     balance: 0,
   });
   DB.saveSuppliers(suppliers);
+  const added = suppliers[suppliers.length - 1];
+  DB.logAudit({ action: 'add', entity: 'supplier', entityId: added.id, detail: name });
   closeAddSupplier();
   renderSuppliers();
 }
@@ -143,6 +145,7 @@ function confirmEditSupplier() {
   suppliers[idx].phone = document.getElementById('editSupPhone').value.trim();
   suppliers[idx].address = document.getElementById('editSupAddress').value.trim();
   DB.saveSuppliers(suppliers);
+  DB.logAudit({ action: 'update', entity: 'supplier', entityId: id, detail: name });
   closeEditSupplier();
   renderSuppliers();
   openSupplierDetail(id);
@@ -152,8 +155,10 @@ function deleteSupplier2(id) {
   if (!confirm('هل أنت متأكد من حذف هذا المورد؟')) return;
   const suppliers = DB.getSuppliers();
   const idx = suppliers.findIndex(s => s.id === id);
+  const removed = idx !== -1 ? suppliers[idx] : null;
   if (idx !== -1) suppliers.splice(idx, 1);
   DB.saveSuppliers(suppliers);
+  if (removed) DB.logAudit({ action: 'delete', entity: 'supplier', entityId: id, detail: removed.name || '' });
   navigateTo('suppliers');
 }
 

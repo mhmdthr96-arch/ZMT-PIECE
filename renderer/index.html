@@ -28,6 +28,24 @@
         </span>
       </div>
       <div class="title-bar-controls">
+        <div class="tb-support" id="tbSupport">
+          <button class="tb-btn tb-support-btn" id="btnSupport" title="الدعم الاحترافي">
+            <i class="fas fa-headset"></i>
+            <span id="supportLabel">دعم احترافي</span>
+            <i class="fas fa-chevron-down tb-caret"></i>
+          </button>
+          <div class="tb-dropdown" id="supportDropdown">
+            <button class="tb-dropdown-item" id="supportAnyDesk">
+              <i class="fas fa-desktop"></i> دعم عن بُعد (AnyDesk)
+            </button>
+            <a class="tb-dropdown-item" id="supportWhatsapp" target="_blank" rel="noopener">
+              <i class="fab fa-whatsapp"></i> تواصل واتساب
+            </a>
+            <a class="tb-dropdown-item" id="supportEmail">
+              <i class="fas fa-envelope"></i> راسلنا بريداً
+            </a>
+          </div>
+        </div>
         <button class="tb-btn" id="btnLang" title="Language">
           <i class="fas fa-globe"></i>
           <span class="lang-label" id="langLabel">AR</span>
@@ -152,6 +170,11 @@
             <i class="fas fa-user-friends"></i> حساب مختلف — تسجيل الدخول
           </button>
         </div>
+        <div class="license-switch">
+          <button class="license-switch-btn license-switch-danger" onclick="doLicenseDeactivate()">
+            <i class="fas fa-trash"></i> حذف مفتاح التفعيل نهائياً
+          </button>
+        </div>
       </div>
       <div class="license-success-section" id="licenseSuccessSection" style="display:none">
         <div class="license-success-icon"><i class="fas fa-check-circle"></i></div>
@@ -191,6 +214,11 @@
       <div class="license-switch">
         <button class="license-switch-btn" onclick="doLicenseSwitchAccount()">
           <i class="fas fa-user-friends"></i> حساب مختلف — تسجيل الدخول
+        </button>
+      </div>
+      <div class="license-switch">
+        <button class="license-switch-btn license-switch-danger" onclick="doLicenseDeactivate()">
+          <i class="fas fa-trash"></i> حذف مفتاح التفعيل نهائياً
         </button>
       </div>
       <div class="license-footer" style="margin-top:20px">

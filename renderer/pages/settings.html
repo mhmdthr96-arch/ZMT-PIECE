@@ -153,6 +153,36 @@
       </div>
     </div>
 
+    <!-- LICENSE / ACTIVATION -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><i class="fas fa-key"></i> <span data-i18n="settings.licenseCard">الترخيص والتفعيل</span></div>
+      <div class="card-body">
+        <div class="settings-group">
+          <p class="settings-hint" data-i18n="settings.licenseDesc">حالة مفتاح التفعيل على هذا الجهاز. لحذف المفتاح نهائياً والعودة إلى شاشة التفعيل، استخدم الزر أدناه.</p>
+          <div class="setting-row">
+            <label data-i18n="settings.licenseStatus">حالة التفعيل</label>
+            <span id="settingsLicStatus" style="font-size:13px">جارٍ التحقق...</span>
+          </div>
+          <div class="setting-row" id="settingsLicStoreRow" style="display:none">
+            <label data-i18n="settings.licenseStore">رمز المتجر</label>
+            <span id="settingsLicStore" style="color:var(--silver-600);font-family:monospace"></span>
+          </div>
+          <div class="setting-row" id="settingsLicExpiryRow" style="display:none">
+            <label data-i18n="settings.licenseExpiry">تاريخ الانتهاء</label>
+            <span id="settingsLicExpiry" style="color:var(--silver-600)"></span>
+          </div>
+          <div class="setting-row" id="settingsLicAdminRow">
+            <label data-i18n="settings.licenseAdminSecret">السر الإداري (اختياري)</label>
+            <input type="password" class="form-input" id="settingsLicAdminSecret" data-i18n-placeholder="settings.licenseAdminSecretPlaceholder" placeholder="لتحرير الجهاز على الخادم أيضاً" style="width:240px;direction:ltr;font-family:monospace">
+          </div>
+          <div class="setting-row">
+            <button class="btn" id="settingsDeactivateBtn" onclick="settingsDeactivateLicense()" style="background:#dc3545;color:#fff;border:none"><i class="fas fa-trash"></i> <span data-i18n="settings.licenseDeactivateBtn">حذف مفتاح التفعيل نهائياً</span></button>
+          </div>
+          <div class="settings-result" id="settingsLicResult"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- STORE PASSWORD -->
     <div class="card" style="margin-top:16px">
       <div class="card-header"><i class="fas fa-lock"></i> <span data-i18n="settings.storePasswordCard">كلمة مرور المحل</span></div>
@@ -266,6 +296,30 @@
             <i class="fas fa-users"></i>
             <p data-i18n="settings.noUsers">لا يوجد مستخدمون بعد</p>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><i class="fas fa-history"></i> <span>سجل العمليات</span></div>
+      <div class="card-body">
+        <div class="settings-group">
+          <p class="settings-hint">كل الحركات التي يقوم بها المديرون (إضافة/تعديل/حذف المنتجات، الفواتير، الدفعات، الموردين، العملاء، الفروع، المستخدمين).</p>
+          <div class="setting-row audit-filters">
+            <select class="form-input" id="auditManagerFilter" style="width:160px"><option value="">كل المديرين</option></select>
+            <select class="form-input" id="auditActionFilter" style="width:150px">
+              <option value="">كل العمليات</option>
+              <option value="add">إضافة</option>
+              <option value="update">تعديل</option>
+              <option value="delete">حذف</option>
+            </select>
+            <input type="date" class="form-input" id="auditFrom" style="width:150px" title="من تاريخ">
+            <input type="date" class="form-input" id="auditTo" style="width:150px" title="إلى تاريخ">
+            <button class="btn btn-sm" onclick="renderAuditLog()"><i class="fas fa-filter"></i> تصفية</button>
+            <button class="btn btn-sm" onclick="exportAuditLogCSV()"><i class="fas fa-file-csv"></i> تصدير CSV</button>
+            <button class="btn btn-sm btn-danger-soft" onclick="clearAuditLogConfirm()"><i class="fas fa-trash"></i> مسح السجل</button>
+          </div>
+          <div id="auditLogTable" class="audit-log-table"></div>
         </div>
       </div>
     </div>

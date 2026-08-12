@@ -171,9 +171,12 @@ function searchTransferProduct(q) {
 
   const products = DB.getProducts();
   const matches = q
-    ? products.filter(p =>
-        p.name.toLowerCase().includes(q.toLowerCase()) || p.barcode.includes(q)
-      ).slice(0, 10)
+    ? products
+        .map(p => ({ p, score: productSearchScore(p.name, p.barcode, q) }))
+        .filter(x => x.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10)
+        .map(x => x.p)
     : products.slice(0, 10);
 
   if (matches.length === 0) {

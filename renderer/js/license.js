@@ -18,6 +18,17 @@ async function checkAndEnforceLicense() {
   const result = await window.electronAPI.licenseCheck();
   const tamperResult = await window.electronAPI.licenseTimeTamper();
 
+  // Online revocation cached locally (set when the cloud module detected the key
+  // was revoked in the admin tool). Frozen offline too, until the next online
+  // contact clears the flag. Never blocks the very first run when no key exists.
+  if (typeof CloudService !== 'undefined' && typeof CloudService.isLicenseRevokedLocally === 'function'
+      && CloudService.isLicenseRevokedLocally()) {
+    _licenseState.checked = true;
+    _licenseState.valid = false;
+    showFreezeOverlay('تم إلغاء مفتاح التفعيل — تواصل مع الدعم');
+    return false;
+  }
+
   _licenseState.checked = true;
 
   if (tamperResult.tampered) {
@@ -212,18 +223,47 @@ function createFreezeOverlay() {
       </div>
       <div class="freeze-input-group">
         <input type="text" id="freezeKeyInput" class="license-input"
-               placeholder="مفتاح التفعيل الجديد (ZMT-XXXX-XXXX-XXXX)" dir="ltr" autocomplete="off" spellcheck="false">
+                placeholder="مفتاح التفعيل الجديد (ZMT-XXXX-XXXX-XXXX)" dir="ltr" autocomplete="off" spellcheck="false">
       </div>
+
+      <div class="eula-box">
+        <div class="eula-text" id="eulaText">
+          باستخدام برنامج ZMT PIECE فإنك تقر بأن المسؤولية القانونية عن استخدام البرنامج تقع على المستخدم، وأن البرنامج يُقدَّم كما هو دون أي ضمانات صريحة أو ضمنية. جميع البيانات المدخلة تبقى تحت مسؤوليتك. يُحظر إعادة بيع أو توزيع أو اختراق البرنامج دون إذن خطي من ZMT SOFTWARE. بموافقتك تقر بقبول هذه الشروط.
+        </div>
+        <label class="eula-check">
+          <input type="checkbox" id="eulaAccept">
+          <span>أقر بقراءة الشروط وأوافق على استخدام البرنامج</span>
+        </label>
+      </div>
+
       <div class="license-status" id="freezeStatus" style="display:none"></div>
       <button class="license-activate-btn" onclick="doFreezeActivate()">
         <i class="fas fa-key"></i> تفعيل واستمرار
       </button>
+      <div class="license-switch">
+        <button class="license-switch-btn license-switch-danger" onclick="doLicenseDeactivate()">
+          <i class="fas fa-trash"></i> حذف مفتاح التفعيل نهائياً
+        </button>
+        <button class="license-switch-btn" onclick="doLicenseReject()">
+          <i class="fas fa-sign-out-alt"></i> لا أوافق (رجوع لتسجيل الدخول)
+        </button>
+      </div>
       <div class="license-footer" style="margin-top:20px">
         <span>ZMT SOFTWARE — ZERIBIT MOHAMMED TAHAR</span>
       </div>
     </div>
   `;
+  const acc = div.querySelector('#eulaAccept');
+  if (acc && localStorage.getItem('zmt_eula_accepted') === '1') acc.checked = true;
   document.body.appendChild(div);
+}
+
+async function doLicenseReject() {
+  if (!confirm('باختيار "لا أوافق" سيتم تسجيل الخروج والعودة لشاشة الدخول. متابعة؟')) return;
+  try { if (typeof Auth !== 'undefined' && Auth.signOut) Auth.signOut(); } catch (e) {}
+  hideFreezeOverlay();
+  if (typeof showLogin === 'function') showLogin();
+  else if (window.location) window.location.reload();
 }
 
 async function doLicenseActivate() {
@@ -250,6 +290,12 @@ async function doLicenseActivate() {
     return;
   }
 
+  const acc = document.getElementById('eulaAccept') || document.getElementById('eulaAcceptPage');
+  if (!acc || !acc.checked) {
+    showLicenseStatus(status, 'يجب قبول شروط الاستخدام أولاً للمتابعة', 'error');
+    return;
+  }
+
   if (codeEl) localStorage.setItem('zmt_store_code', code);
   if (passEl && password) localStorage.setItem('zmt_store_password', password);
 
@@ -262,6 +308,7 @@ async function doLicenseActivate() {
   btn.innerHTML = '<i class="fas fa-key"></i> تفعيل البرنامج';
 
   if (result.success) {
+    try { localStorage.setItem('zmt_eula_accepted', '1'); } catch (e) {}
     showLicenseStatus(status, result.message, 'success');
     document.getElementById('licenseFormSection').style.display = 'none';
     const successSection = document.getElementById('licenseSuccessSection');
@@ -297,12 +344,19 @@ async function doFreezeActivate() {
     return;
   }
 
+  const acc = document.getElementById('eulaAccept') || document.getElementById('eulaAcceptFreeze');
+  if (!acc || !acc.checked) {
+    showFreezeStatus(status, 'يجب قبول شروط الاستخدام أولاً للمتابعة', 'error');
+    return;
+  }
+
   if (codeEl) localStorage.setItem('zmt_store_code', code);
   if (passEl && password) localStorage.setItem('zmt_store_password', password);
 
   const result = await window.electronAPI.licenseActivate({ key, code, password });
 
   if (result.success) {
+    try { localStorage.setItem('zmt_eula_accepted', '1'); } catch (e) {}
     hideFreezeOverlay();
     _licenseState.valid = true;
     _licenseState.expired = false;
@@ -335,6 +389,43 @@ function doLicenseEnterApp() {
   if (typeof navigateTo === 'function') {
     navigateTo('dashboard');
   }
+}
+
+// Resets the license state after a permanent deactivation so the app returns
+// to the login/activation screen instead of treating the deletion as tampering.
+function resetLicenseAfterDeactivation() {
+  _licenseState.valid = false;
+  _licenseState.noLicense = true;
+  _licenseState.expired = false;
+  _licenseState.machineMismatch = false;
+  _licenseState.invalidLegacy = false;
+  _licenseState.tampered = false;
+  _licenseState.license = null;
+  if (_watermarkInterval) clearInterval(_watermarkInterval);
+  hideLicenseOverlay();
+  hideFreezeOverlay();
+}
+
+// Permanently deletes the local activation key from any screen (freeze overlay,
+// activation overlay, or settings). After deletion the app returns to the
+// activation form so a new key can be entered.
+async function doLicenseDeactivate() {
+  if (!confirm('هل تريد حذف مفتاح التفعيل نهائياً من هذا الجهاز؟\n\nسيُحذف المفتاح وستحتاج مفتاحاً جديداً للاستمرار. بياناتك محفوظة.')) return;
+  let res;
+  try {
+    res = await window.electronAPI.licenseDeactivate({});
+  } catch (e) {
+    alert('تعذر حذف المفتاح: ' + e.message);
+    return;
+  }
+  if (!res || !res.success) {
+    alert((res && res.message) || 'لا يوجد مفتاح تفعيل لحذفه');
+    return;
+  }
+  if (typeof Auth !== 'undefined' && typeof Auth.signOut === 'function') Auth.signOut();
+  resetLicenseAfterDeactivation();
+  if (typeof CloudService !== 'undefined' && typeof CloudService.stopAutoSync === 'function') CloudService.stopAutoSync();
+  showLicenseOverlay();
 }
 
 function doLicenseSwitchAccount() {
@@ -423,3 +514,16 @@ function updateWatermarkText() {
 function getLicenseState() {
   return { ..._licenseState };
 }
+
+// ===== Online enforcement events (emitted by the cloud module) =====
+// A key revoked from the admin tool (Q18) freezes the UI immediately.
+window.addEventListener('zmt:license-revoked', function () {
+  _licenseState.valid = false;
+  showFreezeOverlay('تم إلغاء مفتاح التفعيل — تواصل مع الدعم');
+});
+// A local clock wildly off from the server (Q10: tamper with date to dodge expiry)
+// is treated like license tampering and freezes the UI.
+window.addEventListener('zmt:license-clock', function () {
+  _licenseState.valid = false;
+  showFreezeOverlay('تم رصد تعديل في ساعة الجهاز — صحّح وقت النظام للمتابعة');
+});

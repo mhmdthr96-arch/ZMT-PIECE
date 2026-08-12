@@ -95,6 +95,100 @@
       </div>
     </div>
 
+    <!-- === NET ACCOUNT SECTION === -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><i class="fas fa-balance-scale"></i> <span data-i18n="reportsNet.title">صافي الحساب</span></div>
+      <div class="card-body">
+        <div id="netReportControls" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px">
+          <span style="font-weight:600;font-size:13px;color:var(--silver-700);margin-left:8px" data-i18n="reportsNet.period">الفترة:</span>
+          <button class="period-btn active" data-netperiod="year" onclick="setNetReportRange('year')" data-i18n="reportsNet.year">السنة</button>
+          <button class="period-btn" data-netperiod="date" onclick="setNetReportRange('date')" data-i18n="reportsNet.specificDate">تاريخ محدد</button>
+          <button class="period-btn" data-netperiod="range" onclick="setNetReportRange('range')" data-i18n="reportsNet.range">نطاق</button>
+        </div>
+
+        <div id="netReportYearRow" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:10px 0 16px">
+          <label style="font-size:12px;color:var(--silver-600)"><span data-i18n="reportsNet.year">السنة:</span> <select id="netReportYear" class="form-input" style="width:140px" onchange="renderNetAccountSection()"></select></label>
+        </div>
+        <div id="netReportDateRow" style="display:none;gap:12px;align-items:center;flex-wrap:wrap;margin:10px 0 16px">
+          <label style="font-size:12px;color:var(--silver-600)"><span data-i18n="reportsNet.specificDate">تاريخ محدد:</span> <input type="date" id="netReportDate" class="form-input" style="width:160px;margin-right:8px" onchange="renderNetAccountSection()"></label>
+        </div>
+        <div id="netReportRangeRow" style="display:none;gap:12px;align-items:center;flex-wrap:wrap;margin:10px 0 16px">
+          <label style="font-size:12px;color:var(--silver-600)"><span data-i18n="reports.from">من:</span> <input type="date" id="netReportFrom" class="form-input" style="width:160px;margin-right:8px" onchange="renderNetAccountSection()"></label>
+          <label style="font-size:12px;color:var(--silver-600)"><span data-i18n="reports.to">إلى:</span> <input type="date" id="netReportTo" class="form-input" style="width:160px;margin-right:8px" onchange="renderNetAccountSection()"></label>
+        </div>
+
+        <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+          <div class="stat-card" style="background:linear-gradient(135deg,#0066B1,#004d8c);color:white">
+            <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-arrow-up" style="color:white"></i></div>
+            <div class="stat-info">
+              <span class="stat-value" id="netReportSales" style="color:white;font-size:20px">DA0</span>
+              <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reportsNet.sales">إجمالي المبيعات</span>
+            </div>
+          </div>
+          <div class="stat-card" style="background:linear-gradient(135deg,#7b1fa2,#4a148c);color:white">
+            <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-truck" style="color:white"></i></div>
+            <div class="stat-info">
+              <span class="stat-value" id="netReportPurchases" style="color:white;font-size:20px">DA0</span>
+              <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reportsNet.purchases">إجمالي المشتريات</span>
+            </div>
+          </div>
+          <div class="stat-card" style="background:linear-gradient(135deg,#e65100,#bf4400);color:white">
+            <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-arrow-down" style="color:white"></i></div>
+            <div class="stat-info">
+              <span class="stat-value" id="netReportExpenses" style="color:white;font-size:20px">DA0</span>
+              <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reportsNet.expenses">إجمالي المصروفات</span>
+            </div>
+          </div>
+          <div class="stat-card" style="background:linear-gradient(135deg,#28a745,#1b5e20);color:white">
+            <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-calculator" style="color:white"></i></div>
+            <div class="stat-info">
+              <span class="stat-value" id="netReportProfit" style="color:white;font-size:20px">DA0</span>
+              <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reportsNet.profit">صافي الربح</span>
+            </div>
+          </div>
+          <div class="stat-card" style="background:linear-gradient(135deg,#b8860b,#8b6508);color:white">
+            <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-clock" style="color:white"></i></div>
+            <div class="stat-info">
+              <span class="stat-value" id="netReportPendingPeriod" style="color:white;font-size:20px">DA0</span>
+              <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reportsNet.periodDebt">المبالغ المعلقة للفترة</span>
+            </div>
+            <div style="margin-top:6px;display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:rgba(255,255,255,0.8)">
+              <span>📌 <span data-i18n="reportsNet.customerDebt">دين لنا</span>: <span id="netReportCustPeriod" style="color:#ffd700">DA0</span></span>
+              <span>🧾 <span data-i18n="reportsNet.supplierDebt">دين علينا</span>: <span id="netReportSupPeriod" style="color:#ffd700">DA0</span></span>
+            </div>
+          </div>
+          <div class="stat-card" style="background:linear-gradient(135deg,#455a64,#263238);color:white">
+            <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-wallet" style="color:white"></i></div>
+            <div class="stat-info">
+              <span class="stat-value" id="netReportPendingCurrent" style="color:white;font-size:20px">DA0</span>
+              <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reportsNet.currentDebt">المبالغ المعلقة الحالية</span>
+            </div>
+            <div style="margin-top:6px;display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:rgba(255,255,255,0.8)">
+              <span>📌 <span data-i18n="reportsNet.customerDebt">دين لنا</span>: <span id="netReportCustCurrent" style="color:#ffd700">DA0</span></span>
+              <span>🧾 <span data-i18n="reportsNet.supplierDebt">دين علينا</span>: <span id="netReportSupCurrent" style="color:#ffd700">DA0</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-top:14px">
+          <div class="stat-card" style="background:linear-gradient(135deg,#0066B1,#004d8c);color:white">
+            <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-chart-line" style="color:white"></i></div>
+            <div class="stat-info">
+              <span class="stat-value" id="netReportPeriodMargin" style="color:white;font-size:22px">DA0</span>
+              <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reportsNet.periodMargin">هامش الربح للفترة</span>
+            </div>
+          </div>
+          <div class="stat-card" style="background:linear-gradient(135deg,#28a745,#1b5e20);color:white">
+            <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-coins" style="color:white"></i></div>
+            <div class="stat-info">
+              <span class="stat-value" id="netReportTotalMargin" style="color:white;font-size:22px">DA0</span>
+              <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="reportsNet.totalMargin">هامش الربح الكلي</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- === CHARTS ROW 1: Comparison === -->
     <div class="two-col" style="margin-bottom:20px">
       <div class="chart-section">

@@ -218,7 +218,7 @@ const SALES_GRID_PAGE_SIZE = 300;
 
 function renderSalesProducts(filter) {
   if (typeof filter === 'string') {
-    _salesSearchQuery = filter.trim().toLowerCase();
+    _salesSearchQuery = normSearch(filter);
   }
   if (_salesRenderRAF) { cancelAnimationFrame(_salesRenderRAF); _salesRenderRAF = null; }
 
@@ -226,13 +226,21 @@ function renderSalesProducts(filter) {
   if (!grid || !grid.isConnected) return;
   let groups = getSalesGroups();
   const q = _salesSearchQuery;
-  if (q && q.length >= 3) {
-    groups = groups.filter(g =>
-      g.name.toLowerCase().startsWith(q) ||
-      g.barcode.toLowerCase().startsWith(q) ||
-      g.name.toLowerCase().includes(' ' + q) ||
-      g.barcode.toLowerCase().includes(q)
-    );
+  if (q && q.trim().length >= 2) {
+    // Smart multi-word search: every word must match name or barcode, ranked by match quality.
+    // Out-of-stock products are always pushed to the bottom.
+    groups = groups
+      .map(g => ({ g, score: productSearchScore(g.name, g.barcode, q) }))
+      .filter(x => x.score > 0)
+      .sort((a, b) => {
+        const aOos = getGroupAvailableQty(a.g) <= 0 ? 1 : 0;
+        const bOos = getGroupAvailableQty(b.g) <= 0 ? 1 : 0;
+        return (aOos - bOos) || (b.score - a.score);
+      })
+      .map(x => x.g);
+  } else {
+    // Stable sort: out-of-stock products sink to the bottom, everything else keeps its order
+    groups.sort((a, b) => (getGroupAvailableQty(a) <= 0 ? 1 : 0) - (getGroupAvailableQty(b) <= 0 ? 1 : 0));
   }
   _salesGroupList = groups;
   _salesRenderedCount = 0;

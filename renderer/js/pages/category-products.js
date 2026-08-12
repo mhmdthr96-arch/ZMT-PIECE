@@ -39,6 +39,7 @@ function renderProducts() {
     return;
   }
 
+  const isManager = Auth.isManager();
   container.innerHTML = `<div class="table-container">
     <table class="data-table">
       <thead><tr>
@@ -46,7 +47,7 @@ function renderProducts() {
         <th>الاسم</th>
         <th>الباركود</th>
         <th>الكمية</th>
-        <th class="hide-user">سعر الشراء</th>
+        <th>${isManager ? 'سعر الشراء' : ''}</th>
         <th>سعر البيع</th>
         <th>المورد</th>
         <th>إجراءات</th>
@@ -64,14 +65,14 @@ function renderProducts() {
       <td><strong>${p.name}</strong></td>
       <td dir="ltr">${p.barcode}</td>
       <td>${p.quantity}</td>
-      <td class="hide-user">DA${p.buyPrice.toFixed(2)}</td>
+      <td>${isManager ? `DA${p.buyPrice.toFixed(2)}` : '-'}</td>
       <td>DA${p.sellPrice.toFixed(2)}</td>
       <td>${sup ? sup.name : '-'}</td>
       <td>
         <button class="btn btn-sm" onclick="openPrintBarcodeModal('${p.id}')" title="طباعة باركود"><i class="fas fa-barcode"></i></button>
-        <button class="btn btn-sm ${Auth.isManager() ? '' : 'hide-user'}" onclick="editProduct('${p.id}')"><i class="fas fa-edit"></i></button>
-        <button class="btn btn-sm btn-return ${(Auth.isManager() || Auth.canEdit('supplier-returns')) ? '' : 'hide-user'}" onclick="openSupplierReturnModal('${p.id}')" title="${t('supplierReturns.modalTitle')}"><i class="fas fa-undo-alt"></i></button>
-        <button class="btn btn-sm btn-danger ${Auth.isManager() ? '' : 'hide-user'}" onclick="deleteProduct('${p.id}')"><i class="fas fa-trash"></i></button>
+        ${isManager ? `<button class="btn btn-sm" onclick="editProduct('${p.id}')"><i class="fas fa-edit"></i></button>` : ''}
+        ${(isManager || Auth.canEdit('supplier-returns')) ? `<button class="btn btn-sm btn-return" onclick="openSupplierReturnModal('${p.id}')" title="${t('supplierReturns.modalTitle')}"><i class="fas fa-undo-alt"></i></button>` : ''}
+        ${isManager ? `<button class="btn btn-sm btn-danger" onclick="deleteProduct('${p.id}')"><i class="fas fa-trash"></i></button>` : ''}
       </td>
     </tr>`;
   });
@@ -93,6 +94,7 @@ function setupProdSearch() {
 }
 
 function openAddProduct() {
+  if (!Auth.isManager()) { alert(t('common.noPermission')); return; }
   editingProductId = null;
   document.getElementById('addProductModal').style.display = 'flex';
   resetAddForm();
@@ -455,6 +457,7 @@ function confirmInvoice() {
 // ===== EDIT / DELETE =====
 
 function editProduct(id) {
+  if (!Auth.isManager()) { alert(t('common.noPermission')); return; }
   const p = DB.getProduct(id);
   if (!p) return;
   editingProductId = id;
@@ -481,6 +484,7 @@ function editProduct(id) {
 }
 
 function deleteProduct(id) {
+  if (!Auth.isManager()) { alert(t('common.noPermission')); return; }
   if (!confirm('هل أنت متأكد من حذف هذا المنتج؟')) return;
   const p = DB.getProduct(id);
   if (!p) return;

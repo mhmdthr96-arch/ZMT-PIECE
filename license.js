@@ -493,6 +493,63 @@ async function checkServerStatus(code, password) {
   return null;
 }
 
+// ===== DEACTIVATION (delete the activation key permanently) =====
+// { adminSecret? } — deactivates this machine:
+//   1. If an admin secret is provided, asks the server to release the device
+//      slot (license_release) so the store's device quota frees up.
+//   2. Deletes the local signed license file, returning the app to the
+//      activation screen.
+// The time watermark (zmt_time.dat) is intentionally preserved: it is an
+// anti-tamper anchor, not a key, and is required to keep the protection valid
+// on a fresh activation.
+async function deactivateLicense(payload) {
+  const adminSecret = String(payload?.adminSecret || '').trim();
+  const license = loadLicense();
+  const smbiosHash = getMachineFingerprint();
+  let released = false;
+
+  if (license && adminSecret) {
+    try {
+      const resp = await fetch(_siteBase() + '/api/push-trigger', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-zmt-admin': adminSecret,
+        },
+        body: JSON.stringify({ action: 'license_release', smbiosHash }),
+      });
+      let data = null;
+      try { data = await resp.json(); } catch (e) { data = null; }
+      released = resp.status === 200 && data && data.ok;
+    } catch (e) {
+      released = false;
+    }
+  }
+
+  let deleted = false;
+  try {
+    const p = getLicensePath();
+    if (fs.existsSync(p)) {
+      fs.unlinkSync(p);
+      deleted = true;
+    }
+  } catch (e) {}
+
+  if (!deleted) {
+    return { success: false, message: 'لا يوجد مفتاح تفعيل لحذفه' };
+  }
+  if (adminSecret) {
+    return {
+      success: true,
+      released,
+      message: released
+        ? 'تم إلغاء التفعيل وتحرير الجهاز وحذف المفتاح نهائياً'
+        : 'حُذف المفتاح من الجهاز، لكن تعذّر تحرير الجهاز على الخادم — تحقق من السر الإداري',
+    };
+  }
+  return { success: true, released: false, message: 'تم حذف مفتاح التفعيل نهائياً من هذا الجهاز' };
+}
+
 module.exports = {
   setUserDataPath,
   getMachineFingerprint,
@@ -502,4 +559,5 @@ module.exports = {
   checkTimeTamper,
   saveTimeSnapshot,
   getRemainingTime,
+  deactivateLicense,
 };

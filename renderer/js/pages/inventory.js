@@ -66,6 +66,7 @@ function renderInventory() {
 function _renderInvRow(p, idx) {
   const brands = [...BRANDS.global, ...BRANDS.chinese];
   const brand = brands.find(b => b.id === p.brandId);
+  const isManager = Auth.isManager();
   return `<tr>
     <td>${idx + 1}</td>
     <td><strong>${p.name}</strong></td>
@@ -73,13 +74,13 @@ function _renderInvRow(p, idx) {
     <td>${brand ? brand.name : p.brandId}</td>
     <td>${p.category || '-'}</td>
     <td class="${p.quantity < 5 ? 'text-danger' : ''}">${p.quantity}</td>
-    <td class="hide-user">DA${p.buyPrice.toFixed(2)}</td>
+    <td>${isManager ? `DA${p.buyPrice.toFixed(2)}` : '-'}</td>
     <td>DA${p.sellPrice.toFixed(2)}</td>
     <td>
       <button class="btn btn-sm" onclick="openPrintBarcodeModal('${p.id}')" title="طباعة باركود"><i class="fas fa-barcode"></i></button>
-      <button class="btn btn-sm ${Auth.isManager() ? '' : 'hide-user'}" onclick="editInventoryItem('${p.id}')"><i class="fas fa-edit"></i></button>
-      <button class="btn btn-sm btn-return ${(Auth.isManager() || Auth.canEdit('supplier-returns')) ? '' : 'hide-user'}" onclick="openSupplierReturnModal('${p.id}')" title="${t('supplierReturns.modalTitle')}"><i class="fas fa-undo-alt"></i></button>
-      <button class="btn btn-sm btn-danger ${Auth.isManager() ? '' : 'hide-user'}" onclick="deleteInventoryItem('${p.id}')"><i class="fas fa-trash"></i></button>
+      ${(isManager || Auth.canEdit('inventory')) ? `<button class="btn btn-sm" onclick="editInventoryItem('${p.id}')"><i class="fas fa-edit"></i></button>` : ''}
+      ${(isManager || Auth.canEdit('supplier-returns')) ? `<button class="btn btn-sm btn-return" onclick="openSupplierReturnModal('${p.id}')" title="${t('supplierReturns.modalTitle')}"><i class="fas fa-undo-alt"></i></button>` : ''}
+      ${isManager ? `<button class="btn btn-sm btn-danger" onclick="deleteInventoryItem('${p.id}')"><i class="fas fa-trash"></i></button>` : ''}
     </td>
   </tr>`;
 }
@@ -103,6 +104,7 @@ function setupInvSearch() {
 // ========== ADD INVENTORY MODAL ==========
 
 function openInvAddModal() {
+  if (!Auth.isManager()) { alert(t('common.noPermission')); return; }
   populateInvBrands();
   populateInvCategories();
   document.getElementById('invAddModal').style.display = 'flex';
@@ -177,9 +179,12 @@ function searchInvProduct(q) {
 
   const products = DB.getProducts();
   const matches = q
-    ? products.filter(p =>
-        p.name.toLowerCase().includes(q.toLowerCase()) || p.barcode.includes(q)
-      ).slice(0, 10)
+    ? products
+        .map(p => ({ p, score: productSearchScore(p.name, p.barcode, q) }))
+        .filter(x => x.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10)
+        .map(x => x.p)
     : products.slice(0, 10);
 
   if (matches.length === 0) {
@@ -248,6 +253,7 @@ function selectInvSupplier(id) {
 // --- Cart ---
 
 function invAddToCart() {
+  if (!Auth.isManager()) { alert(t('common.noPermission')); return; }
   const name = document.getElementById('invProdName').value.trim();
   const barcode = document.getElementById('invProdBar').value.trim();
   const brandId = document.getElementById('invBrand').value;
@@ -428,6 +434,7 @@ function invConfirmInvoice() {
 // ========== EDIT / DELETE ==========
 
 function editInventoryItem(id) {
+  if (!Auth.isManager() && !Auth.canEdit('inventory')) { alert(t('common.noPermission')); return; }
   const p = DB.getProduct(id);
   if (!p) return;
 
@@ -459,10 +466,11 @@ function editInventoryItem(id) {
         <label>${t('inventory.editLabelQty')}</label>
         <input type="number" class="form-input no-spinner" id="invEditQty" value="${p.quantity}" min="0">
       </div>
+      ${Auth.isManager() ? `
       <div class="form-group">
         <label>${t('inventory.editLabelBuyPrice')}</label>
         <input type="number" class="form-input no-spinner" id="invEditBuy" value="${p.buyPrice}" min="0">
-      </div>
+      </div>` : ''}
       <div class="form-group">
         <label>${t('inventory.editLabelSellPrice')}</label>
         <input type="number" class="form-input no-spinner" id="invEditSell" value="${p.sellPrice}" min="0">
@@ -477,7 +485,8 @@ function editInventoryItem(id) {
     const oldQty = p.quantity;
     const oldBuyPrice = p.buyPrice;
     const newQty = parseInt(document.getElementById('invEditQty').value) || 0;
-    const newBuyPrice = parseFloat(document.getElementById('invEditBuy').value) || 0;
+    const buyPriceInput = document.getElementById('invEditBuy');
+    const newBuyPrice = (buyPriceInput && Auth.isManager()) ? (parseFloat(buyPriceInput.value) || 0) : oldBuyPrice;
     const newSellPrice = parseFloat(document.getElementById('invEditSell').value) || 0;
     const newWholePrice = parseFloat(document.getElementById('invEditWhole').value) || 0;
 
@@ -515,6 +524,7 @@ function editInventoryItem(id) {
 }
 
 function deleteInventoryItem(id) {
+  if (!Auth.isManager()) { alert(t('common.noPermission')); return; }
   if (!confirm(t('inventory.deleteConfirm'))) return;
   const p = DB.getProduct(id);
   if (!p) return;

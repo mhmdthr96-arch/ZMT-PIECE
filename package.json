@@ -1,6 +1,6 @@
 {
   "name": "zmt-piece",
-  "version": "2.2.2",
+  "version": "2.2.4",
   "description": "ZMT PIECE - برنامج إدارة قطع غيار السيارات",
   "main": "main.js",
   "author": "ZERIBIT MOHAMMED TAHAR - ZMT SOFTWARE",
@@ -74,7 +74,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "ZMT PIECE",
       "unicode": true,
-      "language": "1041"
+      "license": "build/eula.txt",
+      "language": "1025"
     }
   },
   "devDependencies": {

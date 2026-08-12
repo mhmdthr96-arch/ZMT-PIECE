@@ -126,6 +126,90 @@ function formatProfitMarginSplitCard(margin, split) {
     </div>`;
 }
 
+// ===== NET ACCOUNT IN REPORTS =====
+var _netReportType = 'year';
+
+function populateNetReportYears() {
+  const sel = document.getElementById('netReportYear');
+  if (!sel) return;
+  const years = new Set([new Date().getFullYear()]);
+  DB.getInvoices().forEach(i => { const ts = i.createdAt || i.date; if (ts) years.add(new Date(ts).getFullYear()); });
+  DB.getPayments().forEach(p => { if (p.createdAt) years.add(new Date(p.createdAt).getFullYear()); });
+  const list = [...years].sort((a, b) => b - a);
+  const cur = sel.value;
+  sel.innerHTML = list.map(y => `<option value="${y}">${y}</option>`).join('');
+  if (cur && list.map(String).includes(String(cur))) sel.value = cur;
+}
+
+function setNetReportRange(type) {
+  _netReportType = type;
+  document.querySelectorAll('#netReportControls .period-btn').forEach(b => b.classList.toggle('active', b.dataset.netperiod === type));
+  document.getElementById('netReportYearRow').style.display = type === 'year' ? 'flex' : 'none';
+  document.getElementById('netReportDateRow').style.display = type === 'date' ? 'flex' : 'none';
+  document.getElementById('netReportRangeRow').style.display = type === 'range' ? 'flex' : 'none';
+  renderNetAccountSection();
+}
+
+function getNetReportRange() {
+  switch (_netReportType) {
+    case 'date': {
+      const el = document.getElementById('netReportDate');
+      if (el && el.value) {
+        const d = new Date(el.value + 'T00:00:00');
+        return { from: d.getTime(), to: d.getTime() + 86399999 };
+      }
+      return null;
+    }
+    case 'range': {
+      const f = document.getElementById('netReportFrom');
+      const t = document.getElementById('netReportTo');
+      const from = f && f.value ? new Date(f.value + 'T00:00:00').getTime() : null;
+      const to = t && t.value ? new Date(t.value + 'T23:59:59').getTime() : null;
+      if (!from && !to) return null;
+      const range = {};
+      if (from) range.from = from;
+      if (to) range.to = to;
+      return range;
+    }
+    default: {
+      const y = parseInt(document.getElementById('netReportYear')?.value || new Date().getFullYear(), 10);
+      return { from: new Date(y, 0, 1).getTime(), to: new Date(y, 11, 31, 23, 59, 59).getTime() };
+    }
+  }
+}
+
+function renderNetAccountSection() {
+  if (!document.getElementById('netReportSales')) return;
+  populateNetReportYears();
+  const range = getNetReportRange();
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = formatDA(val); };
+
+  if (!range) {
+    ['netReportSales','netReportPurchases','netReportExpenses','netReportProfit','netReportPendingPeriod','netReportCustPeriod','netReportSupPeriod','netReportPendingCurrent','netReportCustCurrent','netReportSupCurrent'].forEach(id => set(id, 0));
+    const pm = document.getElementById('netReportPeriodMargin');
+    const tm = document.getElementById('netReportTotalMargin');
+    if (pm) pm.textContent = 'DA0';
+    if (tm) tm.textContent = 'DA0';
+    return;
+  }
+
+  const res = computeNet(range);
+  set('netReportSales', res.totalSales);
+  set('netReportPurchases', res.totalPurchases);
+  set('netReportExpenses', res.totalExpenses);
+  set('netReportProfit', res.profit);
+  set('netReportPendingPeriod', res.pendingPeriod);
+  set('netReportCustPeriod', res.customerDebtPeriod);
+  set('netReportSupPeriod', res.supplierDebtPeriod);
+  set('netReportPendingCurrent', res.pendingTotal);
+  set('netReportCustCurrent', res.customerDebt);
+  set('netReportSupCurrent', res.supplierDebt);
+  const pm = document.getElementById('netReportPeriodMargin');
+  const tm = document.getElementById('netReportTotalMargin');
+  if (pm) pm.innerHTML = formatProfitMarginSplitCard(res.periodMargin, res.periodSplit);
+  if (tm) tm.innerHTML = formatProfitMarginSplitCard(res.totalMargin, res.totalSplit);
+}
+
 function init_reports() {
   const now = new Date();
   const y = now.getFullYear();
@@ -156,6 +240,9 @@ function init_reports() {
     document.querySelectorAll('.period-btn').forEach(b => b.classList.toggle('active', b.dataset.period === 'year'));
     renderReports();
   }
+
+  populateNetReportYears();
+  renderNetAccountSection();
 }
 
 function renderReports() {

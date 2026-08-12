@@ -112,3 +112,44 @@
 .debts-pay-amount{font-weight:700;white-space:nowrap}
 @media(max-width:780px){.debts-content{flex-direction:column}.debts-list-panel{max-width:none}}
 </style>
+
+<!-- Payment modal (pay an invoice's remaining balance directly from debts) -->
+<div id="debtPayModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeDebtPay()">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <h3><i class="fas fa-hand-holding-usd"></i> <span data-i18n="invoices.payModalTitle">تسديد دفعة</span></h3>
+      <button class="modal-close" onclick="closeDebtPay()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;padding:4px 0">
+          <span style="color:var(--silver-600)" data-i18n="common.total">الإجمالي:</span>
+          <strong id="debtPayTotal">DA0</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0">
+          <span style="color:var(--silver-600)" data-i18n="invoices.paidPreviously">المدفوع سابقاً:</span>
+          <strong id="debtPayPaid" style="color:#28a745">DA0</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--silver-200);margin-top:4px;padding-top:6px">
+          <span style="color:var(--silver-600)" data-i18n="common.remaining">المتبقي:</span>
+          <strong id="debtPayRemaining" style="color:#e65100">DA0</strong>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label style="font-size:13px;font-weight:600" data-i18n="invoices.payAmount">مبلغ الدفعة</label>
+        <input type="number" class="form-input no-spinner" id="debtPayAmount" value="0" min="0" style="width:150px;font-size:18px;font-weight:700;text-align:center">
+      </div>
+      <div class="setting-row">
+        <label style="font-size:13px;font-weight:600" data-i18n="sales.payMethod">طريقة الدفع</label>
+        <select class="form-input" id="debtPayMethod" style="width:150px">
+          <option value="cash" data-i18n="sales.payCash">نقداً</option>
+          <option value="ccp" data-i18n="sales.payCcp">CCP</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeDebtPay()" data-i18n="common.cancel">إلغاء</button>
+      <button class="btn btn-primary" onclick="confirmDebtPayment()"><i class="fas fa-check"></i> <span data-i18n="common.confirmPay">تأكيد الدفع</span></button>
+    </div>
+  </div>
+</div>

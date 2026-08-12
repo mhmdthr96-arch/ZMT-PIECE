@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   licenseTimeTamper: () => ipcRenderer.invoke('license-time-tamper'),
   licenseRemaining: () => ipcRenderer.invoke('license-remaining'),
   licenseMachineId: () => ipcRenderer.invoke('license-machine-id'),
+  licenseDeactivate: (payload) => ipcRenderer.invoke('license-deactivate', payload),
   // LAN Sync (main/sub server)
   lanConfigure: (config) => ipcRenderer.invoke('lan-configure', config),
   lanSend: (payload) => ipcRenderer.invoke('lan-send', payload),
@@ -41,4 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   lanTestConnection: (ip, port) => ipcRenderer.invoke('lan-test-connection', ip, port),
   onLanMessage: (cb) => ipcRenderer.on('lan-message', (_e, msg) => cb(msg)),
   onLanStatus: (cb) => ipcRenderer.on('lan-status', (_e, st) => cb(st)),
+  // External & remote support
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  openAnyDesk: () => ipcRenderer.invoke('open-anydesk'),
 });

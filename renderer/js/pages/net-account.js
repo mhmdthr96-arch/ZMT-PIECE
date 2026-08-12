@@ -98,7 +98,7 @@ function formatMarginSplitCard(margin, split) {
     </div>`;
 }
 
-function calculateNet() {
+function computeNet(range) {
   const invoices = DB.getInvoices();
   const suppliers = DB.getSuppliers();
   const customers = DB.getCustomers();
@@ -114,61 +114,72 @@ function calculateNet() {
     return !!inv && (inv.type === 'supplier' || inv.type === 'purchase');
   }
 
-  let totalPurchases = 0;      // قيمة فواتير المشتريات (للموردين)
-  let totalSales = 0;          // المبيعات = المدفوع فعلاً من العملاء فقط
-  let totalExpenses = 0;       // المصروفات = المدفوع فعلاً للموردين فقط
-  let totalSupplierDebt = 0;   // دين علينا (للموردين)
-  let totalCustomerDebt = 0;   // دين لنا (على العملاء)
+  const inRange = ts => {
+    const t = ts || 0;
+    if (range && range.from && t < range.from) return false;
+    if (range && range.to && t > range.to) return false;
+    return true;
+  };
 
-  // فواتير المشتريات (للموردين + مشتريات المخزون + تحويلات) كمرجع - لا تدخل في صافي الربح
+  let totalPurchases = 0;      // قيمة فواتير المشتريات (للموردين) داخل النطاق
+  let totalSales = 0;          // المبيعات = المدفوع فعلاً من العملاء فقط داخل النطاق
+  let totalExpenses = 0;       // المصروفات = المدفوع فعلاً للموردين فقط داخل النطاق
+  let supplierDebt = 0;        // دين علينا (للموردين) - الرصيد الحالي
+  let customerDebt = 0;        // دين لنا (على العملاء) - الرصيد الحالي
+
+  // ديون الفترة لكل طرف = فواتير الطرف داخل النطاق − دفعات الطرف داخل النطاق (بشرط ≥ 0)
+  const supRange = {};
+  const custRange = {};
+
   invoices.forEach(inv => {
     if (inv.isProvisional) return;
+    const ts = inv.createdAt || inv.date || 0;
     if (inv.type === 'supplier' || inv.type === 'purchase' || inv.type === 'transfer' || inv.type === 'transfer_receive') {
-      totalPurchases += inv.totalAmount;
+      if (inRange(ts)) totalPurchases += inv.totalAmount;
+    }
+    if (inv.type === 'supplier' && inv.supplierId && inRange(ts)) {
+      supRange[inv.supplierId] = (supRange[inv.supplierId] || 0) + inv.totalAmount;
+    }
+    if (inv.type === 'customer' && inv.customerId && inRange(ts)) {
+      custRange[inv.customerId] = (custRange[inv.customerId] || 0) + inv.totalAmount;
     }
   });
 
-  // ديون الموردين: الرصيد الموجب = دين علينا، الرصيد السالب = دين لنا (مورد يدان لنا)
+  // ديون الموردين الحالية: الرصيد الموجب = دين علينا، الرصيد السالب = دين لنا
   suppliers.forEach(s => {
     const b = parseFloat(s.balance) || 0;
-    if (b > 0) totalSupplierDebt += b;
-    else totalCustomerDebt += Math.abs(b);
+    if (b > 0) supplierDebt += b;
+    else customerDebt += Math.abs(b);
   });
 
-  // ديون العملاء (كل فاتورة عميل غير مسددة) = دين لنا
+  // ديون العملاء الحالية (كل فاتورة عميل غير مسددة) = دين لنا
   customers.forEach(c => {
-    totalCustomerDebt += Math.max(0, parseFloat(c.balance) || 0);
+    customerDebt += Math.max(0, parseFloat(c.balance) || 0);
   });
 
-  // المبيعات = كل دفعة ليست مصروفًا (عملاء مسجلين + walk-in)
-  // المصروفات = مدفوعات الموردين + مشتريات المخزون + فواتير الشراء + فواتير الإرسال
   payments.forEach(p => {
-    if (p.isProvisional) return; // تجاهل الدفعات الشكلية
-    if (isNetExpensePayment(p)) {
+    if (p.isProvisional) return;
+    const ts = p.createdAt || 0;
+    const isExp = isNetExpensePayment(p);
+    if (!inRange(ts)) return;
+    if (isExp) {
       totalExpenses += p.amount;
+      if (p.supplierId) supRange[p.supplierId] = (supRange[p.supplierId] || 0) - p.amount;
     } else {
       totalSales += p.amount;
+      if (p.customerId) custRange[p.customerId] = (custRange[p.customerId] || 0) - p.amount;
     }
   });
+
+  let supplierDebtPeriod = 0;
+  let customerDebtPeriod = 0;
+  Object.values(supRange).forEach(v => { if (v > 0) supplierDebtPeriod += v; });
+  Object.values(custRange).forEach(v => { if (v > 0) customerDebtPeriod += v; });
 
   // صافي الربح = إجمالي المبيعات (المقبوضات) - إجمالي المصروفات (المدفوعات)
   const profit = totalSales - totalExpenses;
-  const pendingTotal = totalSupplierDebt + totalCustomerDebt;
-
-  document.getElementById('netTotalSales').textContent = `DA${totalSales.toFixed(2)}`;
-  document.getElementById('netTotalPurchases').textContent = `DA${totalPurchases.toFixed(2)}`;
-  document.getElementById('netTotalExpenses').textContent = `DA${totalExpenses.toFixed(2)}`;
-  document.getElementById('netProfit').textContent = `DA${profit.toFixed(2)}`;
-
-  // عرض الديون: دين علينا + دين لنا
-  let pendingHtml = `DA${pendingTotal.toFixed(2)}`;
-  if (totalCustomerDebt > 0 || totalSupplierDebt > 0) {
-    pendingHtml += `<div style="font-size:10px;font-weight:400;margin-top:2px;display:flex;gap:8px;flex-wrap:wrap">
-      ${totalCustomerDebt > 0 ? `<span style="color:#28a745">${t('net.customerDebt')}: DA${totalCustomerDebt.toFixed(2)}</span>` : ''}
-      ${totalSupplierDebt > 0 ? `<span style="color:#e65100">${t('net.supplierDebt')}: DA${totalSupplierDebt.toFixed(2)}</span>` : ''}
-    </div>`;
-  }
-  document.getElementById('netPending').innerHTML = pendingHtml;
+  const pendingTotal = supplierDebt + customerDebt;
+  const pendingPeriod = supplierDebtPeriod + customerDebtPeriod;
 
   // هامش الربح = (سعر البيع - سعر الشراء) لكل قطعة مباعة
   const productMap = {};
@@ -177,22 +188,60 @@ function calculateNet() {
 
   const totalMargin = calcMargin(salesInvoices, productMap);
 
-  const range = getNetDateRange();
-  const periodInvoices = salesInvoices.filter(inv => {
-    const tt = inv.createdAt || inv.date || 0;
-    if (range.from && tt < range.from) return false;
-    if (range.to && tt > range.to) return false;
-    return true;
-  });
+  const periodInvoices = salesInvoices.filter(inv => inRange(inv.createdAt || inv.date || 0));
   const periodMargin = calcMargin(periodInvoices, productMap);
 
   const totalSplit = calcMarginSplit(salesInvoices, productMap);
   const periodSplit = calcMarginSplit(periodInvoices, productMap);
 
-  document.getElementById('netTotalMargin').innerHTML = formatMarginSplitCard(totalMargin, totalSplit);
-  document.getElementById('netPeriodMargin').innerHTML = formatMarginSplitCard(periodMargin, periodSplit);
+  return {
+    totalSales, totalPurchases, totalExpenses, profit,
+    supplierDebt, customerDebt, pendingTotal,
+    supplierDebtPeriod, customerDebtPeriod, pendingPeriod,
+    totalMargin, periodMargin, totalSplit, periodSplit,
+  };
+}
+
+function calculateNet() {
+  const res = computeNet(getNetDateRange());
+
+  document.getElementById('netTotalSales').textContent = `DA${res.totalSales.toFixed(2)}`;
+  document.getElementById('netTotalPurchases').textContent = `DA${res.totalPurchases.toFixed(2)}`;
+  document.getElementById('netTotalExpenses').textContent = `DA${res.totalExpenses.toFixed(2)}`;
+  document.getElementById('netProfit').textContent = `DA${res.profit.toFixed(2)}`;
+
+  // عرض الديون الحالية: دين علينا + دين لنا
+  let pendingHtml = `DA${res.pendingTotal.toFixed(2)}`;
+  if (res.customerDebt > 0 || res.supplierDebt > 0) {
+    pendingHtml += `<div style="font-size:10px;font-weight:400;margin-top:2px;display:flex;gap:8px;flex-wrap:wrap">
+      ${res.customerDebt > 0 ? `<span style="color:#28a745">${t('net.customerDebt')}: DA${res.customerDebt.toFixed(2)}</span>` : ''}
+      ${res.supplierDebt > 0 ? `<span style="color:#e65100">${t('net.supplierDebt')}: DA${res.supplierDebt.toFixed(2)}</span>` : ''}
+    </div>`;
+  }
+  document.getElementById('netPending').innerHTML = pendingHtml;
+
+  document.getElementById('netTotalMargin').innerHTML = formatMarginSplitCard(res.totalMargin, res.totalSplit);
+  document.getElementById('netPeriodMargin').innerHTML = formatMarginSplitCard(res.periodMargin, res.periodSplit);
   const netRangeLabelEl = document.getElementById('netPeriodLabel');
-  if (netRangeLabelEl) netRangeLabelEl.textContent = netRangeLabel(range);
+  if (netRangeLabelEl) netRangeLabelEl.textContent = netRangeLabel(getNetDateRange());
+
+  renderNetTransactions();
+}
+
+function renderNetTransactions() {
+  const invoices = DB.getInvoices();
+  const suppliers = DB.getSuppliers();
+  const customers = DB.getCustomers();
+  const payments = DB.getPayments();
+  const invById = {};
+  invoices.forEach(i => { invById[i.id] = i; });
+
+  // الدفعة مصروف إذا: لها مورد، أو مشتريات مخزون، أو إرسال (فاتورة إرسال)، أو مرتبطة بفاتورة شراء (بمورد أو بدونه)
+  function isNetExpensePayment(p) {
+    if (p.supplierId || p.type === 'stock_purchase' || p.type === 'dispatch') return true;
+    const inv = p.invoiceId ? invById[p.invoiceId] : null;
+    return !!inv && (inv.type === 'supplier' || inv.type === 'purchase');
+  }
 
   // Transaction log
   const container = document.getElementById('netTransactions');

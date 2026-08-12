@@ -114,40 +114,113 @@ function connLogout() {
   showLogin();
 }
 
+// Ask for the store password WITHOUT prompt() (unsupported in Electron).
+// Resolves with the entered string, or null if the user cancels/closes.
+function connPromptPassword(message) {
+  return new Promise((resolve) => {
+    const id = 'zmt_conn_prompt_' + Math.random().toString(36).slice(2);
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.5)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: '999999',
+    });
+    const card = document.createElement('div');
+    Object.assign(card.style, {
+      background: '#fff', borderRadius: '8px', padding: '20px', minWidth: '320px',
+      fontFamily: 'sans-serif', direction: 'rtl', textAlign: 'right',
+      boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+    });
+    card.innerHTML =
+      '<p style="margin:0 0 12px;">' + (message || 'أدخل كلمة مرور المحل:') + '</p>' +
+      '<input id="' + id + '_in" type="password" style="width:100%;padding:8px;box-sizing:border-box;margin-bottom:12px;font-size:14px;">' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+      '<button id="' + id + '_cancel" type="button" style="padding:6px 14px;">' + (t('common.cancel') || 'إلغاء') + '</button>' +
+      '<button id="' + id + '_ok" type="button" style="padding:6px 14px;background:#0066B1;color:#fff;border:none;border-radius:4px;">' + (t('common.ok') || 'تأكيد') + '</button>' +
+      '</div>';
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+    const input = card.querySelector('#' + id + '_in');
+    input.focus();
+    const finish = (v) => {
+      if (document.body.contains(overlay)) document.body.removeChild(overlay);
+      resolve(v);
+    };
+    card.querySelector('#' + id + '_ok').onclick = () => finish(input.value);
+    card.querySelector('#' + id + '_cancel').onclick = () => finish(null);
+    input.onkeydown = (ev) => { if (ev.key === 'Enter') finish(input.value); if (ev.key === 'Escape') finish(null); };
+    overlay.onclick = (ev) => { if (ev.target === overlay) finish(null); };
+  });
+}
+
+// Render a standardized upload "skipped" result message.
+function connUploadResultMessage(uploadResult) {
+  if (!uploadResult || !uploadResult.skipped) return null;
+  if (uploadResult.reason === 'no_data') {
+    return `<span class="text-warning">${t('backup.noDataToBackup') || 'لا توجد بيانات للرفع'}</span>`;
+  }
+  if (uploadResult.reason === 'lan_sub') {
+    return `<span class="text-warning"><i class="fas fa-info-circle"></i> ${t('connection.lanSubUploadMsg') || 'هذا الجهاز فرعي (LAN): رفع البيانات للسحابة يتم من السيرفر الرئيسي لهذا الموقع'}</span>`;
+  }
+  return `<span class="text-success">${t('connection.alreadySynced') || 'البيانات محدثة في السحابة'}</span>`;
+}
+
 // ===== SYNC =====
 async function connUploadBackup() {
   const btn = document.getElementById('connUploadBtn');
   const result = document.getElementById('connSyncResult');
 
-  if (!CloudService.isCloudConnected()) {
+  let code = Auth.getUserCode();
+  if (!code || !CloudService.isCloudConnected()) {
     alert(t('connection.cloudRequired'));
     return;
+  }
+
+  // If the password isn't stored locally, we will hit the cloud-auth gate and get
+  // a cryptic RLS error. Ask once up-front instead of letting it fail then retry.
+  if (!Auth.hasStorePassword()) {
+    const input = await connPromptPassword(t('connection.enterStorePassword') || 'أدخل كلمة مرور المحل للمزامنة مع السحابة');
+    if (input && code) {
+      const verified = await Auth.verifyCloudPassword(code, input);
+      if (!verified) {
+        result.innerHTML = `<span class="text-danger">${t('connection.wrongPassword') || 'كلمة مرور المحل غير صحيحة'}</span>`;
+        return;
+      }
+    }
   }
 
   btn.disabled = true;
   btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${t('connection.uploading')}`;
   result.textContent = '';
 
+  let resetter = () => { btn.disabled = false; btn.innerHTML = `<i class="fas fa-cloud-upload-alt"></i> ${t('connection.uploadBackupBtn')}`; };
+
+  // Top-level guard: the button is ALWAYS re-enabled, even if something
+  // unexpected throws (including prompt()/alert()-free failures).
   try {
-    const uploadResult = await CloudService.uploadBackup();
+    const uploadResult = await Promise.race([
+      CloudService.uploadBackup(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('انتهت مهلة الرفع الكلية (60 ثانية) — تحقق من سرعة الإنترنت وحاول مرة أخرى')), 60000)
+      ),
+    ]);
     if (uploadResult.skipped) {
-      if (uploadResult.reason === 'no_data') {
-        result.innerHTML = `<span class="text-warning">${t('backup.noDataToBackup') || 'لا توجد بيانات للرفع'}</span>`;
-      } else if (uploadResult.reason === 'lan_sub') {
-        result.innerHTML = `<span class="text-warning"><i class="fas fa-info-circle"></i> ${t('connection.lanSubUploadMsg') || 'هذا الجهاز فرعي (LAN): رفع البيانات للسحابة يتم من السيرفر الرئيسي لهذا الموقع'}</span>`;
-      } else {
-        result.innerHTML = `<span class="text-success">${t('connection.alreadySynced') || 'البيانات محدثة في السحابة'}</span>`;
-      }
+      const msg = connUploadResultMessage(uploadResult);
+      result.innerHTML = msg || `<span class="text-success">${t('connection.alreadySynced') || 'البيانات محدثة في السحابة'}</span>`;
     } else {
       result.innerHTML = `<span class="text-success">${t('connection.uploadSuccess')}</span>`;
     }
+    resetter();
+    connUpdateLastSync();
   } catch (e) {
-    result.innerHTML = `<span class="text-danger">${t('common.error')}: ${e.message}</span>`;
+    const msg = (e && e.message) ? e.message : String(e);
+    // The store password is stored locally, so backups must run silently — never
+    // prompt. CloudService.uploadBackup() already self-heals stale tokens (clears
+    // and re-mints once), and auto-sync retries on its own schedule. Just surface
+    // the error and re-enable the button.
+    result.innerHTML = `<span class="text-danger">${t('common.error')}: ${msg}</span>`;
+    resetter();
   }
-
-  btn.disabled = false;
-  btn.innerHTML = `<i class="fas fa-cloud-upload-alt"></i> ${t('connection.uploadBackupBtn')}`;
-  connUpdateLastSync();
 }
 
 async function connDownloadBackup() {
@@ -159,9 +232,11 @@ async function connDownloadBackup() {
     return;
   }
 
-  const storedPass = Auth.getStorePassword();
-  if (storedPass) {
-    const input = prompt(t('connection.enterStorePassword'));
+  // The store password is stored locally, so the cloud token is minted silently
+  // by the service — never prompt. We only ask when no password is stored yet
+  // (first-time account) so the token can be minted at all.
+  if (!Auth.hasStorePassword()) {
+    const input = await connPromptPassword(t('connection.enterStorePassword') || 'أدخل كلمة مرور المحل لاستعادة النسخة');
     if (!input) return;
     try {
       const verified = await Auth.verifyCloudPassword(Auth.getUserCode(), input);
@@ -224,20 +299,18 @@ async function connDownloadBackup() {
 // ===== PUSH NOTIFICATIONS =====
 function connLoadPushSettings() {
   const urlEl = document.getElementById('connPushSiteUrl');
-  const secretEl = document.getElementById('connPushSecret');
-  if (!urlEl || !secretEl) return;
-  urlEl.value = localStorage.getItem('zmt_push_site_url') || '';
-  secretEl.value = localStorage.getItem('zmt_push_secret') || '';
+  if (!urlEl) return;
+  const saved = localStorage.getItem('zmt_push_site_url');
+  const def = (typeof window.ZMT_PUSH_SITE_URL === 'string') ? window.ZMT_PUSH_SITE_URL : '';
+  urlEl.value = saved || def || '';
 }
 
 function connSavePushSettings() {
   const urlEl = document.getElementById('connPushSiteUrl');
-  const secretEl = document.getElementById('connPushSecret');
   const result = document.getElementById('connPushResult');
-  if (!urlEl || !secretEl || !result) return;
+  if (!urlEl || !result) return;
 
   const url = (urlEl.value || '').trim().replace(/\/+$/, '');
-  const secret = (secretEl.value || '').trim();
 
   if (!url) {
     result.innerHTML = `<span class="text-danger">${t('connection.pushUrlRequired')}</span>`;
@@ -247,13 +320,9 @@ function connSavePushSettings() {
     result.innerHTML = `<span class="text-danger">${t('connection.pushUrlInvalid')}</span>`;
     return;
   }
-  if (!secret) {
-    result.innerHTML = `<span class="text-danger">${t('connection.pushSecretRequired')}</span>`;
-    return;
-  }
 
   localStorage.setItem('zmt_push_site_url', url);
-  localStorage.setItem('zmt_push_secret', secret);
+  localStorage.removeItem('zmt_push_secret');
   result.innerHTML = `<span class="text-success">${t('connection.pushSaved')}</span>`;
 }
 
@@ -392,9 +461,11 @@ async function connDeleteBranch(branchCode, branchName) {
 }
 
 async function connViewBranchInv(branchCode) {
-  const storedPass = Auth.getStorePassword();
-  if (storedPass) {
-    const input = prompt(t('connection.enterStorePasswordView'));
+  // The store password is stored locally, so the cloud token is minted silently
+  // by the service — never prompt. We only ask when no password is stored yet
+  // (first-time account) so the token can be minted at all.
+  if (!Auth.hasStorePassword()) {
+    const input = await connPromptPassword(t('connection.enterStorePasswordView') || 'أدخل كلمة مرور المحل لعرض مخزون الفرع');
     if (!input) return;
     try {
       const verified = await Auth.verifyCloudPassword(Auth.getUserCode(), input);
@@ -424,6 +495,7 @@ async function connViewBranchInv(branchCode) {
     }
 
     const brands = [...BRANDS.global, ...BRANDS.chinese];
+    const isManager = Auth.isManager();
     content.innerHTML = `
       <table class="data-table">
         <thead>
@@ -433,7 +505,7 @@ async function connViewBranchInv(branchCode) {
             <th>${t('connection.barcode')}</th>
             <th>${t('connection.brand')}</th>
             <th>${t('common.qty')}</th>
-            <th>${t('inventory.col5')}</th>
+            ${isManager ? `<th>${t('inventory.col5')}</th>` : ''}
             <th>${t('connection.sellPrice')}</th>
           </tr>
         </thead>
@@ -446,7 +518,7 @@ async function connViewBranchInv(branchCode) {
               <td dir="ltr">${p.barcode}</td>
               <td>${brand ? brand.name : p.brandId || '-'}</td>
               <td>${p.quantity}</td>
-              <td>DA${(p.buyPrice || 0).toFixed(2)}</td>
+              ${isManager ? `<td>DA${(p.buyPrice || 0).toFixed(2)}</td>` : ''}
               <td>DA${(p.sellPrice || 0).toFixed(2)}</td>
             </tr>`;
           }).join('')}
@@ -492,8 +564,8 @@ async function connRecLookup() {
     document.getElementById('connRecCode').textContent = info.code;
 
     if (info.hasPassword) {
-      document.getElementById('connRecPassword').textContent = info.password;
-      document.getElementById('connRecPassword').style.color = '#dc3545';
+      document.getElementById('connRecPassword').textContent = '••••••••';
+      document.getElementById('connRecPassword').style.color = '#666';
     } else {
       document.getElementById('connRecPassword').textContent = t('connection.noPassword');
       document.getElementById('connRecPassword').style.color = '#666';

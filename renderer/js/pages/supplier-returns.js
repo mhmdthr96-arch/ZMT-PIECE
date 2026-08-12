@@ -204,6 +204,7 @@ function renderSupplierReturns() {
 // ========== CREATE (from inventory / category-products) ==========
 
 function openSupplierReturnModal(productId) {
+  if (!Auth.isManager() && !Auth.canEdit('supplier-returns')) { alert(t('common.noPermission')); return; }
   const prod = DB.getProduct(productId);
   if (!prod) { alert(t('supplierReturns.noProduct')); return; }
 

@@ -297,6 +297,7 @@ const Auth = (() => {
     });
     if (ok && data && data.token) {
       _storeCloudToken(data.token, data.expiresAt);
+      localStorage.setItem('zmt_store_password', password);
       return true;
     }
     return false;
@@ -413,6 +414,7 @@ const Auth = (() => {
     });
     if (error) throw new Error('فشل إنشاء الفرع: ' + error.message);
 
+    if (typeof DB !== 'undefined' && DB.logAudit) DB.logAudit({ action: 'add', entity: 'branch', entityId: branchCode, detail: name });
     return { code: branchCode, name, password };
   }
 
@@ -452,6 +454,7 @@ const Auth = (() => {
 
     const { error } = await supabase.from('branches').delete().eq('code', branchCode);
     if (error) throw new Error('فشل حذف الفرع: ' + error.message);
+    if (typeof DB !== 'undefined' && DB.logAudit) DB.logAudit({ action: 'delete', entity: 'branch', entityId: branchCode, detail: branchCode });
 
     try {
       const { data: branch } = await supabase.from('branches').select('store_id').eq('code', branchCode).single();
@@ -723,6 +726,7 @@ const Auth = (() => {
     users.push(newUser);
     _saveLocalUsers(users);
     _bumpUsersRev(code);
+    if (typeof DB !== 'undefined' && DB.logAudit) DB.logAudit({ action: 'add', entity: 'user', entityId: newUser.id, detail: username });
 
     // Also save store metadata with users for login lookup
     const metaKey = 'zmt_users_meta_' + code;
@@ -742,6 +746,7 @@ const Auth = (() => {
     Object.assign(users[idx], updates, { updatedAt: Date.now() });
     _saveLocalUsers(users);
     _bumpUsersRev(users[idx].storeCode || getUserCode());
+    if (typeof DB !== 'undefined' && DB.logAudit) DB.logAudit({ action: 'update', entity: 'user', entityId: userId, detail: users[idx].username });
     return true;
   }
 
@@ -750,9 +755,11 @@ const Auth = (() => {
     const idx = users.findIndex(u => u.id === userId);
     if (idx === -1) throw new Error('المستخدم غير موجود');
     const storeCode = users[idx].storeCode || getUserCode();
+    const removed = users[idx];
     const filtered = users.filter(u => u.id !== userId);
     _saveLocalUsers(filtered);
     _bumpUsersRev(storeCode);
+    if (typeof DB !== 'undefined' && DB.logAudit) DB.logAudit({ action: 'delete', entity: 'user', entityId: userId, detail: (removed && removed.username) || '' });
     return true;
   }
 

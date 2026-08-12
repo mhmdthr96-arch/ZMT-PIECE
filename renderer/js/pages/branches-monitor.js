@@ -19,25 +19,14 @@ async function bmLoadBranches() {
   try {
     const storeType = Auth.getStoreType();
     const myCode = Auth.getUserCode();
-    const parentCode = Auth.getParentCode();
 
     if (storeType === 'main') {
       // Main store: load its branches
       _bmBranches = await Auth.listBranchesFull(myCode);
-    } else if (storeType === 'branch' && parentCode) {
-      // Branch: load main store + sibling branches
-      const mainInfo = { code: parentCode, name: 'المحل الرئيسي' };
-      _bmBranches = [mainInfo];
-      try {
-        const siblings = await Auth.listBranchesFull(parentCode);
-        for (const b of siblings) {
-          if (b.code !== myCode) {
-            _bmBranches.push(b);
-          }
-        }
-      } catch (e) {
-        console.warn('[Monitor] Could not list sibling branches:', e);
-      }
+    } else if (storeType === 'branch' && myCode) {
+      // A branch only monitors its OWN store: transaction data (invoices,
+      // payments, net) of the main store or sibling branches stays private.
+      _bmBranches = [{ code: myCode, name: localStorage.getItem('zmt_store_name') || 'محلك' }];
     } else {
       _bmBranches = [];
     }

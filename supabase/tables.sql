@@ -46,10 +46,13 @@ ALTER TABLE stores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE branches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_users ENABLE ROW LEVEL SECURITY;
 
--- ===== 5. سياسات الأمان (السماح بالوصول بال anon key) =====
-CREATE POLICY "Allow all on stores" ON stores FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on branches" ON branches FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all on app_users" ON app_users FOR ALL USING (true) WITH CHECK (true);
+-- ===== 5. سياسات الأمان =====
+-- NOTE: لا تفتح الجداول للـ anon. الملف الرسمي للقفل هو supabase-rls.sql (يضبط
+-- سياسات مبنية على claims). إن شُغّل هذا الملف وحده، تبقى الجداول مغلقة (USING(false))
+-- بدل التسريب. شغّل supabase-rls.sql دائمًا للحصول على السياسات الصحيحة.
+CREATE POLICY "Deny all on stores" ON stores FOR ALL USING (false) WITH CHECK (false);
+CREATE POLICY "Deny all on branches" ON branches FOR ALL USING (false) WITH CHECK (false);
+CREATE POLICY "Deny all on app_users" ON app_users FOR ALL USING (false) WITH CHECK (false);
 
 -- ===== 6. فهارس للبحث السريع =====
 CREATE INDEX IF NOT EXISTS idx_stores_code ON stores(code);

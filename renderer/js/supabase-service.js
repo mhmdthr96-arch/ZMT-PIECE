@@ -8,7 +8,20 @@ const CloudService = (() => {
   let _syncTimer = null;
   let _commandTimer = null;
   let _lastSyncHash = '';
+  let _tokenFailReason = '';
   const COMMAND_POLL_MS = 12000;
+
+  // ===== TIMEOUT HELPER =====
+  // Every network call is wrapped so a stalled request can never freeze the UI
+  // indefinitely.  The timeout rejects with a clear Arabic error message.
+  function withTimeout(promise, ms, label) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(label || 'انتهت مهلة الاتصال (' + (ms / 1000) + ' ثوانٍ)')), ms)
+      ),
+    ]);
+  }
 
   // ===== HARDCODED SUPABASE CREDENTIALS (Developer Only) =====
   const SUPABASE_URL = 'https://dzqiybhpevqoolsmatat.supabase.co';
@@ -61,28 +74,142 @@ const CloudService = (() => {
     localStorage.removeItem('zmt_cloud_token');
   }
 
+  // True when a non-expired cloud token is present (i.e. the user is already
+  // authenticated to the cloud). Used by the UI to skip redundant password prompts.
+  function hasValidCloudToken() {
+    const t = _readCloudToken();
+    return !!(t && t.token && t.expiresAt > Date.now() + 60 * 1000);
+  }
+
+  // ===== License revocation + clock-tamper enforcement (online only) =====
+  // These run ONLY while the device is actually connected to the server, so they
+  // never block offline operation. A revoked key (set from admin-tool) takes effect
+  // on the next successful cloud call; a wildly-off local clock is treated as
+  // tampering. The verdict is cached locally (signed) so it also sticks across an
+  // offline restart until the next online contact re-confirms it.
+  const _REVOKED_FLAG = 'zmt_license_revoked';
+  const _REVOKED_SIG = 'zmt_license_revoked_sig';
+  const _REVOKED_SALT = 'zmt-revoked-2026';
+  const _ONLINE_POLICY_MS = 5 * 60 * 1000;
+  let _lastOnlinePolicyCheck = 0;
+
+  function _cheapHash(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+    return h;
+  }
+  function _setLocalRevoked(on) {
+    try {
+      if (on) {
+        const v = '1';
+        localStorage.setItem(_REVOKED_FLAG, v);
+        localStorage.setItem(_REVOKED_SIG, String(_cheapHash(v + _REVOKED_SALT)));
+      } else {
+        localStorage.removeItem(_REVOKED_FLAG);
+        localStorage.removeItem(_REVOKED_SIG);
+      }
+    } catch (e) {}
+  }
+  function isLicenseRevokedLocally() {
+    try {
+      const v = localStorage.getItem(_REVOKED_FLAG);
+      const s = localStorage.getItem(_REVOKED_SIG);
+      if (v !== '1') return false;
+      return s === String(_cheapHash(v + _REVOKED_SALT));
+    } catch (e) { return false; }
+  }
+
+  // Calls /api/push-trigger action 'license_status' (throttled). Never throws and
+  // never blocks: on any failure (offline/transient) it simply returns.
+  async function checkCloudLicenseAndClock() {
+    const now = Date.now();
+    if (now - _lastOnlinePolicyCheck < _ONLINE_POLICY_MS) return;
+    _lastOnlinePolicyCheck = now;
+    try {
+      const code = getStoreCode();
+      const password = _getStorePassword();
+      if (!code || !password) return;
+      const resp = await withTimeout(
+        fetch(_getSiteBase() + '/api/push-trigger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'license_status', code, password }),
+        }),
+        15000,
+        'انتهت مهلة التحقق من الترخيص'
+      );
+      if (!resp.ok) return;
+      const d = await resp.json();
+      const status = d && d.data && d.data.status;
+      if (status === 'revoked') {
+        _setLocalRevoked(true);
+        window.dispatchEvent(new CustomEvent('zmt:license-revoked'));
+        return;
+      }
+      // Q10: server-time drift check (catches both clock-forward and clock-back
+      // tampering beyond a 10-minute tolerance).
+      const serverTime = d && d.data && d.data.serverTime ? new Date(d.data.serverTime).getTime() : 0;
+      if (serverTime) {
+        const drift = Math.abs(serverTime - Date.now());
+        if (drift > 10 * 60 * 1000) {
+          window.dispatchEvent(new CustomEvent('zmt:license-clock', { detail: { drift } }));
+        }
+      }
+    } catch (e) { /* offline or transient — ignore, next cycle re-checks */ }
+  }
+
   async function _obtainCloudToken() {
     const cached = _readCloudToken();
     if (cached) return cached;
     const code = getStoreCode();
     const password = _getStorePassword();
     const parent = getParentCode();
-    if (!code || !password) return null;
+    if (!code || !password) {
+      _tokenFailReason = password ? 'رمز المحل غير متوفر' : 'كلمة مرور المحل غير محفوظة في هذا الجهاز';
+      return null;
+    }
     try {
-      const resp = await fetch(_getSiteBase() + '/api/push-trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'token', mode: 'auth', code, password, parentCode: parent || undefined }),
-      });
-      if (!resp.ok) return null;
+      const resp = await withTimeout(
+        fetch(_getSiteBase() + '/api/push-trigger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'token', mode: 'auth', code, password, parentCode: parent || undefined }),
+        }),
+        15000,
+        'انتهت مهلة الاتصال بخادم المصادقة (15 ثانية)'
+      );
+      if (!resp.ok) {
+        let reason = 'الخادم رفض الطلب (' + resp.status + ')';
+        try {
+          const d = await resp.json();
+          if (d && d.error) reason = d.error;
+        } catch (e) {}
+        _tokenFailReason = reason;
+        return null;
+      }
       const data = await resp.json();
-      if (!data || !data.token) return null;
+      if (!data || !data.token) {
+        _tokenFailReason = 'الخادم لم يمنح رمز وصول';
+        return null;
+      }
+      _tokenFailReason = '';
       _storeCloudToken(data.token, data.expiresAt);
       return data.token;
     } catch (e) {
-      console.warn('[Cloud] token acquisition failed:', e.message);
+      _tokenFailReason = 'تعذر الوصول لخادم المصادقة: ' + (e && e.message ? e.message : e);
+      console.warn('[Cloud] token acquisition failed:', e && e.message);
       return null;
     }
+  }
+
+  // Storage WRITES are gated on a real store token. Without it the request goes
+  // out with the publishable anon key, which RLS now blocks — surfacing a cryptic
+  // "new row violates row-level security policy" instead of the real problem.
+  // Fail fast with the actual reason so the user knows to sign in again.
+  async function requireCloudToken() {
+    const token = await _obtainCloudToken();
+    if (token) return token;
+    throw new Error('فشل التحقق من السحابة (' + (_tokenFailReason || 'بدون إذن وصول') + '). أعد تسجيل الدخول بكلمة مرور المحل.');
   }
 
   function getClient() {
@@ -113,10 +240,33 @@ const CloudService = (() => {
     const token = await _obtainCloudToken();
     const auth = token || SUPABASE_KEY;
     const url = SUPABASE_URL + '/storage/v1/object/' + BUCKET + '/' + path + '?ts=' + Date.now();
-    const resp = await fetch(url, {
-      cache: 'no-store',
-      headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + auth },
-    });
+    const resp = await withTimeout(
+      fetch(url, {
+        cache: 'no-store',
+        headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + auth },
+      }),
+      30000,
+      'انتهت مهلة تحميل البيانات من السحابة (30 ثانية)'
+    );
+    // 404/400 (object not found) is normal on first run or when commands/backup
+    // don't exist yet — return null so callers can skip gracefully instead of
+    // treating it as a hard failure.
+    if (resp.status === 404 || resp.status === 400) {
+      if (resp.status === 404) return null;
+      // A 400 on a GET object usually means "not found" in this storage tier:
+      // inspect the body once; if it's an object-not-found style message, treat
+      // as missing, otherwise fall through to the generic error.
+      let bodyText = '';
+      try { bodyText = await resp.text(); } catch (e) {}
+      if (
+        !bodyText ||
+        bodyText.toLowerCase().includes('not found') ||
+        bodyText.toLowerCase().includes('object') && bodyText.toLowerCase().includes('not')
+      ) {
+        return null;
+      }
+      throw new Error('storage download failed: ' + resp.status + ' ' + path);
+    }
     if (!resp.ok) throw new Error('storage download failed: ' + resp.status + ' ' + path);
     return await resp.blob();
   }
@@ -156,6 +306,19 @@ const CloudService = (() => {
       return `${parent}/${code}_backup.json`;
     }
     return `${code}/${code}_backup.json`;
+  }
+
+  // Inventory-only object (products, no orders/returns). Every network member may
+  // read it (see the storage SELECT RLS policy's `%_inventory.json` branch) so a
+  // branch can see sibling / main-store stock without exposing others' backups.
+  function getInventoryPath() {
+    const type = getStoreType();
+    const code = getStoreCode();
+    if (type === 'branch') {
+      const parent = getParentCode() || code;
+      return `${parent}/${code}_inventory.json`;
+    }
+    return `${code}/${code}_inventory.json`;
   }
 
   // A device configured as a LAN sub server never sends data to the cloud:
@@ -233,6 +396,7 @@ const CloudService = (() => {
     data.zmt_transfers = dbExport.transfers;
     data.zmt_discounts = dbExport.discounts;
     data.zmt_orders = orders;
+    data.zmt_audit_logs = dbExport.auditLogs;
     const settingsKeys = [
       'zmt_store_name', 'zmt_store_address', 'zmt_store_phone',
       'zmt_tva_rate', 'zmt_timbre_enabled', 'zmt_timbre_rate',
@@ -279,7 +443,11 @@ const CloudService = (() => {
     if (!supabase) throw new Error('Supabase غير متصل');
 
     try {
-      const { data: buckets, error: listErr } = await supabase.storage.listBuckets();
+      const { data: buckets, error: listErr } = await withTimeout(
+        supabase.storage.listBuckets(),
+        10000,
+        'انتهت مهلة الاتصال بالسحابة (10 ثوانٍ)'
+      );
       if (listErr) {
         console.warn('[Cloud] listBuckets error:', listErr.message);
       }
@@ -289,7 +457,7 @@ const CloudService = (() => {
       const { error } = await supabase.storage.createBucket(BUCKET, {
         public: false,
         fileSizeLimit: 10 * 1024 * 1024,
-        allowedMimeTypes: ['application/json'],
+        allowedMimeTypes: ['application/json', 'application/gzip', 'application/octet-stream'],
       });
       if (error && !error.message?.includes('already exists')) {
         console.warn('[Cloud] createBucket:', error.message);
@@ -299,8 +467,37 @@ const CloudService = (() => {
     }
   }
 
+  function _isAuthError(msg) {
+    return (
+      msg.includes('row-level security') ||
+      msg.includes('فشل التحقق من السحابة') ||
+      msg.includes('Unauthorized') ||
+      msg.includes('Forbidden') ||
+      msg.includes('new row violates') ||
+      msg.includes('401') ||
+      msg.includes('403') ||
+      msg.includes('407')
+    );
+  }
+
+  // Silent self-heal wrapper: if a cached cloud token became stale/invalid,
+  // clear it and retry exactly once. No UI, no prompts — this is what keeps
+  // manual AND scheduled backups working without asking for the password.
   async function uploadBackup(data) {
-    await _obtainCloudToken();
+    try {
+      return await _uploadBackupOnce(data);
+    } catch (e) {
+      const msg = (e && e.message) ? e.message : String(e);
+      if (_isAuthError(msg)) {
+        _clearCloudToken();
+        return await _uploadBackupOnce(data);
+      }
+      throw e;
+    }
+  }
+
+  async function _uploadBackupOnce(data) {
+    await requireCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -373,16 +570,52 @@ const CloudService = (() => {
     // The client uploads Blobs via FormData, so the Blob's own type is what the
     // server validates; this contentType option is ignored for Blob bodies.
     // 'application/gzip' is whitelisted on the zmt-backups bucket.
-    const { error } = await supabase.storage.from(BUCKET).upload(path, blob, {
-      contentType: 'application/gzip',
-      upsert: true,
-      cacheControl: 'no-cache',
-    });
+    const { error } = await withTimeout(
+      supabase.storage.from(BUCKET).upload(path, blob, {
+        contentType: 'application/gzip',
+        upsert: true,
+        cacheControl: 'no-cache',
+      }),
+      30000,
+      'انتهت مهلة رفع البيانات إلى السحابة (30 ثانية)'
+    );
 
     if (error) throw error;
 
+    // Publish an inventory-only object (products, no orders/returns) so other
+    // network members can see this store's stock through the storage RLS
+    // `%_inventory.json` rule — without exposing the full backup. Non-fatal.
+    try {
+      const invPayload = {
+        version: 2,
+        storeCode: getStoreCode(),
+        storeType: getStoreType(),
+        updatedAt: new Date().toISOString(),
+        products: (payload.data && payload.data.zmt_db && payload.data.zmt_db.products) || [],
+        meta: (payload.data && payload.data.meta) || {},
+      };
+      const invBlob = window._zmtGzipBlob(invPayload);
+      const invRes = await withTimeout(
+        supabase.storage.from(BUCKET).upload(getInventoryPath(), invBlob, {
+          contentType: 'application/gzip',
+          upsert: true,
+          cacheControl: 'no-cache',
+        }),
+        30000,
+        'انتهت مهلة رفع المخزون إلى السحابة (30 ثانية)'
+      );
+      if (invRes.error) console.warn('[Cloud] inventory upload skipped:', invRes.error.message);
+    } catch (e) {
+      console.warn('[Cloud] inventory upload skipped:', e.message);
+    }
+
     _lastSyncHash = hash;
     localStorage.setItem('zmt_cloud_last_sync', new Date().toISOString());
+
+    // Online license/clock verification (throttled, never blocks). A revoked key
+    // or a wildly-off local clock takes effect on the next successful cloud call.
+    checkCloudLicenseAndClock();
+
     return { success: true, path };
   }
 
@@ -399,6 +632,7 @@ const CloudService = (() => {
     let file;
     try {
       const data = await _downloadFresh(getCommandsPath());
+      if (!data) return 0;
       file = JSON.parse(await data.text());
     } catch (e) {
       return 0;
@@ -435,6 +669,10 @@ const CloudService = (() => {
   // on the website reach the desktop quickly, independent of the full sync.
   async function pollCommands() {
     if (!isCloudConnected()) return;
+    // Online license/clock verification (throttled, never blocks). Runs for every
+    // cloud-connected client — including download-only ones — so revocation and
+    // clock-tamper enforcement don't depend on a successful upload.
+    checkCloudLicenseAndClock();
     try {
       const applied = await applyRemoteCommands();
       if (applied > 0) {
@@ -458,6 +696,44 @@ const CloudService = (() => {
   let _pushTimer = null;
   let _pushFlushing = false;
 
+  // ===== LIVE BROADCAST (Supabase Realtime) =====
+  // Used to give the PWA an instant (sub-second) in-app notification when an order
+  // or spoiled-goods return is created on the desktop — without waiting for the
+  // polling loop. The PWA subscribes to `zmt-live-<parentCode>` and shows a toast.
+  let _liveChannel = null;
+  let _liveChannelName = null;
+
+  function getLiveChannel() {
+    if (!window.supabase || typeof window.supabase.createClient !== 'function') return null;
+    const parent = getParentCode() || getStoreCode();
+    const name = 'zmt-live-' + (parent || 'global');
+    if (_liveChannel && _liveChannelName === name) return _liveChannel;
+    try {
+      const supabase = getClient();
+      if (!supabase || !supabase.channel) return null;
+      _liveChannel = supabase.channel(name, { config: { broadcast: { self: false } } });
+      _liveChannel.subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          _liveChannel = null;
+          _liveChannelName = null;
+        }
+      });
+      _liveChannelName = name;
+      return _liveChannel;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function broadcastDesktopChange(payload) {
+    try {
+      const ch = getLiveChannel();
+      if (!ch || typeof ch.send !== 'function') return;
+      const p = ch.send({ type: 'broadcast', event: 'desktop-change', payload });
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (e) { /* realtime is best-effort */ }
+  }
+
   // LAN sub devices never write to the cloud directly — only the location's LAN
   // main server does (their changes arrive via the full backup after LAN sync).
   function pushLocalChange(kind, op, record) {
@@ -478,6 +754,18 @@ const CloudService = (() => {
     _pushQueue.push(cmd);
     if (_pushQueue.length > 1000) _pushQueue.splice(0, _pushQueue.length - 1000);
     _schedulePushFlush();
+    // Instant PWA notification (orders + spoiled-goods returns only).
+    if (kind === 'order' || kind === 'supplierReturn') {
+      broadcastDesktopChange({
+        kind,
+        op,
+        recordId: cmd.recordId,
+        storeCode: code,
+        src: 'desktop',
+        ts: cmd.ts,
+        record: cmd.record,
+      });
+    }
   }
 
   function _schedulePushFlush() {
@@ -492,7 +780,7 @@ const CloudService = (() => {
     const pending = _pushQueue.splice(0, _pushQueue.length);
     if (!pending.length) { _pushFlushing = false; return; }
 
-    await _obtainCloudToken();
+    await requireCloudToken();
     const supabase = getClient();
     if (!supabase) {
       _pushQueue.unshift(...pending);
@@ -512,14 +800,21 @@ const CloudService = (() => {
       const merged = existing.concat(pending);
       const trimmed = merged.slice(-COMMANDS_KEEP);
       const blob = new Blob([JSON.stringify(trimmed)], { type: 'application/json' });
-      const { error } = await supabase.storage.from(BUCKET).upload(getDesktopCommandsPath(), blob, {
-        contentType: 'application/json',
-        upsert: true,
-        cacheControl: 'no-cache',
-      });
+      const { error } = await withTimeout(
+        supabase.storage.from(BUCKET).upload(getDesktopCommandsPath(), blob, {
+          contentType: 'application/json',
+          upsert: true,
+          cacheControl: 'no-cache',
+        }),
+        15000,
+        'انتهت مهلة رفع الأوامر الفورية (15 ثانية)'
+      );
       if (error) throw error;
     } catch (e) {
       console.warn('[Cloud] pushLocalChanges failed:', e.message);
+      // A stale cached token can't recover on its own — clear it so the next
+      // flush re-mints silently instead of looping forever on the same error.
+      if (_isAuthError((e && e.message) ? e.message : String(e))) _clearCloudToken();
       _pushQueue.unshift(...pending);
       _schedulePushFlush();
     } finally {
@@ -545,6 +840,7 @@ const CloudService = (() => {
     for (const path of paths) {
       try {
         const data = await _downloadFresh(path);
+        if (!data) continue;
         return await window._zmtParseBlob(data);
       } catch (e) { /* try the next path */ }
     }
@@ -635,20 +931,19 @@ const CloudService = (() => {
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
-    if (!(await _canAccessStore(branchCode))) {
+    if (!(await _canViewInventory(branchCode))) {
       throw new Error('لا تملك صلاحية الوصول لهذا المحل');
     }
 
+    // Read the inventory-only object (products), not the full backup — this is what
+    // the storage RLS permits any network member to read (the `%_inventory.json`
+    // rule). Missing inventory file (e.g. not yet uploaded) is treated as empty.
     const parentCode = getParentCode() || getStoreCode();
-    const { data, error } = await supabase.storage.from(BUCKET).download(`${parentCode}/${branchCode}_backup.json`);
-    if (error) throw error;
-
-    const backup = await window._zmtParseBlob(data);
-    const dbData = backup.data?.zmt_db;
-    if (!dbData) return [];
+    const data = await _downloadFresh(`${parentCode}/${branchCode}_inventory.json`);
+    if (!data) return [];
     try {
-      const parsed = typeof dbData === 'string' ? JSON.parse(dbData) : dbData;
-      return parsed.products || [];
+      const inv = await window._zmtParseBlob(data);
+      return (inv && inv.products) || [];
     } catch { return []; }
   }
 
@@ -682,6 +977,8 @@ const CloudService = (() => {
 
   // Download ONLY the inventory (products) of another store for viewing.
   // Never exposes invoices/payments/orders — transaction data stays isolated.
+  // Reads the inventory-only object (`%_inventory.json`), which the storage RLS
+  // lets any network member read; a missing file is treated as empty stock.
   async function downloadStoreInventory(targetCode) {
     await _obtainCloudToken();
     const supabase = getClient();
@@ -691,26 +988,18 @@ const CloudService = (() => {
       throw new Error('لا تملك صلاحية الوصول لهذا المحل');
     }
 
-    let payload;
-    const { data: branchData } = await supabase.from('branches').select('code, store_id, stores(code)').eq('code', targetCode).single();
-    if (branchData) {
-      const parentCode = branchData.stores?.code;
-      const { data, error } = await supabase.storage.from(BUCKET).download(`${parentCode}/${targetCode}_backup.json`);
-      if (error) throw new Error('لم يتم العثور على نسخة احتياطية');
-      payload = await window._zmtParseBlob(data);
-    } else {
-      const { data: files } = await supabase.storage.from(BUCKET).list(targetCode);
-      if (!files) throw new Error('لا توجد بيانات لهذا الرمز');
-      const backupFile = files.find(f => f.name.endsWith('_backup.json') && !f.name.includes('registry'));
-      if (!backupFile) throw new Error('لم يتم العثور على نسخة احتياطية');
-      const { data, error } = await supabase.storage.from(BUCKET).download(`${targetCode}/${backupFile.name}`);
-      if (error) throw error;
-      payload = await window._zmtParseBlob(data);
-    }
+    let folder = targetCode;
+    try {
+      const { data: branchData } = await supabase.from('branches').select('code, stores(code)').eq('code', targetCode).single();
+      if (branchData && branchData.stores?.code) folder = branchData.stores.code;
+    } catch (e) { /* target is a main store: folder == its own code */ }
 
-    const d = (payload && payload.data) || {};
-    const db = typeof d.zmt_db === 'string' ? JSON.parse(d.zmt_db) : (d.zmt_db || {});
-    return db.products || [];
+    const data = await _downloadFresh(`${folder}/${targetCode}_inventory.json`);
+    if (!data) return [];
+    try {
+      const inv = await window._zmtParseBlob(data);
+      return (inv && inv.products) || [];
+    } catch { return []; }
   }
 
   async function _canAccessStore(targetCode) {
@@ -851,7 +1140,7 @@ const CloudService = (() => {
   }
 
   async function uploadBackupForStore(targetCode, targetStoreType, targetParentCode) {
-    await _obtainCloudToken();
+    await requireCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -901,12 +1190,47 @@ const CloudService = (() => {
     // Backups are gzip-compressed to keep the free Supabase tier under quota.
     const blob = window._zmtGzipBlob(payload);
 
-    const { error } = await supabase.storage.from(BUCKET).upload(path, blob, {
-      contentType: 'application/gzip',
-      upsert: true,
-    });
+    const { error } = await withTimeout(
+      supabase.storage.from(BUCKET).upload(path, blob, {
+        contentType: 'application/gzip',
+        upsert: true,
+      }),
+      30000,
+      'انتهت مهلة رفع البيانات إلى السحابة (30 ثانية)'
+    );
 
     if (error) throw error;
+
+    // Publish an inventory-only object (products, no orders/returns) for this
+    // store so other network members can see its stock via the RLS
+    // `%_inventory.json` rule. Non-fatal.
+    try {
+      const invPayload = {
+        version: 2,
+        storeCode: targetCode,
+        storeType: targetStoreType || 'branch',
+        updatedAt: new Date().toISOString(),
+        products: storeProducts,
+        meta: storeData.zmt_db ? storeData.zmt_db.meta || {} : {},
+      };
+      const invBlob = window._zmtGzipBlob(invPayload);
+      const invPath = targetStoreType === 'branch'
+        ? `${targetParentCode || targetCode}/${targetCode}_inventory.json`
+        : `${targetCode}/${targetCode}_inventory.json`;
+      const invRes = await withTimeout(
+        supabase.storage.from(BUCKET).upload(invPath, invBlob, {
+          contentType: 'application/gzip',
+          upsert: true,
+          cacheControl: 'no-cache',
+        }),
+        30000,
+        'انتهت مهلة رفع المخزون إلى السحابة (30 ثانية)'
+      );
+      if (invRes.error) console.warn('[Cloud] inventory upload skipped:', invRes.error.message);
+    } catch (e) {
+      console.warn('[Cloud] inventory upload skipped:', e.message);
+    }
+
     return { success: true, path };
   }
 
@@ -915,6 +1239,7 @@ const CloudService = (() => {
     saveConfig,
     getClient,
     ensureAccessToken: _obtainCloudToken,
+    requireAccessToken: requireCloudToken,
     storeAccessToken: _storeCloudToken,
     clearAccessToken: _clearCloudToken,
     getStoreCode,
@@ -923,6 +1248,7 @@ const CloudService = (() => {
     getBackupPath,
     isStoreConfigured,
     isCloudConnected,
+    hasValidCloudToken,
     hasData,
     collectAllData,
     uploadBackup,
@@ -938,6 +1264,7 @@ const CloudService = (() => {
     downloadStoreBackup,
     downloadStoreInventory,
     listAccessibleStores,
+    isLicenseRevokedLocally,
     _canAccessStore,
     isLanSubDevice,
     startAutoSync,

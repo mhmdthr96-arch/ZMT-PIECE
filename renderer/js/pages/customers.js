@@ -133,7 +133,7 @@ function confirmAddCustomer() {
   const discount = parseFloat(document.getElementById('custDiscount').value) || 0;
   if (discount < 0 || discount > 100) { alert('نسبة الخصم يجب أن تكون بين 0 و 100'); return; }
 
-  DB.addCustomer({
+  const cust = DB.addCustomer({
     name,
     phone: document.getElementById('custPhone').value.trim(),
     address: document.getElementById('custAddress').value.trim(),
@@ -141,6 +141,7 @@ function confirmAddCustomer() {
     discount,
     photo: _custPhotoData || '',
   });
+  if (cust) DB.logAudit({ action: 'add', entity: 'customer', entityId: cust.id, detail: name });
 
   closeAddCustomerModal();
   renderCustomers();
