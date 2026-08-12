@@ -17,6 +17,9 @@
       </div>
 
       <div class="eula-box">
+        <button type="button" class="eula-show-btn" onclick="openEulaModal()">
+          <i class="fas fa-file-contract"></i> عرض الشروط والأحكام كاملة
+        </button>
         <div class="eula-text" id="eulaTextPage">
           باستخدام برنامج ZMT PIECE فإنك تقر بأن المسؤولية القانونية عن استخدام البرنامج تقع على المستخدم، وأن البرنامج يُقدَّم كما هو دون أي ضمانات. جميع البيانات المدخلة تبقى تحت مسؤوليتك. يُحظر إعادة بيع أو توزيع أو اختراق البرنامج دون إذن خطي من ZMT SOFTWARE. بموافقتك تقر بقبول هذه الشروط.
         </div>
@@ -67,12 +70,23 @@
     <p style="color:var(--silver-500);margin-bottom:8px">يرجى إدخال مفتاح تفعيل جديد لاستمرار العمل</p>
     <p style="color:var(--silver-400);font-size:12px;margin-bottom:20px">بياناتك محفوظة وستعود بعد التفعيل</p>
     <div class="freeze-input-group">
+      <input type="text" id="freezeStoreCode" class="license-input"
+              placeholder="رمز المتجر" dir="ltr" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="freeze-input-group">
+      <input type="password" id="freezeStorePassword" class="license-input"
+              placeholder="كلمة مرور المتجر" dir="ltr" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="freeze-input-group">
       <input type="text" id="freezeKeyInput" class="license-input"
-              placeholder="مفتاح التفعيل الجديد..." dir="ltr"
+              placeholder="مفتاح التفعيل الجديد (ZMT-XXXX-XXXX-XXXX)" dir="ltr"
               autocomplete="off" spellcheck="false">
     </div>
 
     <div class="eula-box">
+      <button type="button" class="eula-show-btn" onclick="openEulaModal()">
+        <i class="fas fa-file-contract"></i> عرض الشروط والأحكام كاملة
+      </button>
       <div class="eula-text">
         باستخدام برنامج ZMT PIECE فإنك تقر بأن المسؤولية القانونية عن استخدام البرنامج تقع على المستخدم، وأن البرنامج يُقدَّم كما هو دون أي ضمانات. جميع البيانات المدخلة تبقى تحت مسؤوليتك. يُحظر إعادة بيع أو توزيع أو اختراق البرنامج دون إذن خطي من ZMT SOFTWARE. بموافقتك تقر بقبول هذه الشروط.
       </div>
@@ -102,5 +116,19 @@
   <div class="watermark-inner">
     <i class="fas fa-clock"></i>
     <span id="watermarkText">متبقي 0 يوم</span>
+  </div>
+</div>
+
+<!-- EULA MODAL -->
+<div class="eula-modal-overlay" id="eulaModal" style="display:none">
+  <div class="eula-modal">
+    <div class="eula-modal-header">
+      <span class="eula-modal-title">شروط الاستخدام — ZMT PIECE</span>
+      <button class="eula-modal-close" type="button" onclick="closeEulaModal()">×</button>
+    </div>
+    <div class="eula-modal-body" id="eulaModalBody"></div>
+    <div class="eula-modal-footer">
+      <button class="license-activate-btn" type="button" style="width:auto;padding:10px 28px" onclick="closeEulaModal()">إغلاق</button>
+    </div>
   </div>
 </div>

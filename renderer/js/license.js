@@ -125,6 +125,10 @@ function prefillLicenseForm() {
   if (passEl && !passEl.value) {
     passEl.value = localStorage.getItem('zmt_store_password') || '';
   }
+  const fcode = document.getElementById('freezeStoreCode');
+  if (fcode && !fcode.value) fcode.value = localStorage.getItem('zmt_store_code') || '';
+  const fpass = document.getElementById('freezeStorePassword');
+  if (fpass && !fpass.value) fpass.value = localStorage.getItem('zmt_store_password') || '';
   const idEl = document.getElementById('licenseDeviceId');
   if (idEl && idEl.value === '') {
     idEl.value = 'جارٍ قراءة الجهاز...';
@@ -222,11 +226,22 @@ function createFreezeOverlay() {
                placeholder="كلمة مرور المتجر" dir="ltr" autocomplete="off" spellcheck="false">
       </div>
       <div class="freeze-input-group">
+        <input type="text" id="freezeStoreCode" class="license-input"
+                placeholder="رمز المتجر" dir="ltr" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="freeze-input-group">
+        <input type="password" id="freezeStorePassword" class="license-input"
+                placeholder="كلمة مرور المتجر" dir="ltr" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="freeze-input-group">
         <input type="text" id="freezeKeyInput" class="license-input"
                 placeholder="مفتاح التفعيل الجديد (ZMT-XXXX-XXXX-XXXX)" dir="ltr" autocomplete="off" spellcheck="false">
       </div>
 
       <div class="eula-box">
+        <button type="button" class="eula-show-btn" onclick="openEulaModal()">
+          <i class="fas fa-file-contract"></i> عرض الشروط والأحكام كاملة
+        </button>
         <div class="eula-text" id="eulaText">
           باستخدام برنامج ZMT PIECE فإنك تقر بأن المسؤولية القانونية عن استخدام البرنامج تقع على المستخدم، وأن البرنامج يُقدَّم كما هو دون أي ضمانات صريحة أو ضمنية. جميع البيانات المدخلة تبقى تحت مسؤوليتك. يُحظر إعادة بيع أو توزيع أو اختراق البرنامج دون إذن خطي من ZMT SOFTWARE. بموافقتك تقر بقبول هذه الشروط.
         </div>
@@ -258,6 +273,20 @@ function createFreezeOverlay() {
   document.body.appendChild(div);
 }
 
+function openEulaModal() {
+  const m = document.getElementById('eulaModal');
+  if (!m) return;
+  const body = m.querySelector('#eulaModalBody');
+  const src = document.getElementById('eulaText') || document.getElementById('eulaTextPage');
+  if (body && src && !body.textContent) body.textContent = src.textContent;
+  m.style.display = 'flex';
+}
+
+function closeEulaModal() {
+  const m = document.getElementById('eulaModal');
+  if (m) m.style.display = 'none';
+}
+
 async function doLicenseReject() {
   if (!confirm('باختيار "لا أوافق" سيتم تسجيل الخروج والعودة لشاشة الدخول. متابعة؟')) return;
   try { if (typeof Auth !== 'undefined' && Auth.signOut) Auth.signOut(); } catch (e) {}
@@ -274,8 +303,8 @@ async function doLicenseActivate() {
   const btn = document.getElementById('licenseActivateBtn');
 
   const key = keyEl ? keyEl.value.trim() : '';
-  const code = codeEl ? codeEl.value.trim() : '';
-  const password = passEl ? passEl.value : '';
+  const code = (codeEl && codeEl.value.trim()) || localStorage.getItem('zmt_store_code') || '';
+  const password = (passEl && passEl.value) || localStorage.getItem('zmt_store_password') || '';
 
   if (!key) {
     showLicenseStatus(status, 'يرجى إدخال مفتاح التفعيل', 'error');
@@ -328,8 +357,8 @@ async function doFreezeActivate() {
   const status = document.getElementById('freezeStatus');
 
   const key = keyEl ? keyEl.value.trim() : '';
-  const code = codeEl ? codeEl.value.trim() : '';
-  const password = passEl ? passEl.value : '';
+  const code = (codeEl && codeEl.value.trim()) || localStorage.getItem('zmt_store_code') || '';
+  const password = (passEl && passEl.value) || localStorage.getItem('zmt_store_password') || '';
 
   if (!key) {
     showFreezeStatus(status, 'يرجى إدخال مفتاح التفعيل', 'error');

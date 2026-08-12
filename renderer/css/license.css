@@ -186,17 +186,100 @@
   display: flex;
   gap: 8px;
   align-items: center;
-  font-size: 12px;
-  color: var(--silver-700, #4a5260);
+  font-size: 13px;
+  color: var(--silver-100, #e6ecf6);
   cursor: pointer;
+  margin-top: 4px;
 }
 
 .eula-check input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
   accent-color: #28a745;
   cursor: pointer;
+}
+
+.eula-show-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  color: #c7ccd6;
+  font-size: 12px;
+  padding: 7px 14px;
+  cursor: pointer;
+  margin-bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.eula-show-btn:hover {
+  border-color: #4da6ff;
+  color: #fff;
+}
+
+.eula-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000000;
+  background: rgba(10, 12, 20, 0.85);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.eula-modal {
+  background: #141824;
+  border: 1px solid rgba(0, 102, 177, 0.3);
+  border-radius: 16px;
+  width: 580px;
+  max-width: 92vw;
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.eula-modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.eula-modal-title {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.eula-modal-close {
+  background: transparent;
+  border: none;
+  color: #c7ccd6;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.eula-modal-body {
+  padding: 20px;
+  overflow: auto;
+  color: #c7ccd6;
+  font-size: 13px;
+  line-height: 1.9;
+  text-align: right;
+}
+
+.eula-modal-footer {
+  padding: 14px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: center;
 }
 
 .license-status {
