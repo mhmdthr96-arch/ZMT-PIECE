@@ -155,8 +155,20 @@
         <div class="license-input-group">
           <label>مفتاح التفعيل</label>
           <input type="text" id="licenseKeyInput" class="license-input"
-                 placeholder="ZMT-XXXX-XXXX-XXXX" dir="ltr"
-                 autocomplete="off" spellcheck="false">
+                  placeholder="ZMT-XXXX-XXXX-XXXX" dir="ltr"
+                  autocomplete="off" spellcheck="false">
+        </div>
+        <div class="eula-box">
+          <button type="button" class="eula-show-btn" onclick="openEulaModal()">
+            <i class="fas fa-file-contract"></i> عرض الشروط والأحكام كاملة
+          </button>
+          <div class="eula-text" id="eulaTextPage">
+            باستخدام برنامج ZMT PIECE فإنك تقر بأن المسؤولية القانونية عن استخدام البرنامج تقع على المستخدم، وأن البرنامج يُقدَّم كما هو دون أي ضمانات. جميع البيانات المدخلة تبقى تحت مسؤوليتك. يُحظر إعادة بيع أو توزيع أو اختراق البرنامج دون إذن خطي من ZMT SOFTWARE. بموافقتك تقر بقبول هذه الشروط.
+          </div>
+          <label class="eula-check">
+            <input type="checkbox" id="eulaAcceptPage">
+            <span>أقر بقراءة الشروط وأوافق على استخدام البرنامج</span>
+          </label>
         </div>
         <button class="license-activate-btn" id="licenseActivateBtn" onclick="doLicenseActivate()">
           <i class="fas fa-key"></i> تفعيل البرنامج
@@ -205,7 +217,19 @@
       </div>
       <div class="freeze-input-group">
         <input type="text" id="freezeKeyInput" class="license-input"
-               placeholder="مفتاح التفعيل الجديد (ZMT-XXXX-XXXX-XXXX)" dir="ltr" autocomplete="off" spellcheck="false">
+                placeholder="مفتاح التفعيل الجديد (ZMT-XXXX-XXXX-XXXX)" dir="ltr" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="eula-box">
+        <button type="button" class="eula-show-btn" onclick="openEulaModal()">
+          <i class="fas fa-file-contract"></i> عرض الشروط والأحكام كاملة
+        </button>
+        <div class="eula-text" id="eulaText">
+          باستخدام برنامج ZMT PIECE فإنك تقر بأن المسؤولية القانونية عن استخدام البرنامج تقع على المستخدم، وأن البرنامج يُقدَّم كما هو دون أي ضمانات صريحة أو ضمنية. جميع البيانات المدخلة تبقى تحت مسؤوليتك. يُحظر إعادة بيع أو توزيع أو اختراق البرنامج دون إذن خطي من ZMT SOFTWARE. بموافقتك تقر بقبول هذه الشروط.
+        </div>
+        <label class="eula-check">
+          <input type="checkbox" id="eulaAcceptFreeze">
+          <span>أقر بقراءة الشروط وأوافق على استخدام البرنامج</span>
+        </label>
       </div>
       <div class="license-status" id="freezeStatus" style="display:none"></div>
       <button class="license-activate-btn" onclick="doFreezeActivate()">
@@ -223,6 +247,20 @@
       </div>
       <div class="license-footer" style="margin-top:20px">
         <span>ZMT SOFTWARE — ZERIBIT MOHAMMED TAHAR</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- EULA MODAL -->
+  <div class="eula-modal-overlay" id="eulaModal" style="display:none">
+    <div class="eula-modal">
+      <div class="eula-modal-header">
+        <span class="eula-modal-title">شروط الاستخدام — ZMT PIECE</span>
+        <button class="eula-modal-close" type="button" onclick="closeEulaModal()">×</button>
+      </div>
+      <div class="eula-modal-body" id="eulaModalBody"></div>
+      <div class="eula-modal-footer">
+        <button class="license-activate-btn" type="button" style="width:auto;padding:10px 28px" onclick="closeEulaModal()">إغلاق</button>
       </div>
     </div>
   </div>
