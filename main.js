@@ -382,7 +382,7 @@ ipcMain.handle('lan-test-connection', (event, ip, port) => {
 // Open an external URL in the default browser
 ipcMain.handle('open-external', async (event, url) => {
   try {
-    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+    if (typeof url !== 'string' || !/^(https?:\/\/|mailto:|tel:)/i.test(url)) {
       return { success: false, error: 'رابط غير صالح' };
     }
     await shell.openExternal(url);

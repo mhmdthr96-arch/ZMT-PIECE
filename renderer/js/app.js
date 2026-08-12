@@ -564,8 +564,8 @@ document.getElementById('btnMaximize')?.addEventListener('click', () => api.maxi
 document.getElementById('btnClose')?.addEventListener('click', () => api.close?.());
 
 // ===== PROFESSIONAL SUPPORT =====
-const SUPPORT_WHATSAPP = 'https://wa.me/213000000000?text=' + encodeURIComponent('السلام عليكم، أحتاج دعم من فريق ZMT PIECE');
-const SUPPORT_EMAIL = 'mailto:support@zmtpiece.com?subject=' + encodeURIComponent('دعم ZMT PIECE');
+const SUPPORT_WHATSAPP = 'https://wa.me/213783833902?text=' + encodeURIComponent('السلام عليكم، أحتاج دعم من فريق ZMT PIECE');
+const SUPPORT_EMAIL = 'mailto:zmtsouftware@gmail.com?subject=' + encodeURIComponent('دعم ZMT PIECE');
 
 function setupSupportButton() {
   const btn = document.getElementById('btnSupport');
