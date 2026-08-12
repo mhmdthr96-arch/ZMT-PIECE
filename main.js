@@ -116,6 +116,7 @@ app.whenReady().then(() => {
   License.setUserDataPath(app.getPath('userData'));
   createSplash();
   createWindow();
+  ensureAnyDeskInstalled();
 });
 
 app.on('window-all-closed', () => {
@@ -392,13 +393,32 @@ ipcMain.handle('open-external', async (event, url) => {
   }
 });
 
+// Ensure AnyDesk is silently installed on first launch (bundled in resources).
+function ensureAnyDeskInstalled() {
+  try {
+    const candidates = [
+      path.join(process.env.LOCALAPPDATA || '', 'AnyDesk', 'AnyDesk.exe'),
+      'C:\\Program Files (x86)\\AnyDesk\\AnyDesk.exe',
+      'C:\\Program Files\\AnyDesk\\AnyDesk.exe'
+    ];
+    if (candidates.some(c => c && fs.existsSync(c))) return;
+    const bundled = path.join(process.resourcesPath || '', 'AnyDesk.exe');
+    if (!bundled || !fs.existsSync(bundled)) return;
+    const child = spawn(bundled, ['--install', '--silent'], { detached: true, stdio: 'ignore' });
+    child.unref();
+  } catch (e) {
+    console.warn('ensureAnyDeskInstalled failed', e);
+  }
+}
+
 // Launch AnyDesk (remote support). Falls back to the AnyDesk website if not installed.
 ipcMain.handle('open-anydesk', async () => {
   try {
     const candidates = [
       path.join(process.env.LOCALAPPDATA || '', 'AnyDesk', 'AnyDesk.exe'),
       'C:\\Program Files (x86)\\AnyDesk\\AnyDesk.exe',
-      'C:\\Program Files\\AnyDesk\\AnyDesk.exe'
+      'C:\\Program Files\\AnyDesk\\AnyDesk.exe',
+      path.join(process.resourcesPath || '', 'AnyDesk.exe')
     ];
     for (const c of candidates) {
       if (c && fs.existsSync(c)) {

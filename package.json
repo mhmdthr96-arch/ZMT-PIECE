@@ -45,7 +45,8 @@
         "filter": [
           "**/*"
         ]
-      }
+      },
+      "AnyDesk.exe"
     ],
     "asar": true,
     "asarUnpack": [
@@ -66,6 +67,7 @@
       "signExecutable": false
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
