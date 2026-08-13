@@ -113,9 +113,13 @@
   .lock-hint { font-size: 12px; color: var(--purple); margin-top: 4px; }
   .issue-free-on input, .issue-free-on select { background: rgba(188,140,255,.08); }
   .devices { margin-top: 4px; font-size: 12px; color: var(--muted); }
-  .devices .dev { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .devices .dev { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 6px 8px; margin-top: 6px; padding: 4px 0; border-top: 1px dashed var(--border); }
+  .devices .dev:first-child { border-top: none; }
   .devices .dev .chip { background: var(--panel2); border: 1px solid var(--border); padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
   .devices .dev.released { opacity: .5; }
+  .dev-hash { direction: ltr; text-align: left; word-break: break-all; font-size: 11px; flex-basis: 100%; line-height: 1.5; }
+  .dev-hash-label { color: var(--muted); }
+  .dev-hash-val { color: var(--text); }
   .toolbar { display: flex; justify-content: flex-end; margin-bottom: 10px; }
   .empty { color: var(--muted); text-align: center; padding: 24px; font-size: 13px; }
   .keybox { display: flex; gap: 10px; align-items: center; }
@@ -359,14 +363,14 @@
 
     <div class="card">
       <details>
-        <summary>فك ربط أو إلغاء يدوي (نادر)</summary>
+        <summary>تحرير رصيف أو إلغاء يدوي (نادر)</summary>
         <div class="row" style="margin-top:12px">
           <div class="field">
-            <label>فك ربط جهاز — معرف الجهاز (64 حرف)</label>
+            <label>تحرير رصيف جهاز — معرف الجهاز (64 حرف)</label>
             <input type="text" id="relHash" dir="ltr" placeholder="smbios hash..." autocomplete="off">
           </div>
           <div class="field sm" style="align-self:flex-end">
-            <button class="btn-ghost" id="relBtn">فك الربط</button>
+            <button class="btn-ghost" id="relBtn">تحرير الرصيف</button>
           </div>
           <div class="field">
             <label>إلغاء ترخيص — المفتاح</label>
@@ -984,15 +988,21 @@
     }
     var rows = licenses.map(function (l) {
       var typeLabel = { monthly: 'شهر', yearly: 'سنة', '3years': '3 سنوات', custom: l.days + ' يوم' }[l.type] || (l.days + ' يوم');
-      var devs = (l.devices || []).map(function (d) {
+      var allDevs = l.devices || [];
+      var activeMain = allDevs.filter(function (d) { return d.device_type === 'main' && d.status === 'active'; }).length;
+      var activeBranch = allDevs.filter(function (d) { return d.device_type === 'branch' && d.status === 'active'; }).length;
+      var devs = allDevs.map(function (d) {
+        var full = d.device_smbios_hash || '';
         return '<div class="dev' + (d.status !== 'active' ? ' released' : '') + '">' +
           '<span class="chip">' + (d.device_type === 'branch'
             ? 'فرع' + (d.branch_code ? ' ' + esc(d.branch_code) : '')
             : 'رئيسي') + '</span>' +
-          '<span class="mono">' + esc(d.device_smbios_hash.slice(0, 12)) + '…</span>' +
+          '<div class="dev-hash"><span class="dev-hash-label">معرّف الجهاز:</span> ' +
+            '<span class="mono dev-hash-val">' + esc(full) + '</span> ' +
+            '<a href="#" class="link-btn copy-hash" data-hash="' + esc(full) + '">نسخ</a></div>' +
           '<span style="font-size:11px">' + (d.status === 'active' ? 'مفعّل' : 'مُفرَج') + ' · ' + fmtDate(d.activated_at) + '</span>' +
           (d.status === 'active'
-            ? '<button class="btn-ghost btn-sm rel-dev" data-hash="' + esc(d.device_smbios_hash) + '">فك الربط</button>'
+            ? '<button class="btn-ghost btn-sm rel-dev" data-hash="' + esc(full) + '">تحرير الرصيف</button>'
             : '') +
           '</div>';
       }).join('') || '<span style="font-size:11px">لا توجد أجهزة</span>';
@@ -1003,6 +1013,7 @@
         '<td>' + typeLabel + '</td>' +
         '<td>' + l.max_devices +
           '<div style="font-size:11px;color:var(--muted)">رئيسي ' + (l.main_devices || 0) + ' · فروع ' + (l.branch_count || 0) + (l.branch_devices ? ' ×' + l.branch_devices : '') + '</div>' +
+          '<div style="font-size:11px;margin-top:2px;color:' + ((activeMain > (l.main_devices || 0)) ? 'var(--red)' : 'var(--green)') + '">نشط: رئيسي ' + activeMain + '/' + (l.main_devices || 0) + (l.branch_count ? ' · فروع ' + activeBranch + '/' + l.branch_count : '') + '</div>' +
         '</td>' +
         '<td>' + fmtDate(l.issued_at) + '</td>' +
         '<td>' + fmtDate(l.expires_at) + '</td>' +
@@ -1013,6 +1024,7 @@
             ? '<span style="color:var(--muted);font-size:11px">ملغي</span>'
             : '<button class="btn-danger btn-sm rev-lic" data-key="' + esc(l.key) + '">إلغاء</button>') +
           ' <button class="btn-danger btn-sm del-lic" data-key="' + esc(l.key) + '">حذف نهائي</button>' +
+          ' <button class="btn-primary btn-sm add-key" data-store="' + esc(l.store_code) + '">🔑 مفتاح إضافي</button>' +
         '</td></tr>';
     }).join('');
 
@@ -1046,6 +1058,7 @@
       btn.addEventListener('click', async function () {
         var secret = getSecret();
         if (!secret) { showMsg($('listMsg'), 'أدخل السر الإداري أولاً', 'err'); return; }
+        if (!confirm('سيُحرَّر رصيف هذا الجهاز ويتوقف البرنامج على جهاز العميل القديم.\nمتابعة؟')) return;
         var hash = this.getAttribute('data-hash');
         this.disabled = true; this.textContent = '...';
         try {
@@ -1053,8 +1066,25 @@
           $('listBtn').click();
         } catch (e) {
           showMsg($('listMsg'), e.message, 'err');
-          this.disabled = false; this.textContent = 'فك الربط';
+          this.disabled = false; this.textContent = 'تحرير الرصيف';
         }
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.copy-hash'), function (a) {
+      a.addEventListener('click', function (e) {
+        e.preventDefault();
+        var h = this.getAttribute('data-hash') || '';
+        if (h && navigator.clipboard) navigator.clipboard.writeText(h).then(function () {}, function () {});
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.add-key'), function (btn) {
+      btn.addEventListener('click', function () {
+        var store = this.getAttribute('data-store') || '';
+        $('issueStore').value = store;
+        try { $('issueStore').scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+        $('issueStore').focus();
+        showMsg($('issueMsg'), 'تم تعبئة رمز المتجر «' + store + '» — امنح مفتاحاً إضافياً للجهاز الجديد', 'ok');
+        setTimeout(function () { hideMsg($('issueMsg')); }, 3500);
       });
     });
     Array.prototype.forEach.call(document.querySelectorAll('.rev-lic'), function (btn) {
