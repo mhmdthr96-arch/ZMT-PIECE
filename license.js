@@ -50,11 +50,13 @@ function legacyDeviceId() {
     const p = getDevicePath();
     if (fs.existsSync(p)) {
       const existing = JSON.parse(fs.readFileSync(p, 'utf-8'));
-      if (existing && typeof existing.deviceId === 'string' && existing.deviceId.length >= 16) {
+      // Only accept a full 64-char SHA-style id; stale 32-char ids from older
+      // builds are discarded so a fresh, server-valid id is generated.
+      if (existing && typeof existing.deviceId === 'string' && /^[0-9a-f]{64}$/.test(existing.deviceId)) {
         return existing.deviceId;
       }
     }
-    const deviceId = crypto.randomBytes(16).toString('hex');
+    const deviceId = crypto.randomBytes(32).toString('hex');
     if (_userDataPath) {
       fs.mkdirSync(_userDataPath, { recursive: true });
       fs.writeFileSync(p, JSON.stringify({ deviceId }), 'utf-8');
@@ -62,7 +64,7 @@ function legacyDeviceId() {
     return deviceId;
   } catch (e) {
     // Disk unavailable fallback: keep one ID for this process lifetime
-    if (!_memoryDeviceId) _memoryDeviceId = crypto.randomBytes(16).toString('hex');
+    if (!_memoryDeviceId) _memoryDeviceId = crypto.randomBytes(32).toString('hex');
     return _memoryDeviceId;
   }
 }
