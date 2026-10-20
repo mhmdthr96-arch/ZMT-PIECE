@@ -1,8 +1,42 @@
 <div class="page" id="page-sales">
   <div class="page-header">
-    <div class="page-header-content">
-      <h1><i class="fas fa-cart-plus"></i> <span data-i18n="sales.title">البيع</span></h1>
-      <p><span data-i18n="sales.sub">إنشاء فاتورة بيع جديدة</span></p>
+    <div class="page-header-content sh-header">
+      <div class="sh-title-group">
+        <h1><i class="fas fa-cart-plus"></i> <span data-i18n="sales.title">البيع</span></h1>
+        <p><span data-i18n="sales.sub">إنشاء فاتورة بيع جديدة</span></p>
+      </div>
+      <button class="btn btn-primary sh-history-btn" onclick="openSalesHistory()" style="display:flex;align-items:center;gap:6px;padding:9px 16px;font-size:14px">
+        <i class="fas fa-history"></i> سجل المبيعات
+      </button>
+      <span class="sales-pharma-chip"><i class="fas fa-prescription-bottle-medical"></i> <span data-i18n="settings.pharmacyMode">وضع الصيدلية</span></span>
+      <button class="btn btn-success" onclick="openSalesAddCustomer()" style="display:flex;align-items:center;gap:6px;padding:9px 16px;font-size:14px">
+        <i class="fas fa-user-plus"></i> إضافة عميل
+      </button>
+      <button class="btn btn-primary" id="salesSupSaleBtn" onclick="openSupSaleMode()" style="display:none;align-items:center;gap:6px;padding:9px 16px;font-size:14px">
+        <i class="fas fa-truck"></i> بيع لمورد
+      </button>
+      <button class="btn sh-thermal-btn" id="salesThermalBtn" type="button" onclick="ThermalPrintToggleFromHeader()"
+        title="عند التفعيل تُطبع الفاتورة مباشرة على الطابعة الحرارية بعد تأكيد البيع">
+        <i class="fas fa-receipt"></i> <span data-i18n="thermal.toggleOn">طباعة حرارية</span>
+        <span class="tp-flag" id="salesThermalFlag">OFF</span>
+      </button>
+      <button class="btn sh-thermal-cfg" id="salesThermalCfgBtn" type="button" onclick="ThermalPrintOpenSettings()"
+        title="إعدادات الطابعة الحرارية">
+        <i class="fas fa-gear"></i> <span data-i18n="thermal.settings">إعدادات الطابعة الحرارية</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- LED grand-total (digital display) -->
+  <div class="sales-led-wrap" id="salesLedWrap">
+    <div class="led-panel">
+      <div class="led-badge"><i class="fas fa-shopping-basket"></i> <span data-i18n="common.total">الإجمالي</span></div>
+      <div class="led-value" id="salesLedTotal" dir="ltr">DA0.00</div>
+      <div class="led-cart-count"><i class="fas fa-cubes"></i><b id="salesLedItems">0</b><span>قطعة</span></div>
+      <button class="led-qk-btn" id="salesQkOpenBtn" type="button" onclick="openSalesQtyQuick()"
+        title="اضغط + لتعديل الكميات بالكيبورد" aria-label="quick-quantity" disabled>
+        <i class="fas fa-keyboard"></i><span class="qk-plus">+</span>
+      </button>
     </div>
   </div>
 
@@ -30,6 +64,7 @@
             <input type="text" id="salesSearch" placeholder="ابحث باسم القطعة أو الباركود..." data-i18n-placeholder="sales.searchPlaceholder2" autocomplete="off" oninput="filterSalesProducts(this.value)">
           </div>
           <span class="sales-prod-count" id="salesProdCount" data-i18n="sales.productsCount">0 منتج</span>
+          <button class="btn btn-sm zmt-hide-toggle" id="salesHideUntilSearchBtn" onclick="toggleSalesHideUntilSearch()" title="إخفاء المنتجات حتى البحث (تظهر المطابقة فقط)" aria-pressed="false"><i class="fas fa-eye-slash"></i> <span>إخفاء حتى البحث</span></button>
         </div>
 
         <!-- Product Grid -->
@@ -45,7 +80,7 @@
             <i class="fas fa-user"></i>
             <span data-i18n="sales.customer">العميل</span>
           </div>
-          <div class="sales-cust-search-row">
+          <div class="sales-cust-search-row" id="salesCustRow">
             <div class="sales-cust-search-wrap">
               <i class="fas fa-search" style="color:var(--silver-500);font-size:12px"></i>
               <input type="text" id="salesCustSearch" placeholder="ابحث عن عميل..." data-i18n-placeholder="sales.customerPlaceholder" oninput="searchSalesCustomer(this.value)">
@@ -63,6 +98,7 @@
               <strong id="salesSelCustName"></strong>
               <span id="salesSelCustType" class="sales-cust-type"></span>
               <span id="salesSelCustDiscount" style="display:none"></span>
+              <span id="salesSelCustBalance" style="display:none;font-weight:700;font-size:12px"></span>
             </div>
             <button class="sales-cust-badge-remove" onclick="clearSalesCustomer()" title="إزالة" data-i18n-title="sales.remove"><i class="fas fa-times"></i></button>
           </div>
@@ -71,6 +107,17 @@
           <div id="salesWalkinLabel" class="sales-walkin-badge" style="display:none">
             <i class="fas fa-user-slash"></i>
             <span data-i18n="sales.unregistered">زبون غير مسجل</span>
+          </div>
+
+          <!-- Supplier sale banner -->
+          <div id="salesSupBanner" class="sales-cust-badge" style="display:none">
+            <div class="sales-cust-badge-avatar" style="background:linear-gradient(135deg,#ff9800,#e65100)"><i class="fas fa-truck" style="color:#fff"></i></div>
+            <div class="sales-cust-badge-info">
+              <strong id="salesSupName"></strong>
+              <span class="sales-cust-type" style="color:#e65100">بيع له (مورد)</span>
+              <span id="salesSupBalance" class="sales-cust-type" style="display:block;font-size:11px;margin-top:2px"></span>
+            </div>
+            <button class="sales-cust-badge-remove" onclick="cancelSupSaleMode()" title="إزالة"><i class="fas fa-times"></i></button>
           </div>
         </div>
 
@@ -96,7 +143,7 @@
             <div class="sales-total-line">
               <span data-i18n="common.additionalDiscount">تخفيض إضافي</span>
               <div class="sales-disc-input">
-                <input type="number" class="no-spinner" id="salesExtraDisc"
+                <input type="text" class="no-spinner num-input" id="salesExtraDisc" inputmode="decimal"
                   value="0" min="0" dir="ltr" oninput="updateSalesTotals()" onblur="clampExtraDisc()">
                 <span>DA</span>
               </div>
@@ -117,10 +164,24 @@
                 <button class="pay-method-btn" data-method="mixed" onclick="setSalesPayMethod('mixed')" data-i18n="sales.payBoth">الاثنان معاً</button>
               </div>
 
+              <!-- خصم المبلغ من رصيد العميل (يظهر فقط إذا كان الرصيد لصالح العميل) -->
+              <div id="salesCreditSection" style="display:none;margin-top:8px;padding:10px;border:1px dashed #1a7f37;border-radius:8px;background:#f0faf0">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+                  <div style="font-size:12px;color:#1a7f37">
+                    <i class="fas fa-hand-holding-heart" style="margin-left:4px"></i>
+                    <span id="salesCreditLabel">خصم المبلغ من رصيد العميل</span>
+                  </div>
+                  <button type="button" id="salesCreditToggleBtn" onclick="toggleSalesCredit()" style="border:1px solid #1a7f37;background:#fff;color:#1a7f37;border-radius:6px;padding:6px 12px;font-weight:700;font-size:12px;cursor:pointer">
+                    <span id="salesCreditToggleText">تطبيق الخصم</span>
+                  </button>
+                </div>
+                <div id="salesCreditInfo" style="font-size:11px;color:#155724;margin-top:6px;direction:rtl"></div>
+              </div>
+
               <div id="salesSinglePay">
                 <div class="sales-pay-label" data-i18n="sales.paidLabel">المبلغ المدفوع</div>
                 <div class="sales-pay-row">
-                  <input type="number" class="no-spinner sales-pay-input"
+                  <input type="text" class="no-spinner sales-pay-input num-input" inputmode="decimal"
                     id="salesPaidAmount" value="0" min="0" dir="ltr"
                     oninput="onSalesPaidInput()">
                   <span class="sales-pay-currency">DA</span>
@@ -133,14 +194,14 @@
               <div id="salesMixedPay" style="display:none">
                 <div class="sales-pay-label" data-i18n="sales.cashAmount">المبلغ النقدي</div>
                 <div class="sales-pay-row">
-                  <input type="number" class="no-spinner sales-pay-input"
+                  <input type="text" class="no-spinner sales-pay-input num-input" inputmode="decimal"
                     id="salesCashAmount" value="0" min="0" dir="ltr"
                     oninput="onSalesPaidInput()">
                   <span class="sales-pay-currency">DA</span>
                 </div>
                 <div class="sales-pay-label" data-i18n="sales.ccpAmount">مبلغ CCP</div>
                 <div class="sales-pay-row">
-                  <input type="number" class="no-spinner sales-pay-input"
+                  <input type="text" class="no-spinner sales-pay-input num-input" inputmode="decimal"
                     id="salesCcpAmount" value="0" min="0" dir="ltr"
                     oninput="onSalesPaidInput()">
                   <span class="sales-pay-currency">DA</span>
@@ -156,6 +217,25 @@
                 </div>
               </div>
 
+              <!-- Supplier-sale on-account summary -->
+              <div id="salesSupPayInfo" style="display:none;margin-top:8px;padding:9px 11px;background:#fff6ec;border:1px solid #ffd9ad;border-radius:9px;font-size:12px;line-height:1.7">
+                <div style="display:flex;align-items:center;gap:6px;color:#e65100;font-weight:700;margin-bottom:3px">
+                  <i class="fas fa-hand-holding-usd"></i> بيع على حساب المورد
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="color:var(--silver-600)">سيُخصم من دين/رصيد المورد:</span>
+                  <strong id="salesSupDebitVal" style="color:#e65100" dir="ltr">DA0.00</strong>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="color:var(--silver-500)">رصيده الحالي:</span>
+                  <span id="salesSupBalBefore" dir="ltr">DA0.00</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px dashed #f2c18c;margin-top:3px;padding-top:3px">
+                  <span style="font-weight:600;color:var(--silver-700)">الرصيد بعد الخصم:</span>
+                  <strong id="salesSupBalAfter" dir="ltr">DA0.00</strong>
+                </div>
+              </div>
+
               <!-- Status -->
               <div class="sales-pay-status" id="salesPayStatus">
                 <span id="salesPayStatusText"></span>
@@ -168,7 +248,10 @@
                 <i class="fas fa-trash"></i> <span data-i18n="common.clear">تفريغ</span>
               </button>
               <button class="sales-btn sales-btn-checkout" onclick="confirmSalesCheckout()">
-                <i class="fas fa-check"></i> <span data-i18n="sales.checkout">إتمام البيع</span>
+                <i class="fas fa-check"></i> <span data-i18n="sales.confirm">تأكيد</span>
+              </button>
+              <button class="sales-btn sales-btn-transfer" onclick="openSalesTransfer()">
+                <i class="fas fa-exchange-alt"></i> <span data-i18n="sales.transferInvoice">تحويل الفاتورة</span>
               </button>
             </div>
           </div>
@@ -181,8 +264,140 @@
           </div>
           <h3 data-i18n="sales.cartEmpty">السلة فارغة</h3>
           <p data-i18n="sales.emptyCartHint">امسح باركود القطعة أو اخترها من قائمة المنتجات</p>
+       </div>
+    </div>
+  </div>
+
+  <!-- ===== SALES HISTORY OVERLAY (زجاجي عصري) ===== -->
+  <div id="shOverlay" class="sh-overlay" style="display:none" onclick="if(event.target===this)closeSalesHistory()">
+    <div class="sh-overlay-panel" role="dialog" aria-modal="true">
+      <div class="sh-overlay-header">
+        <div class="sh-overlay-title">
+          <span class="sh-overlay-logo"><i class="fas fa-receipt"></i></span>
+          <div>
+            <h2>سجل المبيعات</h2>
+            <p>فواتير البيع فقط — مرآة لصفحة الفواتير</p>
+          </div>
         </div>
+        <button class="sh-overlay-close" onclick="closeSalesHistory()" title="إغلاق" aria-label="إغلاق"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="sh-overlay-body" id="shOverlayBody"></div>
+    </div>
+  </div>
+
+  <!-- ===== SALES SUBSTITUTES MODAL ===== -->
+  <div class="modal-overlay" id="salesSubstituteModal" style="display:none" onclick="if(event.target===this)closeSalesSubstitutes()">
+    <div class="modal" style="max-width:580px">
+      <div class="modal-header">
+        <h3><i class="fas fa-pills"></i> <span data-i18n="sales.substituteTitle">معوّضات متوفرة</span></h3>
+        <button class="modal-close" onclick="closeSalesSubstitutes()">&times;</button>
+      </div>
+      <div class="modal-body" id="salesSubstituteBody"></div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeSalesSubstitutes()"><span data-i18n="common.cancel">إلغاء</span></button>
       </div>
     </div>
   </div>
+
+  <!-- ===== SALES ADD CUSTOMER MODAL ===== -->
+  <div class="modal-overlay" id="salesAddCustomerModal" style="display:none" onclick="if(event.target===this)closeSalesAddCustomer()">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header">
+        <h3><i class="fas fa-user-plus"></i> <span data-i18n="customers.addModalTitle">إضافة عميل جديد</span></h3>
+        <button class="modal-close" onclick="closeSalesAddCustomer()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label data-i18n="customers.formName">اسم العميل</label> <span class="required">*</span>
+          <input type="text" class="form-input" id="sacName" data-i18n-placeholder="customers.formNamePl" placeholder="مثال: أحمد علي">
+        </div>
+        <div class="form-group">
+          <label data-i18n="customers.formPhone">رقم الهاتف</label>
+          <input type="text" class="form-input" id="sacPhone" placeholder="مثال: 0555123456" dir="ltr">
+        </div>
+        <div class="form-group">
+          <label data-i18n="customers.formAddress">العنوان</label>
+          <input type="text" class="form-input" id="sacAddress" placeholder="مثال: الجزائر العاصمة">
+        </div>
+        <div class="form-group">
+          <label data-i18n="customers.formType">نوع العميل</label>
+          <select class="form-input" id="sacType">
+            <option value="unit" data-i18n="customers.typeUnit">قطعة</option>
+            <option value="whole" data-i18n="customers.typeWhole">جملة</option>
+          </select>
+          <small style="color:var(--silver-500);font-size:11px" data-i18n="customers.formTypeHelp">يحدد السعر الافتراضي في صفحة البيع (يمكن تغييره لكل منتج داخل السلة)</small>
+        </div>
+        <div class="form-group">
+          <label data-i18n="customers.formDiscount">نسبة الخصم (%)</label>
+          <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="sacDiscount" value="0" min="0" max="100" step="0.001" dir="ltr">
+          <small style="color:var(--silver-500);font-size:11px" data-i18n="customers.formDiscountHelp">من 0.001% إلى 100% - اختياري</small>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeSalesAddCustomer()"><span data-i18n="common.cancel">إلغاء</span></button>
+        <button class="btn btn-success" onclick="confirmSalesAddCustomer()"><i class="fas fa-check"></i> <span data-i18n="common.save">حفظ</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SUPPLIER SALE PICKER ===== -->
+  <div class="modal-overlay" id="supSalePickerModal" style="display:none" onclick="if(event.target===this)closeSupSalePicker()">
+    <div class="modal sup-pick-dialog">
+      <div class="modal-header">
+        <h3><i class="fas fa-truck"></i> بيع لمورد — اختر المورد</h3>
+        <button class="modal-close" onclick="closeSupSalePicker()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="sup-pick-subtitle">
+          <i class="fas fa-info-circle"></i> سيتم خصم قيمة البضاعة من دين/رصيد المورد، والنقد المقبوض يُسجَّل قبضاً نقدياً.
+        </div>
+        <div class="sup-pick-search">
+          <div class="sup-pick-search-wrap">
+            <i class="fas fa-search"></i>
+            <input type="text" id="supSalePickerSearch" placeholder="ابحث عن مورد بالاسم أو الهاتف..." autocomplete="off" oninput="searchSupSaleSuppliers(this.value)" onkeydown="if(event.key==='Enter')pickFirstSupSaleSupplier();else if(event.key==='Escape')closeSupSalePicker();">
+            <button class="sup-pick-clear" onclick="if(document.getElementById('supSalePickerSearch'))document.getElementById('supSalePickerSearch').value='';searchSupSaleSuppliers('')" title="مسح"><i class="fas fa-times"></i></button>
+          </div>
+          <span class="sup-pick-count" id="supSalePickerCount">0 مورد</span>
+        </div>
+        <div id="supSalePickerResults" class="sup-pick-results"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeSupSalePicker()"><i class="fas fa-times"></i> إلغاء</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SALES TRANSFER MODAL ===== -->
+  <div class="modal-overlay" id="salesTransferModal" style="display:none" onclick="if(event.target===this)closeSalesTransfer()">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header">
+        <h3><i class="fas fa-exchange-alt"></i> <span data-i18n="sales.transferTitle">تحويل الفاتورة إلى عميل</span></h3>
+        <button class="modal-close" onclick="closeSalesTransfer()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:12px;color:var(--silver-500);margin-bottom:10px" data-i18n="sales.transferHint">اختر العميل الذي ستُسجَّل عليه هذه الفاتورة (مثلاً إن كان المشتري وكيلاً عنه).</p>
+        <div class="sales-cust-search-row" style="margin-bottom:8px">
+          <div class="sales-cust-search-wrap">
+            <i class="fas fa-search" style="color:var(--silver-500);font-size:12px"></i>
+            <input type="text" id="salesTransferSearch" placeholder="ابحث عن العميل بالاسم أو الهاتف..." data-i18n-placeholder="sales.customerPlaceholder" oninput="searchSalesTransfer(this.value)">
+          </div>
+        </div>
+        <div id="salesTransferResults" class="search-results"></div>
+        <div id="salesTransferSelected" style="display:none;margin:12px 0;padding:10px;background:#f0f7ff;border:1px solid #cce5ff;border-radius:8px;align-items:center;gap:10px">
+          <i class="fas fa-user" style="color:var(--bmw-blue-1)"></i>
+          <div>
+            <div style="font-size:12px;color:var(--silver-500)" data-i18n="sales.transferSelected">سيتم تسجيل الفاتورة على:</div>
+            <strong id="salesTransferSelName"></strong>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeSalesTransfer()"><span data-i18n="common.cancel">إلغاء</span></button>
+        <button class="btn btn-primary" id="salesTransferConfirmBtn" onclick="confirmSalesTransfer()" disabled style="opacity:0.5">
+          <i class="fas fa-check"></i> <span data-i18n="sales.transferConfirm">تأكيد التحويل</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 </div>

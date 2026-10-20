@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>ZMT البيع</title>
+  <meta name="theme-color" content="#00966e">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ZMT بيع">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    @font-face {
+      font-family: 'ZMT Digits';
+      src: local('Segoe UI'), local(Roboto), local(Arial), local('Noto Sans'), local('Helvetica Neue'), local(sans-serif);
+      unicode-range: U+0030-0039, U+002E, U+002C, U+002D, U+2212;
+      font-display: swap;
+    }
+    :root {
+      --bg: #0f1522; --panel: #172236; --panel2: #1e2b44; --line: #2a3953;
+      --txt: #e6edf7; --dim: #8a97ab; --accent: #00966e; --accent2: #0066B1;
+      --danger: #ff5f5f; --ok: #2ecc71; --warn: #f0b429;
+    }
+    html, body { height: 100%; }
+    body {
+      font-family: 'ZMT Digits', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--txt);
+      display: flex; flex-direction: column; overflow: hidden; max-width: 720px; margin: 0 auto;
+    }
+    input.num-input {
+      direction: ltr; text-align: center;
+      font-family: 'ZMT Digits', ui-monospace, Menlo, Consolas, monospace;
+      letter-spacing: .4px;
+    }
+    /* LED grand-total (digital display) at the top of the POS */
+    .pos-led {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 10px 14px; border-bottom: 1px solid var(--line); flex: none;
+      background: linear-gradient(180deg, #0b1220, #050910);
+    }
+    .pos-led .led-label {
+      display: flex; align-items: center; gap: 7px; color: #7dd3fc;
+      font-size: 12px; font-weight: 700; letter-spacing: .5px;
+    }
+    .pos-led .led-dot { width: 7px; height: 7px; border-radius: 50%; background: #7dd3fc; box-shadow: 0 0 8px #7dd3fc; }
+    .pos-led .led-val {
+      font-family: 'ZMT Digits', ui-monospace, Menlo, Consolas, monospace;
+      font-size: 25px; font-weight: 800; letter-spacing: 1px; color: #7cff6b; direction: ltr;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      text-shadow: 0 0 6px rgba(124,255,107,.8), 0 0 18px rgba(124,255,107,.4);
+    }
+    .top { width: 100%; padding: 12px 14px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
+    .top .dot { width: 10px; height: 10px; border-radius: 50%; background: #6c757d; flex: none; }
+    .top .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+    .top .title { font-size: 16px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .top .pill {
+      margin-right: auto; font-size: 12px; color: #dfe7f2; background: var(--panel2);
+      border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; cursor: pointer;
+      max-width: 46%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .top .pill .caret { color: var(--dim); margin-left: 4px; }
+
+    .tabs { display: flex; border-bottom: 1px solid var(--line); background: var(--bg); flex: none; }
+    .tab {
+      flex: 1; padding: 12px 6px; text-align: center; font-size: 14px; font-weight: 700;
+      color: var(--dim); background: none; border: none; border-bottom: 3px solid transparent; cursor: pointer;
+    }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab.badge { position: relative; }
+    .tab .cnt {
+      position: absolute; top: 6px; left: calc(50% + 18px); background: var(--danger); color: #fff;
+      font-size: 10px; min-width: 18px; height: 18px; line-height: 18px; border-radius: 999px; padding: 0 4px;
+    }
+
+    .view { flex: 1; overflow: hidden; display: none; flex-direction: column; }
+    .view.active { display: flex; }
+    .scroll { flex: 1; overflow-y: auto; padding: 12px; }
+
+    /* search */
+    .searchbar { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); flex: none; }
+    .searchbar input {
+      flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line);
+      background: var(--panel); color: var(--txt); font-size: 15px; outline: none; width: 0;
+    }
+    .searchbar input:focus { border-color: var(--accent); }
+    .iconbtn {
+      flex: none; width: 44px; height: 44px; border-radius: 10px; border: 1px solid var(--line);
+      background: var(--panel2); color: var(--txt); font-size: 18px; cursor: pointer;
+    }
+    .iconbtn.sell { border-color: var(--accent); color: var(--accent); }
+
+    /* price mode */
+    .modes { display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); flex: none; }
+    .mode {
+      flex: 1; padding: 8px 4px; text-align: center; font-size: 13px; font-weight: 700; border-radius: 8px;
+      background: var(--panel); border: 1px solid var(--line); color: var(--dim); cursor: pointer;
+    }
+    .mode.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    /* products */
+    .prod {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+      padding: 10px 12px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px;
+    }
+    .prod .info { flex: 1; min-width: 0; }
+    .prod .name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .prod .meta { font-size: 11px; color: var(--dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .prod .meta .tag { color: var(--warn); }
+    .prod .prices { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+    .prod .price { font-size: 13px; font-weight: 800; color: var(--accent); background: rgba(0,150,110,.12); padding: 3px 8px; border-radius: 6px; }
+    .prod .price .lbl { font-size: 10px; font-weight: 600; color: var(--dim); }
+    .prod .add {
+      flex: none; width: 40px; height: 40px; border-radius: 10px; border: none; font-size: 20px; font-weight: 800;
+      background: var(--accent); color: #fff; cursor: pointer;
+    }
+    .prod.oos { opacity: .55; }
+    .prod .stock { font-size: 11px; color: var(--dim); margin-top: 2px; }
+
+    /* cart */
+    .cart-item {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px;
+    }
+    .cart-item .row1 { display: flex; align-items: center; gap: 8px; }
+    .cart-item .name { flex: 1; font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cart-item .del { color: var(--danger); background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px; }
+    .cart-item .row2 { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+    .cart-item .field { flex: 1; }
+    .cart-item .field label { display: block; font-size: 10px; color: var(--dim); margin-bottom: 2px; }
+    .cart-item .field input {
+      width: 100%; padding: 8px 9px; border-radius: 8px; border: 1px solid var(--line);
+      background: var(--panel2); color: var(--txt); font-size: 14px; text-align: center; outline: none;
+    }
+    .cart-item .field input:focus { border-color: var(--accent); }
+    .qty { display: flex; align-items: center; gap: 6px; }
+    .qty button { width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); color: var(--txt); font-size: 16px; font-weight: 800; cursor: pointer; }
+    .qty input { width: 46px; padding: 8px 2px; text-align: center; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); color: var(--txt); font-size: 15px; outline: none; }
+
+    /* party bar */
+    .party {
+      border-bottom: 1px solid var(--line); padding: 8px 12px; display: flex; gap: 8px; align-items: center;
+    }
+    .party .grow { flex: 1; min-width: 0; display: flex; gap: 8px; }
+    .party input {
+      flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
+      background: var(--panel); color: var(--txt); font-size: 14px; outline: none; width: 0;
+    }
+    .party .pill {
+      flex: none; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
+      background: var(--panel2); color: var(--dim); font-size: 13px; font-weight: 700; cursor: pointer;
+    }
+    .party .pill.on { color: #fff; border-color: var(--accent2); background: var(--accent2); }
+    .party-results { border-bottom: 1px solid var(--line); max-height: 180px; overflow-y: auto; display: none; }
+    .prow {
+      padding: 10px 14px; border-bottom: 1px solid var(--line); cursor: pointer; background: var(--bg);
+    }
+    .prow .n { font-size: 14px; font-weight: 700; }
+    .prow .m { font-size: 11px; color: var(--dim); margin-top: 2px; }
+    .prow.selected { background: rgba(0,150,110,.12); }
+
+    /* totals */
+    .totals { padding: 12px; border-top: 1px solid var(--line); flex: none; background: var(--panel); }
+    .trow { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 13px; color: var(--dim); }
+    .trow b { color: var(--txt); }
+    .trow.total { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 10px; font-size: 17px; font-weight: 800; }
+    .trow.total b { color: var(--accent); font-size: 20px; }
+    .trow .inp { width: 110px; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--txt); text-align: center; font-size: 14px; outline: none; }
+
+    /* payment */
+    .pay { padding: 10px 12px; border-top: 1px solid var(--line); flex: none; }
+    .pay .pm { display: flex; gap: 6px; }
+    .pay .pm button {
+      flex: 1; padding: 9px 4px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2);
+      color: var(--dim); font-size: 13px; font-weight: 700; cursor: pointer;
+    }
+    .pay .pm button.active { color: #fff; border-color: var(--accent); background: var(--accent); }
+    .pay .paid-row { display: flex; gap: 8px; margin-top: 9px; }
+    .pay .paid-row input {
+      flex: 1; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg);
+      color: var(--txt); font-size: 15px; text-align: center; outline: none; width: 0;
+    }
+    .pay .credit { display: flex; align-items: center; gap: 8px; margin-top: 9px; font-size: 13px; color: var(--dim); }
+    .pay .remaining { text-align: center; font-size: 13px; margin-top: 8px; color: var(--warn); font-weight: 700; }
+
+    /* confirm */
+    .confirmbtn {
+      margin: 10px 12px 14px; padding: 16px; border: none; border-radius: 12px; font-size: 17px;
+      font-weight: 800; color: #fff; cursor: pointer; flex: none;
+      background: linear-gradient(135deg, var(--accent), #00b380);
+    }
+    .confirmbtn:disabled { opacity: .4; }
+    .confirmbtn .sub { display: block; font-size: 12px; font-weight: 600; opacity: .85; margin-top: 2px; }
+
+    /* cart action bar */
+    .cart-actions { padding: 10px 12px; border-top: 1px solid var(--line); flex: none; display: flex; gap: 8px; }
+    .ghostbtn {
+      flex: none; min-width: 86px; padding: 15px 10px; border-radius: 12px; font-size: 15px; font-weight: 800;
+      background: var(--panel2); border: 1px solid var(--line); color: var(--txt); cursor: pointer;
+    }
+    .checkoutbtn {
+      flex: 1; padding: 15px; border: none; border-radius: 12px; font-size: 16px; font-weight: 800;
+      color: #fff; cursor: pointer; background: linear-gradient(135deg, var(--accent), #00b380);
+    }
+    .checkoutbtn .sub { display: block; font-size: 12px; font-weight: 600; opacity: .85; margin-top: 2px; }
+
+    /* checkout sheet */
+    .co-lines { border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+    .co-line { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 2px; font-size: 13px; border-bottom: 1px dashed var(--line); }
+    .co-line:last-child { border-bottom: none; }
+    .co-line .n { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .co-line .q { color: var(--warn); font-size: 12px; flex: none; }
+    .co-line .p { color: var(--accent); font-weight: 800; flex: none; }
+    .co-actions {
+      position: sticky; bottom: -16px; margin-top: 12px; padding: 12px 0 2px;
+      background: var(--panel); display: flex; gap: 10px;
+    }
+    .co-btn { flex: 1; padding: 15px; border-radius: 12px; border: none; font-size: 16px; font-weight: 800; cursor: pointer; }
+    .co-btn.done { background: linear-gradient(135deg, var(--accent), #00b380); color: #fff; }
+    .co-btn.done:disabled { opacity: .4; }
+    .co-btn.ghost { background: var(--panel2); border: 1px solid var(--line); color: var(--txt); }
+    .co-btn .sub { display: block; font-size: 11px; font-weight: 600; opacity: .85; margin-top: 2px; }
+
+    /* lock screen */
+    .lock { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 30px; text-align: center; z-index: 50; background: var(--bg); }
+    .lock .ic { width: 70px; height: 70px; border-radius: 50%; background: var(--panel2); display: flex; align-items: center; justify-content: center; font-size: 30px; color: var(--warn); }
+    .lock h3 { font-size: 18px; }
+    .lock p { color: var(--dim); font-size: 14px; line-height: 1.7; }
+    .lock .retry { padding: 12px 26px; border-radius: 10px; border: none; background: var(--accent); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; }
+
+    /* modal (employee picker / invoice detail) */
+    .overlay { position: absolute; inset: 0; background: rgba(0,0,0,.65); z-index: 60; display: none; align-items: flex-end; }
+    .sheet {
+      width: 100%; background: var(--panel); border-radius: 18px 18px 0 0; padding: 16px; max-height: 78%;
+      overflow-y: auto;
+    }
+    .sheet h3 { font-size: 16px; margin-bottom: 10px; }
+    .sheet .x { float: left; background: none; border: none; color: var(--dim); font-size: 20px; cursor: pointer; }
+    .emp {
+      padding: 13px 14px; border-radius: 10px; background: var(--panel2); margin-bottom: 8px;
+      cursor: pointer; font-weight: 700; font-size: 15px;
+    }
+    .emp.sel { background: var(--accent); color: #fff; }
+
+    /* success */
+    .success { position: absolute; inset: 0; background: var(--bg); z-index: 70; display: none; flex-direction: column; align-items: center; padding: 30px 18px; overflow-y: auto; }
+    .success .big { width: 84px; height: 84px; border-radius: 50%; background: rgba(46,204,113,.14); display: flex; align-items: center; justify-content: center; font-size: 40px; color: var(--ok); margin-top: 22px; }
+    .success h2 { margin-top: 14px; font-size: 21px; }
+    .success .num { color: var(--accent); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 17px; margin-top: 4px; }
+    .success .items { width: 100%; margin-top: 18px; }
+    .success .srow { display: flex; justify-content: space-between; padding: 7px 2px; font-size: 13px; border-bottom: 1px solid var(--line); color: var(--dim); }
+    .success .srow b { color: var(--txt); }
+    .sbtn {
+      width: 100%; margin-top: 18px; padding: 15px; border-radius: 12px; border: none; font-size: 16px; font-weight: 800; cursor: pointer;
+      background: var(--accent); color: #fff;
+    }
+    .sbtn.ghost { background: var(--panel2); border: 1px solid var(--line); color: var(--txt); margin-top: 10px; }
+
+    /* invoices */
+    .inv {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; cursor: pointer;
+    }
+    .inv .h { display: flex; justify-content: space-between; align-items: center; }
+    .inv .n { font-weight: 800; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; color: var(--accent); }
+    .inv .d { font-size: 11px; color: var(--dim); }
+    .inv .who { font-size: 13px; color: var(--txt); margin-top: 6px; font-weight: 600; }
+    .inv .sub { font-size: 11px; color: var(--dim); margin-top: 3px; display: flex; justify-content: space-between; }
+    .inv .amt { color: var(--accent); font-weight: 800; font-size: 15px; }
+    .empty { text-align: center; color: var(--dim); font-size: 14px; padding: 40px 20px; }
+
+    .toast {
+      position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%);
+      background: #202d44; color: #e6edf7; padding: 11px 18px; border-radius: 10px; font-size: 14px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.4); z-index: 90; display: none; max-width: 86%; text-align: center;
+    }
+    .toast.err { background: var(--danger); color: #fff; }
+    .toast.ok { background: var(--ok); color: #fff; }
+
+    .notes { font-size: 11px; color: var(--dim); text-align: center; padding: 8px 0 12px; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <span class="dot" id="connDot"></span>
+    <span class="title" id="storeName">ZMT البيع</span>
+    <span class="pill" id="sellerPill" onclick="openSellerPicker()"><span id="sellerName">اختر الموظف</span> <span class="caret">▾</span></span>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" id="tabPos" onclick="switchView('pos')">البيع</button>
+    <button class="tab badge" id="tabInv" onclick="switchView('invoices')">الفواتير</button>
+  </div>
+
+  <!-- POS view -->
+  <div class="view active" id="view-pos">
+    <div class="pos-led">
+      <div class="led-label"><span class="led-dot"></span> الإجمالي</div>
+      <div class="led-val" id="ledTotal" dir="ltr">0.00 دج</div>
+    </div>
+    <div class="searchbar">
+      <input id="searchInput" placeholder="ابحث بالاسم، الباركود، المرجع، الماركة…" autocomplete="off">
+      <button class="iconbtn" onclick="toggleScanner()">&#128247;</button>
+    </div>
+    <div class="modes" id="modeRow">
+      <button class="mode active" data-mode="unit" onclick="setMode('unit')">وحدة</button>
+      <button class="mode" data-mode="wholesale" onclick="setMode('wholesale')">جملة</button>
+      <button class="mode" data-mode="manual" onclick="setMode('manual')">يدوي</button>
+    </div>
+
+    <div class="party">
+      <div class="grow" id="partyBox">
+        <input id="partyInput" placeholder="عميل / مورّد…" autocomplete="off">
+      </div>
+      <button class="pill" id="supToggle" onclick="toggleSupMode()">مورد</button>
+    </div>
+    <div class="party-results" id="partyResults"></div>
+
+    <div class="scroll" id="productList"></div>
+
+    <div id="cartWrap" style="display:none;flex:1;min-height:0;flex-direction:column;">
+      <div class="scroll" style="flex:1;" id="cartList"></div>
+      <div class="cart-actions">
+        <button class="ghostbtn" onclick="__PS.emptyCart()">تفريغ</button>
+        <button class="checkoutbtn" id="openCheckout" onclick="openCheckoutSheet()">إتمام الدفع
+          <span class="sub" id="checkoutSub"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Invoices view -->
+  <div class="view" id="view-invoices">
+    <div class="searchbar" style="display:none;"></div>
+    <div class="scroll" id="invoiceList"><div class="empty">جارٍ التحميل…</div></div>
+  </div>
+
+  <div class="notes">يعمل على نفس شبكة متجر ZMT PIECE</div>
+
+  <!-- vendor hidden video for camera scaner -->
+  <video id="scanVideo" playsinline muted style="display:none;"></video>
+
+  <!-- employee picker -->
+  <div class="overlay" id="sellerOverlay" onclick="if(event.target===this)closeSellerPicker()">
+    <div class="sheet">
+      <h3>اختر الموظف الذي يبيع <button class="x" onclick="closeSellerPicker()">✕</button></h3>
+      <div id="sellerList"></div>
+    </div>
+  </div>
+
+  <!-- checkout sheet -->
+  <div class="overlay" id="checkoutOverlay" onclick="if(event.target===this)closeCheckoutSheet()">
+    <div class="sheet" id="checkoutSheet">
+      <h3>إتمام البيع <span id="checkoutInfo"></span> <button class="x" onclick="closeCheckoutSheet()">✕</button></h3>
+
+      <div class="co-lines" id="coLines"></div>
+
+      <div class="totals" id="totalsBox" style="padding:4px 2px;"></div>
+
+      <div class="pay">
+        <div class="pm">
+          <button id="pmCash" class="active" onclick="setPayMethod('cash')">نقداً</button>
+          <button id="pmCcp" onclick="setPayMethod('ccp')">CCP</button>
+          <button id="pmMixed" onclick="setPayMethod('mixed')">الإثنان معاً</button>
+        </div>
+        <div class="paid-row" id="paidRow">
+          <input id="paidSingle" type="text" inputmode="decimal" class="num-input" dir="ltr" placeholder="المبلغ المدفوع" value="0">
+          <input id="paidCash" type="text" inputmode="decimal" class="num-input" dir="ltr" placeholder="نقداً" value="0" style="display:none;">
+          <input id="paidCcp" type="text" inputmode="decimal" class="num-input" dir="ltr" placeholder="CCP" value="0" style="display:none;">
+        </div>
+        <div class="credit" id="creditRow" style="display:none;">
+          <input type="checkbox" id="creditChk">
+          <label for="creditChk">استخدام رصيد العميل (المتاح: <b id="creditAvail">0</b>)</label>
+        </div>
+        <div class="remaining" id="remainingTxt"></div>
+      </div>
+
+      <div class="co-actions">
+        <button class="co-btn ghost" onclick="__PS.emptyCart()">تفريغ</button>
+        <button class="co-btn done" id="confirmBtn" onclick="confirmSale()">تأكيد البيع / تحويل الفاتورة
+          <span class="sub" id="confirmSub"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="lock" id="lockScreen">
+    <div class="ic">&#128274;</div>
+    <h3 id="lockTitle">البيع غير مفعّل</h3>
+    <p id="lockDesc">يتعذر الاتصال أو أن البيع من الهاتف غير مُفعّل على هذا الجهاز. تحقق من إعدادات الاتصال في برنامج ZMT PIECE.</p>
+    <button class="retry" onclick="retryConnect()">إعادة المحاولة</button>
+  </div>
+
+  <div class="success" id="successView"></div>
+  <div class="toast" id="toast"></div>
+
+  <script src="vendor/zxing.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

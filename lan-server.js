@@ -11,6 +11,7 @@ let _sockets = new Map();
 let _getWindow = null;
 let _reconnectTimer = null;
 let _reconnectDelay = 2000;
+let _subPingTimer = null;
 let _stopped = false;
 
 function setWindowGetter(fn) { _getWindow = fn; }
@@ -101,6 +102,7 @@ function stop() {
   _activePort = 0;
   stopHeartbeat();
   if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+  if (_subPingTimer) { clearInterval(_subPingTimer); _subPingTimer = null; }
   if (_server) { try { _server.close(); } catch (e) {} _server = null; }
   for (const s of _sockets.keys()) { try { s.destroy(); } catch (e) {} }
   _sockets.clear();
@@ -133,17 +135,25 @@ function startServer() {
         server = net.createServer((socket) => {
           socket.setEncoding('utf8');
           socket.setNoDelay(true);
+          socket.setKeepAlive(true, 10000);
+          socket.setTimeout(20000);
+          socket.on('timeout', () => { try { socket.destroy(); } catch (e) {} });
           let buffer = '';
           socket.on('data', (chunk) => {
             buffer = parseLines(buffer + chunk, (msg) => {
               if (msg.type === 'hello' && msg.role === 'test') return;
+              if (msg.type === 'ping') {
+                writeSocket(socket, { type: 'pong' });
+                return;
+              }
               if (msg.type === 'hello') {
                 _sockets.set(socket, true);
                 writeSocket(socket, { type: 'hello', role: 'main' });
                 sendStatus();
               }
               sendToRenderer(msg);
-              if (msg.type === 'ops' || msg.type === 'snapshot') {
+              if (msg.type === 'ops' || msg.type === 'snapshot' ||
+                  (typeof msg.type === 'string' && msg.type.indexOf('rest-') === 0)) {
                 sendToPeers(msg, socket);
               }
             });
@@ -200,22 +210,31 @@ function connectSub() {
     _subSocket = socket;
     socket.setEncoding('utf8');
     socket.setNoDelay(true);
+    socket.setKeepAlive(true, 10000);
+    socket.setTimeout(20000);
+    socket.on('timeout', () => { try { socket.destroy(); } catch (e) {} });
     let buffer = '';
     socket.on('connect', () => {
       _reconnectDelay = 2000;
       sendStatus();
       writeSocket(socket, { type: 'hello', role: 'sub' });
+      if (_subPingTimer) clearInterval(_subPingTimer);
+      _subPingTimer = setInterval(() => {
+        if (_subSocket === socket && !socket.destroyed) writeSocket(socket, { type: 'ping', ts: Date.now() });
+      }, 10000);
     });
     socket.on('data', (chunk) => {
       buffer = parseLines(buffer + chunk, (msg) => sendToRenderer(msg));
     });
     socket.on('close', () => {
       if (_subSocket === socket) _subSocket = null;
+      if (_subPingTimer) { clearInterval(_subPingTimer); _subPingTimer = null; }
       sendStatus();
       scheduleReconnect();
     });
     socket.on('error', (err) => {
       if (_subSocket === socket) _subSocket = null;
+      if (_subPingTimer) { clearInterval(_subPingTimer); _subPingTimer = null; }
       socket.destroy();
       sendStatus();
       scheduleReconnect();

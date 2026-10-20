@@ -1,6 +1,6 @@
 {
   "name": "zmt-piece",
-  "version": "2.2.5",
+  "version": "2.9.0",
   "description": "ZMT PIECE - برنامج إدارة قطع غيار السيارات",
   "main": "main.js",
   "author": "ZERIBIT MOHAMMED TAHAR - ZMT SOFTWARE",
@@ -9,9 +9,22 @@
     "start": "electron . --no-sandbox",
     "dev": "electron . --dev --no-sandbox",
     "debug": "electron . --no-sandbox --disable-gpu --enable-logging",
-    "dist": "electron-builder --win --x64",
+    "dist": "electron-builder --win --x64 --ia32 && node scripts/verify-installers.js",
+    "dist:x64": "electron-builder --win --x64",
+    "dist:ia32": "electron-builder --win --ia32",
     "dist:all": "electron-builder --win",
-    "dist:dir": "electron-builder --win --x64 --dir"
+    "dist:dir": "electron-builder --win --x64 --dir",
+    "dist:win7": "electron-builder --win --x64 --ia32 --config win7.builder.json && node scripts/verify-installers.js",
+    "verify:installers": "node scripts/verify-installers.js",
+    "verify:display": "node renderer/tests/display-settings-verify.js",
+    "verify:merge": "node renderer/tests/merge-waybills-verify.js",
+    "verify:thermal": "node renderer/tests/thermal-verify.js",
+    "verify:copy": "scripts/verify-copy.cmd",
+    "publish:update": "node tools/publish-update.js",
+    "phone-keygen": "node tools/phone-signer.js generate",
+    "phone-issue": "node tools/phone-signer.js issue",
+    "embed-pubkey": "node tools/embed-pubkey.js",
+    "test:license": "node renderer/tests/license-phone-test.js && node renderer/tests/license-net-test.js"
   },
   "build": {
     "appId": "com.zmtsoftware.piece",
@@ -26,7 +39,23 @@
       "license.js",
       "firebird.js",
       "lan-server.js",
+      "printer-net.js",
+      "phone-scanner.js",
+      "phone-cert.js",
       "renderer/**/*",
+      "!renderer/**/*.bak*",
+      "!renderer/**/*.backup",
+      "!renderer/**/*.ok",
+      "!renderer/**/*.new",
+      "!renderer/**/*.old",
+      "!renderer/**/*.orig",
+      "!renderer/**/*.tmp",
+      "!renderer/**/*~",
+      "!renderer/**/*.fixed",
+      "!renderer/**/*.fix",
+      "!renderer/**/*.clean",
+      "!renderer/**/*.test",
+      "!renderer/**/*.test.js",
       "assets/**/*",
       "supabase/**/*",
       "node_modules/**/*"
@@ -58,12 +87,13 @@
         {
           "target": "nsis",
           "arch": [
-            "x64"
+            "x64",
+            "ia32"
           ]
         }
       ],
       "icon": "assets/icon.ico",
-      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}",
       "signExecutable": false
     },
     "nsis": {
@@ -85,12 +115,19 @@
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
+    "@electron/asar": "^4.3.0",
     "@supabase/supabase-js": "^2.110.8",
+    "@zxing/library": "^0.23.0",
     "chart.js": "^4.5.1",
     "iconv-lite": "^0.7.3",
+    "node-forge": "^1.3.1",
+    "nodemailer": "^6.10.1",
     "papaparse": "^5.5.4",
+    "qrcode-generator": "^2.0.4",
     "simple-icons": "^16.25.0",
     "sql.js": "^1.14.1",
-    "xlsx": "^0.18.5"
+    "ws": "^8.21.3",
+    "xlsx": "^0.18.5",
+    "xlsx-js-style": "^1.2.0"
   }
 }

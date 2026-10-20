@@ -4,6 +4,47 @@
 
 let _siStores = [];
 let _siStoreData = {};
+let _siOpenView = null; // { code, name } of the currently open store detail
+
+// Active company scope. When a company is active, shared inventory only shows
+// products tagged with that company (companyId). Global products (untagged)
+// are shown too. Returns '' when no company is active (unfiltered).
+function _siActiveCompanyId() {
+  try {
+    if (typeof Auth !== 'undefined' && Auth.getCompanyId) return (Auth.getCompanyId() || '');
+  } catch (e) {}
+  return '';
+}
+
+// Codes of the branches explicitly attached to the active company. Empty when no
+// company is active → no store-list restriction.
+function _siCompanyStoreCodes() {
+  try {
+    const cid = _siActiveCompanyId();
+    if (!cid) return [];
+    const c = (typeof DB !== 'undefined' && DB.getCompany) ? DB.getCompany(cid) : null;
+    if (!c || !Array.isArray(c.storeCodes)) return [];
+    return c.storeCodes.map(String);
+  } catch (e) {
+    return [];
+  }
+}
+
+function _siIsInActiveCompany(code) {
+  const set = _siCompanyStoreCodes();
+  if (!set.length) return true; // no active company → unrestricted
+  return set.indexOf(String(code)) !== -1;
+}
+
+function _siCompanyRestricts() {
+  return _siCompanyStoreCodes().length > 0;
+}
+
+function _siScopeProducts(products) {
+  const cid = _siActiveCompanyId();
+  if (!cid || !Array.isArray(products)) return products;
+  return products.filter(p => !p.companyId || p.companyId === cid);
+}
 
 function init_shared_inventory() {
   siLoadStores();
@@ -15,11 +56,22 @@ async function siLoadStores() {
 
   try {
     _siStores = await CloudService.listAccessibleStores();
+
+    // Restrict the visible store list to the active company when one is chosen.
+    // The main store always stays in the list (it belongs to the user's family);
+    // branches keep only those explicitly attached to the active company.
+    if (_siCompanyRestricts()) {
+      const myCode = Auth.getUserCode();
+      _siStores = _siStores.filter(s =>
+        s.type === 'main' || s.code === myCode || _siIsInActiveCompany(s.code)
+      );
+    }
+
     _siStoreData = {};
 
     const loadPromises = _siStores.map(async (s) => {
       try {
-        const products = await CloudService.downloadStoreInventory(s.code);
+        const products = _siScopeProducts(await CloudService.downloadStoreInventory(s.code));
         _siStoreData[s.code] = { products: products || [], loaded: true };
       } catch {
         _siStoreData[s.code] = { products: [], loaded: false };
@@ -30,9 +82,9 @@ async function siLoadStores() {
 
     // Also load own products for cross-store search
     const myCode = Auth.getUserCode();
-    _siStoreData[myCode] = { products: DB.getProducts(), loaded: true, isOwn: true };
+    _siStoreData[myCode] = { products: _siScopeProducts(DB.getProducts()), loaded: true, isOwn: true };
     if (!_siStores.find(s => s.code === myCode)) {
-      _siStores.unshift({ code: myCode, name: localStorage.getItem('zmt_store_name') || 'محلك', type: Auth.getStoreType() });
+      _siStores.unshift({ code: myCode, name: _siOwnStoreName(), type: Auth.getStoreType() });
     }
 
     loading.style.display = 'none';
@@ -75,6 +127,7 @@ async function siLoadStores() {
 }
 
 function siShowStoreDetail(code, name) {
+  _siOpenView = { code, name };
   document.getElementById('siStoresList').style.display = 'none';
   document.getElementById('siStoreDetail').style.display = '';
   document.getElementById('siDetailName').textContent = name;
@@ -144,14 +197,14 @@ function siSearchProduct(q) {
   for (const [storeCode, d] of Object.entries(_siStoreData)) {
     if (!d || !d.loaded || !d.products) continue;
     const storeName = d.isOwn
-      ? (localStorage.getItem('zmt_store_name') || 'محلك')
+      ? _siOwnStoreName()
       : (_siStores.find(s => s.code === storeCode)?.name || storeCode);
 
     for (const p of d.products) {
-      if (!q || productMatchesQuery(p.name, p.barcode, q)) {
+      if (!q || productMatchesQuery(p.name, p.barcode, q, p.mark, p.reference, p.countryOfOrigin)) {
         allResults.push({
           ...p, storeCode, storeName, isOwn: d.isOwn,
-          score: q ? productSearchScore(p.name, p.barcode, q) : 0,
+          score: q ? productSearchScore(p.name, p.barcode, q, p.mark, p.reference, p.countryOfOrigin) : 0,
         });
       }
     }
@@ -192,6 +245,39 @@ function siSearchProduct(q) {
 }
 
 function siBackToList() {
+  _siOpenView = null;
   document.getElementById('siStoresList').style.display = '';
   document.getElementById('siStoreDetail').style.display = 'none';
 }
+
+// Display name for "my store": prefers the active company's store name (per-company,
+// persists with its backup), otherwise the global store name.
+function _siOwnStoreName() {
+  try {
+    if (typeof DB !== 'undefined' && DB.getActiveCompanyStoreName) {
+      const n = DB.getActiveCompanyStoreName();
+      if (n) return n;
+    }
+  } catch (e) {}
+  try {
+    const local = localStorage.getItem('zmt_store_name') || '';
+    if (local) return local;
+  } catch (e) {}
+  return 'محلك';
+}
+
+// ===== LAN SYNC HANDLER =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['shared-inventory'] = function siSyncData() {
+  // This page renders OTHER stores' cloud data, so a LAN peer's DB change must
+  // never trigger the old destructive script re-injection. The only local state
+  // worth refreshing is our own store's inventory slice.
+  const myCode = Auth.getUserCode();
+  if (myCode && _siStoreData[myCode]) {
+    _siStoreData[myCode].products = _siScopeProducts(DB.getProducts());
+  }
+  if (_siOpenView && _siOpenView.code === myCode) {
+    const el = document.getElementById('siInventoryContent');
+    if (el && el.isConnected) siShowStoreDetail(myCode, _siOpenView.name);
+  }
+};

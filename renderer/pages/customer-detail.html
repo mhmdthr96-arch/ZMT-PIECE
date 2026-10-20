@@ -11,7 +11,7 @@
   <div class="page-body">
     <!-- Customer Info Card -->
     <div class="sd-info-card">
-      <div class="sd-info-avatar" id="cdAvatar" style="background:linear-gradient(135deg,#0066B1,#004080)">
+      <div class="sd-info-avatar" id="cdAvatar" style="background:linear-gradient(135deg,var(--bmw-blue-1),var(--bmw-blue-2))">
         <i class="fas fa-user"></i>
       </div>
       <div class="sd-info-body">
@@ -20,6 +20,7 @@
         <div style="margin-top:6px;font-size:12px;font-weight:600;color:#e65100" id="cdDiscount"></div>
       </div>
       <div class="sd-info-actions">
+        <button class="btn btn-sm" onclick="openBalanceEditModal('customer', _cdCustomerId)" title="تعديل الرصيد" id="cdBalEditBtn"><i class="fas fa-coins"></i></button>
         <button class="btn btn-sm" onclick="showCdEditForm()" title="تعديل" data-i18n-title="common.edit"><i class="fas fa-edit"></i></button>
         <button class="btn btn-sm btn-danger" onclick="confirmCdDelete()" title="حذف" data-i18n-title="common.delete"><i class="fas fa-trash"></i></button>
       </div>
@@ -65,17 +66,23 @@
 
     <!-- Invoices Tab -->
     <div id="cdTabInvoices" class="sd-tab-content">
-      <div class="toolbar" style="margin-bottom:12px">
-        <div class="search-bar" style="flex:1">
+      <div class="toolbar" style="margin-bottom:12px;gap:8px;flex-wrap:wrap">
+        <div class="search-bar" style="flex:1;min-width:170px">
           <i class="fas fa-search"></i>
           <input type="text" placeholder="بحث في الفواتير..." data-i18n-placeholder="invoices.search" id="cdInvSearch" oninput="filterCdInvoices(this.value)">
         </div>
+        <button class="btn btn-primary" id="cdMergeBtn" onclick="openCdMerge()" style="white-space:nowrap;display:none">
+          <i class="fas fa-layer-group"></i>
+          <span data-i18n="merge.button">دمج وصل التسليم</span>
+          <span class="badge badge-info" id="cdMergeCount" style="margin-inline-start:4px">0</span>
+        </button>
       </div>
       <div id="cdInvoicesList"></div>
     </div>
 
     <!-- History Tab -->
     <div id="cdTabHistory" class="sd-tab-content" style="display:none">
+      <div class="rec-stats" id="cdHistoryStats" style="margin-bottom:18px"></div>
       <div id="cdHistoryList"></div>
     </div>
 
@@ -156,6 +163,18 @@
         <input type="text" class="form-input" id="cdEditAddress">
       </div>
       <div class="form-group">
+        <label data-i18n="customers.formEmail">البريد الإلكتروني (اختياري)</label>
+        <input type="email" class="form-input" id="cdEditEmail" placeholder="example@domain.com" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="customers.formType">نوع العميل</label>
+        <select class="form-input" id="cdEditType">
+          <option value="unit" data-i18n="customers.typeUnit">قطعة</option>
+          <option value="whole" data-i18n="customers.typeWhole">جملة</option>
+        </select>
+        <small style="color:var(--silver-500);font-size:11px" data-i18n="customers.formTypeHelp">يحدد السعر الافتراضي في صفحة البيع (يمكن تغييره لكل منتج داخل السلة)</small>
+      </div>
+      <div class="form-group">
         <label data-i18n="customers.formDiscount">نسبة الخصم (%)</label>
         <input type="number" class="form-input no-spinner" id="cdEditDiscount" min="0" max="100" step="0.001">
       </div>
@@ -163,6 +182,83 @@
     <div class="modal-footer">
       <button class="btn" onclick="document.getElementById('cdEditModal').style.display='none'"><span data-i18n="common.cancel">إلغاء</span></button>
       <button class="btn btn-success" onclick="confirmCdEdit()"><i class="fas fa-check"></i> <span data-i18n="common.save">حفظ</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Merge Waybills (وصول التسليم) into one Sale Invoice Modal -->
+<div class="modal-overlay" id="cdMergeModal" style="display:none;z-index:100000" onclick="if(event.target===this)closeCdMerge()">
+  <div class="modal" style="max-width:780px;width:95%;max-height:92vh;display:flex;flex-direction:column">
+    <div class="modal-header">
+      <h3><i class="fas fa-layer-group"></i> <span data-i18n="merge.title">دمج وصل التسليم في فاتورة بيع</span></h3>
+      <button class="modal-close" onclick="closeCdMerge()">&times;</button>
+    </div>
+    <div class="modal-body" style="flex:1;overflow-y:auto;padding:16px 20px;direction:rtl">
+
+      <p style="font-size:12px;color:var(--silver-600);margin:0 0 14px;line-height:1.75" data-i18n="merge.hint"></p>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <strong style="font-size:13px" data-i18n="merge.listTitle"></strong>
+        <div style="display:flex;gap:6px">
+          <button type="button" class="btn btn-sm" onclick="cdMergeSelectAll()"><i class="fas fa-check-double"></i> <span data-i18n="merge.selectAll"></span></button>
+          <button type="button" class="btn btn-sm" onclick="cdMergeSelectNone()"><i class="fas fa-eraser"></i> <span data-i18n="merge.selectNone"></span></button>
+        </div>
+      </div>
+      <div id="cdMergeList" class="cd-merge-list"></div>
+
+      <div class="cd-merge-block">
+        <div class="cd-merge-block-title"><i class="far fa-calendar-alt"></i> <span data-i18n="merge.dateTime"></span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <label class="cd-merge-label" for="cdMergeDate" data-i18n="merge.date"></label>
+            <input type="date" class="form-input" id="cdMergeDate">
+          </div>
+          <div>
+            <label class="cd-merge-label" for="cdMergeTime" data-i18n="merge.time"></label>
+            <input type="time" class="form-input" id="cdMergeTime">
+          </div>
+        </div>
+      </div>
+
+      <div class="cd-merge-block">
+        <div class="cd-merge-block-title">
+          <i class="fas fa-money-bill-wave"></i> <span data-i18n="merge.payTitle"></span>
+          <span id="cdMergeRecorded" style="font-weight:400;font-size:11px;color:var(--silver-500);margin-inline-start:6px"></span>
+        </div>
+        <div class="sales-pay-methods" style="margin-bottom:10px">
+          <button type="button" class="pay-method-btn active" data-method="cash" onclick="cdMergeSetMethod('cash')" data-i18n="sales.payCash">نقداً</button>
+          <button type="button" class="pay-method-btn" data-method="ccp" onclick="cdMergeSetMethod('ccp')" data-i18n="sales.payCcp">CCP</button>
+          <button type="button" class="pay-method-btn" data-method="mixed" onclick="cdMergeSetMethod('mixed')" data-i18n="sales.payBoth">الاثنان معاً</button>
+        </div>
+        <div id="cdMergeSinglePay">
+          <div class="sales-pay-label" data-i18n="sales.paidLabel"></div>
+          <div class="sales-pay-row">
+            <input type="text" class="no-spinner sales-pay-input num-input" inputmode="decimal" id="cdMergePaid" value="0" dir="ltr" oninput="cdMergeRefresh()">
+            <span class="sales-pay-currency">DA</span>
+            <button type="button" class="sales-pay-full" onclick="cdMergePayFull()"><i class="fas fa-check-circle"></i> <span data-i18n="common.payFull"></span></button>
+          </div>
+        </div>
+        <div id="cdMergeMixedPay" style="display:none">
+          <div class="sales-pay-label" data-i18n="sales.cashAmount"></div>
+          <div class="sales-pay-row">
+            <input type="text" class="no-spinner sales-pay-input num-input" inputmode="decimal" id="cdMergeCash" value="0" dir="ltr" oninput="cdMergeRefresh()">
+            <span class="sales-pay-currency">DA</span>
+          </div>
+          <div class="sales-pay-label" data-i18n="sales.ccpAmount"></div>
+          <div class="sales-pay-row">
+            <input type="text" class="no-spinner sales-pay-input num-input" inputmode="decimal" id="cdMergeCcp" value="0" dir="ltr" oninput="cdMergeRefresh()">
+            <span class="sales-pay-currency">DA</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="cd-merge-summary" id="cdMergeSummary"></div>
+
+    </div>
+    <div class="modal-footer" style="flex-wrap:wrap;gap:8px">
+      <span style="font-size:11px;color:#1a7f37;flex:1;min-width:150px"><i class="fas fa-shield-alt"></i> <span data-i18n="merge.stockSafe"></span></span>
+      <button class="btn" onclick="closeCdMerge()" data-i18n="common.cancel">إلغاء</button>
+      <button class="btn btn-success" id="cdMergeConfirmBtn" onclick="cdMergeConfirm()"><i class="fas fa-layer-group"></i> <span data-i18n="merge.confirm"></span></button>
     </div>
   </div>
 </div>

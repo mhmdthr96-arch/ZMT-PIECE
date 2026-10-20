@@ -23,10 +23,10 @@
 
       <div class="card">
         <div class="card-body" style="text-align:center;padding:28px">
-          <i class="fas fa-download" style="font-size:42px;color:#0066B1;margin-bottom:12px"></i>
+          <i class="fas fa-download" style="font-size:42px;color:var(--bmw-blue-1);margin-bottom:12px"></i>
           <h3 style="color:var(--silver-800);margin-bottom:6px" data-i18n="backup.c2">استعادة نسخة</h3>
           <p style="color:var(--silver-500);font-size:12px;margin-bottom:16px" data-i18n="backup.c2desc">استيراد بيانات من ملف .zmt-backup</p>
-          <button id="btnBackupRestore" class="btn btn-primary" style="background:#0066B1" data-i18n="backup.c2btn">
+          <button id="btnBackupRestore" class="btn btn-primary" style="background:var(--bmw-blue-1)" data-i18n="backup.c2btn">
             <i class="fas fa-upload"></i> استيراد
           </button>
         </div>
@@ -60,6 +60,11 @@
         <p style="color:var(--silver-600);font-size:13px;margin-bottom:14px" data-i18n="backup.clearDataDesc">
           مسح كل البيانات من التطبيق — يُستخدم لاختبار استعادة النسخة الاحتياطية
         </p>
+        <div style="background:#fff3cd;color:#856404;border:1px solid #ffe69c;border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.6;margin-bottom:14px;text-align:right">
+          <i class="fas fa-exclamation-triangle"></i>
+          <strong>تنبيه:</strong> إن كانت «المزامنة السحابية» أو شبكة «LAN» مفعّلة، قد تُعاد البيانات لاحقاً.
+          يُفضّل إيقاف المزامنة السحابية (والانفصال عن LAN) قبل المسح للحصول على مسح نهائي.
+        </div>
         <button id="btnDeleteData" class="btn" style="background:#dc3545;color:#fff;border:none">
           <i class="fas fa-trash"></i> <span data-i18n="backup.deleteAllBtn">حذف كل البيانات</span>
         </button>
@@ -179,6 +184,8 @@
           <h4 style="color:var(--silver-800);margin-bottom:4px"><i class="fas fa-database"></i> <span data-i18n="migration.fullImportPanelTitle">استيراد شامل لكل البيانات</span></h4>
           <p style="font-size:12px;color:var(--silver-600);margin-bottom:12px" data-i18n="migration.fullImportPanelDesc">تم اكتشاف قاعدة بيانات Sable Stock / Gestion Stock — يمكن استيراد كل شيء دفعة واحدة: العملاء، الموردون، المنتجات بالأسعار، الفواتير والمرتجعات.</p>
           <button class="btn btn-primary" id="migrationFullImportBtn" onclick="startGestionStockFullImport()"><i class="fas fa-rocket"></i> <span data-i18n="migration.fullImportBtn">استيراد شامل</span></button>
+          <button class="btn" id="migrationBalanceSyncBtn" onclick="window.startBalanceSyncFromGestion ? window.startBalanceSyncFromGestion() : null" style="margin-left:8px" title="تصحيح أرصدة العملاء والموردين من قاعدة Gestion Stock القديمة دون إعادة استيراد"><i class="fas fa-exchange-alt"></i> <span data-i18n="balanceTools.syncBtn">مزامنة الأرصدة من STOCK.FDB</span></button>
+          <button class="btn" id="migrationStockSyncBtn" onclick="window.startStockSyncFromGestion ? window.startStockSyncFromGestion() : null" style="margin-left:8px" title="تصحيح كميات المنتجات من جدول ARTICLES في قاعدة Gestion Stock القديمة دون إعادة استيراد"><i class="fas fa-cubes"></i> <span data-i18n="stockTools.syncBtn">مزامنة المخزون من STOCK.FDB</span></button>
         </div>
       </div>
       <!-- Full Import Brand Selection Popup -->

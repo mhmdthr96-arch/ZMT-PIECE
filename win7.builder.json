@@ -1,0 +1,72 @@
+{
+  "electronVersion": "22.3.27",
+  "appId": "com.zmtsoftware.piece",
+  "productName": "ZMT PIECE",
+  "copyright": "Copyright © 2026 ZERIBIT MOHAMMED TAHAR — ZMT SOFTWARE",
+  "directories": {
+    "output": "dist-win7"
+  },
+  "files": [
+    "main.js",
+    "preload.js",
+    "license.js",
+    "firebird.js",
+    "lan-server.js",
+    "printer-net.js",
+    "phone-scanner.js",
+    "phone-cert.js",
+    "renderer/**/*",
+    "assets/**/*",
+    "supabase/**/*",
+    "node_modules/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "assets",
+      "to": "assets",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "firebird-runtime",
+      "to": "firebird",
+      "filter": [
+        "**/*"
+      ]
+    },
+    "AnyDesk.exe"
+  ],
+  "asar": true,
+  "asarUnpack": [
+    "node_modules/sql.js/**",
+    "node_modules/@supabase/**"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64",
+          "ia32"
+        ]
+      }
+    ],
+    "icon": "assets/icon.ico",
+    "artifactName": "${productName}-Setup-${version}-win7-${arch}.${ext}",
+    "signExecutable": false
+  },
+  "nsis": {
+    "include": "build/installer-win7.nsh",
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "ZMT PIECE",
+    "unicode": true,
+    "license": "build/eula.txt",
+    "language": "1025"
+  }
+}

@@ -54,6 +54,49 @@
     return bytesToBase64(pako.gzip(JSON.stringify(obj)));
   }
 
+  // Async variant used by the periodic auto-backup. JSON.stringify still runs on
+  // this thread (the object is live and has to be snapshotted first), but the
+  // compression is handed to the browser's native CompressionStream, which works
+  // off the main thread — the synchronous gzip of a ~4 MB database used to
+  // freeze the UI for hundreds of milliseconds every few minutes. Output is the
+  // same standard gzip (magic bytes 0x1f 0x8b), so every existing reader keeps
+  // working. Falls back to the synchronous path where CompressionStream is
+  // unavailable or throws.
+  async function gzipToBase64Async(obj) {
+    const json = JSON.stringify(obj);
+    if (typeof CompressionStream === 'undefined' || typeof Blob === 'undefined') {
+      return bytesToBase64(pako.gzip(json));
+    }
+    try {
+      const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'));
+      const buf = await new Response(stream).arrayBuffer();
+      return bytesToBase64(new Uint8Array(buf));
+    } catch (e) {
+      console.warn('[Backup] CompressionStream failed, falling back to pako:', e && e.message);
+      return bytesToBase64(pako.gzip(json));
+    }
+  }
+
+  // Async gzip → Blob, the CompressionStream twin of gzipBlob(). The Supabase
+  // upload path uses gzipBlob() (synchronous pako) on the main thread for every
+  // backup part, which froze the UI for hundreds of ms on a large database.
+  async function gzipBlobAsync(obj) {
+    const json = JSON.stringify(obj);
+    let bytes;
+    if (typeof CompressionStream === 'undefined' || typeof Blob === 'undefined') {
+      bytes = pako.gzip(json);
+    } else {
+      try {
+        const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'));
+        bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+      } catch (e) {
+        console.warn('[Backup] CompressionStream failed, falling back to pako:', e && e.message);
+        bytes = pako.gzip(json);
+      }
+    }
+    return new Blob([bytes], { type: 'application/gzip' });
+  }
+
   // Parse base64 file contents (local .zmt-backup files) into a JSON
   // object, decompressing first when the file is gzip.
   function parseBase64(b64) {
@@ -66,6 +109,8 @@
 
   window._zmtParseBlob = parseBlob;
   window._zmtGzipBlob = gzipBlob;
+  window._zmtGzipBlobAsync = gzipBlobAsync;
   window._zmtGzipToBase64 = gzipToBase64;
+  window._zmtGzipToBase64Async = gzipToBase64Async;
   window._zmtParseBase64 = parseBase64;
 })();

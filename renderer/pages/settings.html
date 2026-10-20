@@ -11,10 +11,14 @@
       <div class="card-header"><i class="fas fa-sliders-h"></i> <span data-i18n="settings.general">الإعدادات العامة</span></div>
       <div class="card-body">
         <div class="settings-group">
-          <div class="setting-row">
-            <label data-i18n="settings.storeName">اسم المتجر</label>
-            <input type="text" class="form-input" id="settingsStoreName" value="ZMT PIECE" style="width:300px">
-          </div>
+<div class="setting-row">
+              <label data-i18n="settings.storeName">اسم المتجر</label>
+              <input type="text" class="form-input" id="settingsStoreName" value="ZMT PIECE" style="width:300px">
+            </div>
+            <div class="setting-row">
+              <label data-i18n="settings.companyName">اسم الشركة النشطة</label>
+              <input type="text" class="form-input" id="settingsCompanyName" placeholder="اسم الشركة (اختياري)" style="width:300px">
+            </div>
           <div class="setting-row">
             <label data-i18n="settings.storeAddress">عنوان المحل</label>
             <input type="text" class="form-input" id="settingsStoreAddress" value="" style="width:300px" placeholder="مثال: 15 Rue Didouche Mourad, Alger">
@@ -24,6 +28,14 @@
             <input type="text" class="form-input" id="settingsStorePhone" value="" style="width:200px" placeholder="مثال: 0555 12 34 56">
           </div>
           <div class="setting-row">
+            <label data-i18n="settings.buttonSound">صوت الأزرار</label>
+            <input type="checkbox" id="settingsButtonSound" style="width:18px;height:18px">
+          </div>
+          <div class="setting-row">
+            <label data-i18n="settings.introSound">صوت المقدمة</label>
+            <input type="checkbox" id="settingsIntroSound" style="width:18px;height:18px">
+          </div>
+          <div class="setting-row">
             <label data-i18n="settings.language">اللغة</label>
             <select class="form-input" id="settingsLang" style="width:150px">
               <option value="ar">العربية</option>
@@ -31,6 +43,31 @@
               <option value="fr">Français</option>
               <option value="zh">中文</option>
             </select>
+          </div>
+          <div class="settings-group pharmacy-card" id="pharmacyCard">
+            <div class="pharmacy-card-head">
+              <div style="display:flex;align-items:center;gap:8px;font-weight:700;color:var(--silver-700)">
+                <i class="fas fa-prescription-bottle-medical" style="color:#0f9d58"></i>
+                <span data-i18n="settings.pharmacyMode">وضع الصيدلية</span>
+              </div>
+              <label class="switch" style="margin:0">
+                <input type="checkbox" id="settingsPharmacyMode">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <p class="pharmacy-card-desc" data-i18n="settings.pharmacyModeHint">يفعّل حقل تاريخ الصلاحية، ويلزم إدخال العائلة، ويحوّل واجهة البرنامج إلى الأخضر والأبيض والأحمر مع نظام المعوّضات.</p>
+            <div class="pharmacy-features" id="pharmacyFeatures">
+              <span><i class="fas fa-calendar-times"></i> <span data-i18n="settings.pharmaFeatExpiry">حقول انتهاء الصلاحية</span></span>
+              <span><i class="fas fa-layer-group"></i> <span data-i18n="settings.pharmaFeatFamily">العائلة إلزامية مع اقتراحات</span></span>
+              <span><i class="fas fa-palette"></i> <span data-i18n="settings.pharmaFeatSkin">واجهة خضراء/بيضاء/حمراء</span></span>
+              <span><i class="fas fa-pills"></i> <span data-i18n="settings.pharmaFeatSub">زر «ابحث عن معوّض» عند نفاد الكمية</span></span>
+            </div>
+            <div class="pharmacy-preview">
+              <span class="pharm-swatch ok"></span>
+              <span class="pharm-swatch warn"></span>
+              <span class="pharm-swatch bad"></span>
+              <small><span data-i18n="settings.pharmaSwatchOk">سليم</span> · <span data-i18n="settings.pharmaSwatchWarn">قريب الانتهاء</span> · <span data-i18n="settings.pharmaSwatchBad">منتهي</span></small>
+            </div>
           </div>
           <div class="setting-row" style="border-top:1px solid var(--silver-300);padding-top:12px;margin-top:4px">
             <label data-i18n="settings.fiscalStampLabel">الطابع الجبائي (Timbre Fiscal)</label>
@@ -57,6 +94,83 @@
             <label data-i18n="settings.lowStockThreshold">حد المخزون المنخفض</label>
             <input type="number" class="form-input no-spinner" id="settingsLowStock" value="5" min="1" style="width:80px">
             <span style="font-size:11px;color:var(--silver-500)" data-i18n="settings.lowStockHint">أقل من هذا الرقم يُعتبر مخزون منخفض</span>
+          </div>
+          <div class="settings-group" style="border-top:1px solid var(--silver-300);padding-top:12px;margin-top:8px">
+            <div style="font-weight:700;margin-bottom:8px;color:var(--silver-700)"><i class="fas fa-hourglass-half" style="color:#e65100;margin-left:6px"></i><span data-i18n="settings.expiryGroup">انتهاء الصلاحية</span></div>
+            <div class="setting-row">
+              <label data-i18n="settings.expiryShow">إظهار حقل تاريخ انتهاء الصلاحية</label>
+              <input type="checkbox" class="form-input" id="settingsExpiryShow" style="width:auto" checked>
+              <span style="font-size:11px;color:var(--silver-500)" data-i18n="settings.expiryShowHint">إظهار الحقل عند إضافة/تعديل المنتج</span>
+            </div>
+            <div class="setting-row">
+              <label data-i18n="settings.expiryRequired">إلزامية ملء التاريخ</label>
+              <input type="checkbox" class="form-input" id="settingsExpiryRequired" style="width:auto">
+              <span style="font-size:11px;color:var(--silver-500)" data-i18n="settings.expiryRequiredHint">عند تفعيلها لا يُقبل حفظ منتج بلا تاريخ</span>
+            </div>
+            <div class="setting-row">
+              <label data-i18n="settings.expiryWarn">التنبيه قبل انتهاء الصلاحية</label>
+              <select class="form-input" id="settingsExpiryWarn" style="width:160px">
+                <option value="7" data-i18n="settings.expiryWeek">أسبوع</option>
+                <option value="14" data-i18n="settings.expiryWeeks">أسبوعان</option>
+                <option value="30" selected data-i18n="settings.expiryMonth">شهر</option>
+                <option value="60" data-i18n="settings.expiryTwoMonths">شهران</option>
+                <option value="90" data-i18n="settings.expiryThreeMonths">3 أشهر</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-group" style="border-top:1px solid var(--silver-300);padding-top:12px;margin-top:8px">
+            <div style="font-weight:700;margin-bottom:8px;color:var(--silver-700)">الماسح الضوئي للباركود</div>
+            <div class="setting-row">
+              <label>طريقة قراءة الباركود</label>
+              <select class="form-input" id="settingsBarcodeLayout" style="width:260px">
+                <option value="auto">تلقائي (السلوك الحالي)</option>
+                <option value="azerty">AZERTY فرنسي (يعكس A↔Q، W↔Z)</option>
+                <option value="arabic">عربي 101</option>
+                <option value="qwerty">بدون تحويل (QWERTY)</option>
+              </select>
+              <span style="font-size:11px;color:var(--silver-500)">يُطبَّق على حقول المسح بالماسح فقط</span>
+            </div>
+            <div class="setting-row">
+              <label>حالة الأحرف للباركود المقروء</label>
+              <select class="form-input" id="settingsBarcodeCase" style="width:200px">
+                <option value="none">بدون تغيير</option>
+                <option value="upper">تحويل إلى كبيرة</option>
+                <option value="lower">تحويل إلى صغيرة</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-group" style="border-top:1px solid var(--silver-300);padding-top:12px;margin-top:8px">
+            <div style="font-weight:700;margin-bottom:8px;color:var(--silver-700)">معلومات قانونية للشركة (NIS / NIF / RC / ARTICLE)</div>
+            <div class="setting-row">
+              <label>NIS</label>
+              <input type="text" class="form-input" id="settingsStoreNis" value="" style="width:240px" placeholder="N° Identification Statistique">
+            </div>
+            <div class="setting-row">
+              <label>NIF</label>
+              <input type="text" class="form-input" id="settingsStoreNif" value="" style="width:240px" placeholder="N° Identification Fiscale">
+            </div>
+            <div class="setting-row">
+              <label>RCC</label>
+              <input type="text" class="form-input" id="settingsStoreRcc" value="" style="width:240px" placeholder="Registre de Commerce">
+            </div>
+            <div class="setting-row">
+              <label>N° ARTICLE</label>
+              <input type="text" class="form-input" id="settingsStoreArticle" value="" style="width:240px" placeholder="N° Article">
+            </div>
+            <div class="setting-row" style="border-top:1px dashed var(--silver-300);padding-top:10px;margin-top:6px">
+              <label>إظهار هذه المعلومات في الفواتير لـ:</label>
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px">
+                  <input type="checkbox" id="settingsLegalCustomer"> <span>فواتير العملاء</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px">
+                  <input type="checkbox" id="settingsLegalSupplier"> <span>فواتير الموردين</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px">
+                  <input type="checkbox" id="settingsLegalEmployee"> <span>فواتير الموظفين</span>
+                </label>
+              </div>
+            </div>
           </div>
           <div class="setting-row">
             <button class="btn btn-primary" onclick="saveSettings()"><i class="fas fa-save"></i> <span data-i18n="settings.saveSettings">حفظ الإعدادات</span></button>
@@ -94,8 +208,17 @@
             <div class="setting-row">
               <label data-i18n="settings.lanLocalIpHint">ثبّت أحد هذه العناوين كعنوان IP ثابت في إعدادات Windows/الراوتر، وأدخل نفس العنوان في الجهاز الفرعي.</label>
             </div>
-            <div class="setting-row">
-              <label data-i18n="settings.lanFirewallHint">إن لم يتصل الجهاز الفرعي، اسمح لهذا البرنامج عبر جدار حماية Windows (شبكة خاصة) من الإعدادات ← السماح لتطبيق عبر جدار الحماية.</label>
+              <div class="setting-row">
+                <label data-i18n="settings.lanFirewallHint">إن لم يتصل الجهاز الفرعي، اسمح لهذا البرنامج عبر جدار حماية Windows (شبكة خاصة): الإعدادات ← خصوصية وأمان ← جدار حماية Windows ← السماح لتطبيق عبر جدار الحماية.</label>
+              </div>
+              <div class="setting-row">
+                <button class="btn btn-secondary" onclick="settingsShowFirewallModal()"><i class="fas fa-shield-alt"></i> السماح عبر جدار الحماية</button>
+                <span id="lanFirewallResult" style="font-size:13px;margin-left:12px"></span>
+              </div>
+              <div class="setting-row" style="border-top:1px dashed var(--silver-300);padding-top:10px;margin-top:6px">
+                <button class="btn btn-warning" onclick="settingsRemoteResetBranch()"><i class="fas fa-trash-alt"></i> <span data-i18n="settings.lanRemoteReset">مسح بيانات الفرع عن بُعد</span></button>
+                <span id="lanRemoteResetResult" style="font-size:13px;margin-left:12px"></span>
+              </div>
             </div>
           </div>
 
@@ -125,6 +248,74 @@
             <div id="lanStatusBox" style="font-size:13px;color:var(--silver-600)">-</div>
           </div>
           <div class="settings-result" id="lanResult"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== LAN PRINTER SHARING ===== -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><i class="fas fa-print"></i> <span data-i18n="settings.printerCard">مشاركة الطابعة عبر الشبكة (LAN)</span></div>
+      <div class="card-body">
+        <div class="settings-group">
+          <p class="settings-hint" data-i18n="settings.printerDesc">شارك الطابعة المتصلة بهذا الجهاز لتستخدمها أجهزة الكاشير الأخرى، أو ثبّت طابعة السيرفر المشتركة على هذا الجهاز وتولَّها كافتراضية للطباعة.</p>
+
+          <div style="border:1px solid var(--silver-200);border-radius:10px;padding:12px;margin-bottom:10px">
+            <div style="font-weight:700;font-size:13px;margin-bottom:8px"><i class="fas fa-server" style="margin-left:6px;color:var(--bmw-blue-1)"></i><span data-i18n="settings.printerShareSide">مشاركة طابعة هذا الجهاز (السيرفر)</span></div>
+            <div class="setting-row">
+              <label data-i18n="settings.printerSelect">الطابعة المحلية</label>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <select class="form-input" id="prtLocalSelect" style="min-width:220px"></select>
+                <button class="btn btn-sm" onclick="prtLoadLocalPrinters()" title="تحديث"><i class="fas fa-sync-alt"></i></button>
+                <span id="prtLocalDefault" style="font-size:11px;color:var(--silver-500)"></span>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label data-i18n="settings.printerShareName">اسم المشاركة</label>
+              <input type="text" class="form-input" id="prtShareName" style="width:180px;direction:ltr;font-family:monospace" dir="ltr" oninput="prtShareNamePreview()">
+              <button class="btn btn-primary" onclick="prtShareNow()" id="prtShareBtn"><i class="fas fa-share-alt"></i> <span data-i18n="settings.printerShareNow">مشاركة</span></button>
+              <button class="btn btn-warning" onclick="prtUnshareNow()" id="prtUnshareBtn" style="display:none"><i class="fas fa-ban"></i> <span data-i18n="settings.printerUnshare">إلغاء المشاركة</span></button>
+            </div>
+            <div class="settings-result" id="prtShareResult"></div>
+          </div>
+
+          <div style="border:1px solid var(--silver-200);border-radius:10px;padding:12px;margin-bottom:10px">
+            <div style="font-weight:700;font-size:13px;margin-bottom:8px"><i class="fas fa-desktop" style="margin-left:6px;color:var(--bmw-blue-1)"></i><span data-i18n="settings.printerInstallSide">استخدام طابعة السيرفر من هذا الجهاز (الفرعي)</span></div>
+            <div class="setting-row">
+              <label data-i18n="settings.printerServerHost">عنوان السيرفر</label>
+              <input type="text" class="form-input" id="prtServerHost" placeholder="مثال: 192.168.1.10 أو PC-CAISSE" style="width:220px;direction:ltr;font-family:monospace" dir="ltr">
+              <button class="btn btn-secondary" onclick="prtBrowse()" id="prtBrowseBtn"><i class="fas fa-search"></i> <span data-i18n="settings.printerBrowse">استعراض الطابعات</span></button>
+            </div>
+            <div id="prtRemoteList" style="margin-top:8px"></div>
+            <div class="setting-row">
+              <label data-i18n="settings.printerDriverInf">مسار ملف التعريف INF (إن لم يكن مثبتاً)</label>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <input type="text" class="form-input" id="prtDrvInf" placeholder="C:\Drivers\prn00.inf" style="width:220px;direction:ltr;font-family:monospace" dir="ltr">
+                <button class="btn btn-sm" onclick="prtPickInf()" title="استعراض..."><i class="fas fa-folder-open"></i></button>
+                <button class="btn btn-secondary" onclick="prtInstallInf()" id="prtInstallInfBtn"><i class="fas fa-cog"></i> <span data-i18n="settings.printerInstallDriver">تثبيت التعريف</span></button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label data-i18n="settings.printerDrvShare">أو مجلد تعاريف مشترك على السيرفر</label>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <input type="text" class="form-input" id="prtDrvShare" placeholder="\\192.168.1.10\Drivers" style="width:220px;direction:ltr;font-family:monospace" dir="ltr">
+                <button class="btn btn-secondary" onclick="prtInstallInfShare()" id="prtInstallInfShareBtn"><i class="fas fa-globe"></i> <span data-i18n="settings.printerInstallDriverShare">تثبيت من المجلد المشترك</span></button>
+              </div>
+            </div>
+            <div class="settings-result" id="prtBrowseResult"></div>
+          </div>
+
+          <div style="border:1px solid rgba(230,81,0,0.25);background:rgba(230,81,0,0.05);border-radius:10px;padding:12px">
+            <div class="setting-row">
+              <label data-i18n="settings.printerFixDesc">يتطلب صلاحيات المشرف ويعيد تشغيل خدمة الطباعة (Spooler) تلقائياً.</label>
+              <button class="btn btn-warning" onclick="prtFixNow()" id="prtFixBtn"><i class="fas fa-tools"></i> <span data-i18n="settings.printerFixNow">إصلاح مشاكل الطباعة عبر الشبكة (0x0000011b / 0x00000709)</span></button>
+            </div>
+            <div class="settings-result" id="prtFixResult"></div>
+          </div>
+
+          <div class="setting-row" style="margin-top:6px">
+            <button class="btn" onclick="prtTestPrint()"><i class="fas fa-print"></i> <span data-i18n="settings.printerTest">طباعة صفحة تجريبية</span></button>
+            <span id="prtDefaultNow" style="font-size:12px;color:var(--silver-600)"></span>
+          </div>
         </div>
       </div>
     </div>
@@ -280,6 +471,12 @@
               <input type="password" class="form-input" id="settingsNewUserPass" data-i18n-placeholder="settings.userPasswordPlaceholder" placeholder="كلمة المرور" style="width:200px">
             </div>
             <div class="setting-row" style="flex-direction:column;align-items:flex-start;">
+              <label data-i18n="settings.userCompany">الشركات (يمتلكها الموظف — يختار منها عند الدخول)</label>
+              <div id="settingsNewUserCompanyList" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;max-width:100%;">
+                <span class="text-muted" style="font-size:12px;" data-i18n="settings.companyNoPermitted">لا توجد شركات</span>
+              </div>
+            </div>
+            <div class="setting-row" style="flex-direction:column;align-items:flex-start;">
               <label style="margin-bottom:8px;" data-i18n="settings.permissions">الصلاحيات</label>
               <div class="settings-permissions-grid" id="settingsPermissionsGrid"></div>
             </div>
@@ -295,6 +492,85 @@
           <div id="settingsUsersEmpty" class="settings-empty" style="display:none;">
             <i class="fas fa-users"></i>
             <p data-i18n="settings.noUsers">لا يوجد مستخدمون بعد</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- COMPANIES MANAGEMENT -->
+    <div class="card" id="settingsCompaniesCard" style="margin-top:16px">
+      <div class="card-header"><i class="fas fa-building"></i> <span data-i18n="settings.companiesCard">إدارة الشركات (متعدد)</span></div>
+      <div class="card-body">
+        <div class="settings-group">
+          <p class="settings-hint" data-i18n="settings.companiesDesc">أنشئ عدة شركات وتنقل بين بياناتها. كل شركة لها بياناتها الخاصة بشكل منفصل.</p>
+
+          <div id="settingsActiveCompanyBar" style="display:none;padding:10px 12px;background:var(--silver-100);border:1px solid var(--bmw-blue-3);border-radius:var(--radius);margin-bottom:14px;font-weight:600;color:var(--bmw-blue-1)">
+            <i class="fas fa-building"></i> <span data-i18n="settings.companyActiveHint">الشركة النشطة حالياً: </span>
+            <span id="settingsActiveCompanyName" style="font-weight:800"></span>
+            <button class="btn btn-sm" style="margin-inline-start:12px" onclick="settingsExitCompany()"><i class="fas fa-sign-out-alt"></i> <span data-i18n="settings.exitCompany">الخروج من نطاق الشركة</span></button>
+          </div>
+
+          <div class="setting-row" style="margin-bottom:16px">
+            <button class="btn btn-primary" onclick="settingsShowAddCompany()"><i class="fas fa-plus"></i> <span data-i18n="settings.addCompany">إضافة شركة</span></button>
+          </div>
+
+          <!-- Add Company Form -->
+          <div id="settingsAddCompanyForm" style="display:none;margin-bottom:16px;padding:16px;background:var(--silver-50);border-radius:var(--radius);border:1px solid var(--silver-300);">
+            <h4 style="margin-bottom:12px;color:var(--bmw-blue-1);"><i class="fas fa-building"></i> <span data-i18n="settings.newCompany">شركة جديدة</span></h4>
+            <div class="setting-row">
+              <label data-i18n="settings.companyName">اسم الشركة</label>
+              <input type="text" class="form-input" id="settingsNewCompanyName" data-i18n-placeholder="settings.companyNamePlaceholder" placeholder="مثال: شركة السيارات الحديثة" style="width:260px">
+            </div>
+            <div class="setting-row">
+              <label data-i18n="settings.companyStoreName">اسم المتجر الخاص بالشركة</label>
+              <input type="text" class="form-input" id="settingsNewCompanyStoreName" data-i18n-placeholder="settings.companyStoreNamePlaceholder" placeholder="مثال: متجر الزواوي - المركز" style="width:260px">
+            </div>
+            <div class="setting-row">
+              <label data-i18n="settings.companyPassword">كلمة مرور الشركة (اختياري)</label>
+              <input type="password" class="form-input" id="settingsNewCompanyPass" data-i18n-placeholder="settings.companyPasswordPlaceholder" placeholder="كلمة مرور للدخول كمدير" style="width:260px">
+            </div>
+            <div class="setting-row">
+              <label data-i18n="settings.companyStoreCodes">الفروع المضمومة لهذه الشركة</label>
+              <div style="display:flex;flex-direction:column;gap:4px;min-width:320px;">
+                <select multiple class="form-input company-branches-select" id="settingsNewCompanyStoreCodes" style="width:100%;direction:ltr;min-height:96px;"></select>
+                <small id="settingsCompanyBranchesStatus" data-i18n="settings.companyStoreCodesHint" style="color:var(--silver-600);font-size:12px;">اختر فرعًا أو أكثر (تركه فارغًا = لن تظهر هذه الشركة لأي فرع)</small>
+              </div>
+            </div>
+            <div class="setting-row" style="grid-template-columns:160px 1fr 160px 1fr;margin-top:14px;padding-top:14px;border-top:1px dashed var(--silver-300);">
+              <label class="settings-section-label" data-i18n="settings.companyLegalTitle" style="grid-column:1/5;font-weight:600;color:var(--bmw-blue-1);margin-bottom:4px;">بيانات التعريف القانونية (تظهر في الطباعة)</label>
+            </div>
+            <div class="setting-row" style="grid-template-columns:160px 1fr 160px 1fr;">
+              <label data-i18n="settings.companyPhone">رقم الهاتف</label>
+              <input type="text" class="form-input" id="settingsNewCompanyPhone" placeholder="05 55 55 55 55" style="width:200px;direction:ltr">
+              <label data-i18n="settings.companyNis">NIS</label>
+              <input type="text" class="form-input" id="settingsNewCompanyNis" placeholder="رقم NIS" style="width:200px;direction:ltr">
+            </div>
+            <div class="setting-row" style="grid-template-columns:160px 1fr 160px 1fr;">
+              <label data-i18n="settings.companyRcc">RCC / RC</label>
+              <input type="text" class="form-input" id="settingsNewCompanyRcc" placeholder="رقم السجل التجاري" style="width:200px;direction:ltr">
+              <label data-i18n="settings.companyNif">NIF</label>
+              <input type="text" class="form-input" id="settingsNewCompanyNif" placeholder="رقم NIF" style="width:200px;direction:ltr">
+            </div>
+            <div class="setting-row" style="grid-template-columns:160px 1fr;">
+              <label data-i18n="settings.companyAddress">العنوان</label>
+              <input type="text" class="form-input" id="settingsNewCompanyAddress" placeholder="العنوان الكامل" style="width:320px">
+            </div>
+            <div class="setting-row" style="grid-template-columns:160px 1fr;">
+              <label data-i18n="settings.companyArticle">ARTICLE</label>
+              <input type="text" class="form-input" id="settingsNewCompanyArticle" placeholder="رقم المادة/النشاط" style="width:320px;direction:ltr">
+            </div>
+            <div class="setting-row">
+              <button class="btn btn-primary" onclick="settingsSaveCompany()"><i class="fas fa-save"></i> <span data-i18n="common.save">حفظ</span></button>
+              <button class="btn" onclick="settingsCancelAddCompany()"><i class="fas fa-times"></i> <span data-i18n="common.cancel">إلغاء</span></button>
+            </div>
+            <div class="settings-result" id="settingsCompanyResult"></div>
+          </div>
+
+          <!-- Companies List -->
+          <div id="settingsCompaniesList"></div>
+          <div id="settingsCompaniesEmpty" class="settings-empty" style="display:none;">
+            <i class="fas fa-building"></i>
+            <p data-i18n="settings.noCompanies">لا توجد شركات بعد</p>
           </div>
         </div>
       </div>
@@ -322,6 +598,27 @@
           <div id="auditLogTable" class="audit-log-table"></div>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Firewall allow modal -->
+<div id="lanFirewallModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)settingsHideFirewallModal()">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <h3><i class="fas fa-shield-alt"></i> السماح عبر جدار حماية Windows</h3>
+      <button class="modal-close" onclick="settingsHideFirewallModal()">&times;</button>
+    </div>
+    <div class="modal-body" style="text-align:right;line-height:1.7">
+      <p style="font-size:13.5px;color:var(--silver-700)">لكي يتصل الجهاز الفرعي بالرئيسي عبر الشبكة، يجب السماح لهذا البرنامج باستقبال الاتصالات على المنافذ
+        <span dir="ltr" style="font-family:monospace">4512–4521</span> (شبكة خاصة).</p>
+      <p style="font-size:13px;color:var(--silver-600)">اضغط «محاولة السماح تلقائياً» ليظهر طلب التحكم بالحساب (UAC) — وافق عليه لإضافة القاعدة. أو اسمح يدويًا من:</p>
+      <p style="font-size:12.5px;color:var(--silver-500)">الإعدادات ← الخصوصية والأمان ← جدار حماية Windows ← السماح لتطبيق عبر جدار الحماية ← تفعيل هذا البرنامج للشبكات الخاصة.</p>
+      <div id="lanFirewallModalResult" style="font-size:13px;margin:8px 0;color:var(--silver-700)"></div>
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border-color)">
+      <button class="btn" onclick="settingsHideFirewallModal()"><i class="fas fa-times"></i> إغلاق</button>
+      <button class="btn btn-primary" onclick="settingsAllowFirewall()"><i class="fas fa-shield-alt"></i> محاولة السماح تلقائياً</button>
     </div>
   </div>
 </div>

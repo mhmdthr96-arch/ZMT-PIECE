@@ -65,6 +65,10 @@
         <input type="text" class="form-input" id="custAddress" placeholder="مثال: الجزائر العاصمة">
       </div>
       <div class="form-group">
+        <label data-i18n="customers.formEmail">البريد الإلكتروني (اختياري)</label>
+        <input type="email" class="form-input" id="custEmail" placeholder="example@domain.com" dir="ltr">
+      </div>
+      <div class="form-group">
         <label data-i18n="customers.formType">نوع العميل</label>
         <select class="form-input" id="custType">
           <option value="unit" data-i18n="customers.typeUnit">قطعة</option>
@@ -90,6 +94,21 @@
     <div class="modal-footer">
       <button class="btn" onclick="closeAddCustomerModal()"><span data-i18n="common.cancel">إلغاء</span></button>
       <button class="btn btn-success" onclick="confirmAddCustomer()"><i class="fas fa-check"></i> <span data-i18n="common.save">حفظ</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Customer Records Modal (سجل العميل) -->
+<div class="modal-overlay" id="custRecordsModal">
+  <div class="modal" style="max-width:780px">
+    <div class="modal-header">
+      <h3><i class="fas fa-clipboard-list"></i> سجل العميل — <span id="custRecordsName" style="color:var(--bmw-blue-1)"></span></h3>
+      <button class="modal-close" onclick="closeCustRecords()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="rec-stats" id="custRecStats"></div>
+      <div class="rec-section-title"><i class="fas fa-undo-alt" style="color:#e65100"></i> مرتجعات العميل</div>
+      <div id="custRecList"></div>
     </div>
   </div>
 </div>

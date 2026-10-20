@@ -10,8 +10,12 @@ const LANSync = (() => {
   let _activePort = 0;
   let _reconcileTimer = null;
   let _hookRegistered = false;
+  // Fingerprint of the last user-list state this device pushed out. Lets the
+  // reconcile loop skip re-sending an unchanged users payload every 10s (the
+  // users map used to ride along on every delta tick, forcing busy peers).
+  let _lastUsersSend = '';
 
-  const _SAFE_REFRESH_PAGES = ['dashboard', 'inventory', 'products', 'invoices', 'categories', 'customers', 'suppliers', 'reports', 'net-account', 'branches-monitor', 'shared-inventory', 'debts', 'customer-detail', 'supplier-detail', 'orders'];
+  const _SAFE_REFRESH_PAGES = ['dashboard', 'inventory', 'expiry', 'products', 'invoices', 'customers', 'suppliers', 'reports', 'net-account', 'expenses', 'branches-monitor', 'shared-inventory', 'debts', 'customer-detail', 'supplier-detail', 'orders', 'zakat', 'employees'];
 
   function getStoreId() {
     if (typeof Auth !== 'undefined' && Auth.isLoggedIn()) return Auth.getUserCode() || '';
@@ -36,14 +40,22 @@ const LANSync = (() => {
     return { role: _role, ip: _ip, port: _port, activePort: _activePort, listening: _listening, connected: _connected, clients: _clients, lastSync: _lastSync };
   }
 
-  // Periodic full-snapshot reconciliation. Guarantees the two devices converge
-  // even if a live ops message is ever dropped, so the "restart required"
-  // symptom disappears. 25s is plenty for a small-shop LAN.
+  // Periodic reconciliation. Most ticks send only rows changed since the last
+  // one (exportDeltaSince), keeping a 600k-row device from re-pushing the whole
+  // dataset every 10s. A full snapshot is sent on connect/hello and every
+  // _SNAPSHOT_EVERY ticks as a convergence safety net, so a missed ops/delta
+  // message can never leave the peers permanently out of sync.
+  const _SNAPSHOT_EVERY = 25;
+  let _reconcileTick = 0;
+  let _deltaSince = 0;
+
   function startReconcile() {
     stopReconcile();
+    _deltaSince = 0; // first tick after (re)start is always a full snapshot
+    _reconcileTick = 0;
     _reconcileTimer = setInterval(() => {
       if (_role && window.electronAPI?.lanSend) sendSnapshot();
-    }, 25000);
+    }, 10000);
   }
 
   function stopReconcile() {
@@ -104,7 +116,55 @@ const LANSync = (() => {
   function sendSnapshot() {
     if (!window.electronAPI?.lanSend) return;
     if (typeof DB !== 'undefined' && typeof DB.ready === 'function' && !DB.ready()) return;
-    window.electronAPI.lanSend({ type: 'snapshot', storeId: getStoreId(), data: buildSnapshot(), ts: Date.now() });
+    _reconcileTick++;
+    const full = _deltaSince === 0 || (_reconcileTick % _SNAPSHOT_EVERY === 0);
+    const usersFp = _usersFingerprint();
+    const usersChanged = usersFp !== _lastUsersSend;
+
+    const data = full ? buildSnapshot() : buildDelta(_deltaSince);
+    if (!full) {
+      // Incremental ticks are a strict no-op when nothing on this device
+      // actually changed (no data rows and no user edits since the last send).
+      // Bouncing an identical snapshot to the peer every 10s only produced
+      // needless reflection churn on the other machine (search clears, scroll
+      // jumps to top, focus loss). The periodic full snapshot below is the
+      // convergence safety net, so skipping idle deltas cannot hurt in-sync.
+      if (!usersChanged && (!data || Object.keys(data).length === 0)) return;
+      // Only the users changed: send a tiny payload (list + revs) alone so the
+      // peer merges exactly what this device touched, nothing else.
+      if (usersChanged && typeof Auth !== 'undefined' && Auth.getAllUsersByCode) {
+        if (!data || typeof data !== 'object') { window.electronAPI.lanSend({ type: 'users', storeId: getStoreId(), users: Auth.getAllUsersByCode(), ts: Date.now() }); _deltaSince = Date.now(); _lastUsersSend = usersFp; return; }
+        data.users = Auth.getAllUsersByCode();
+      }
+    }
+
+    window.electronAPI.lanSend({ type: 'snapshot', storeId: getStoreId(), data, ts: Date.now(), full: !!full });
+    _deltaSince = Date.now();
+    _lastUsersSend = usersFp;
+  }
+
+  // Compact fingerprint ({code}:{rev}) of every user list known to this device,
+  // used only to detect real user edits (create/edit/delete) between ticks.
+  function _usersFingerprint() {
+    try {
+      if (typeof Auth === 'undefined' || !Auth.getAllUsersByCode) return '';
+      const users = Auth.getAllUsersByCode();
+      return Object.keys(users).sort().map(k => k + ':' + ((users[k] && users[k].rev) || 0)).join('|');
+    } catch (e) { return ''; }
+  }
+
+  // Incremental payload: only rows updated since `since`. Meta (counters,
+  // lanTombstones) only rides along on full snapshots so delta ticks stay tiny.
+  // Users are no longer embedded here; sendSnapshot() attaches them only when
+  // their fingerprint actually changed (see _usersFingerprint).
+  function buildDelta(since) {
+    const data = (typeof DB !== 'undefined' && DB.exportDeltaSince)
+      ? DB.exportDeltaSince(since)
+      : {};
+    for (const key of ['products', 'invoices']) {
+      if (data[key]) data[key] = filterForStore(data[key], key);
+    }
+    return data;
   }
 
   function sendOps(ops) {
@@ -139,6 +199,11 @@ const LANSync = (() => {
     window.electronAPI.lanSend({ type: 'users', storeId: getStoreId(), users, ts: Date.now() });
   }
 
+  function sendRaw(payload) {
+    if (!window.electronAPI?.lanSend) return;
+    window.electronAPI.lanSend(payload);
+  }
+
   // ===== LOCAL CHANGE HOOK =====
 
   function hookDb() {
@@ -159,53 +224,83 @@ const LANSync = (() => {
 
   function handleMessage(msg) {
     if (!msg || !msg.type) return;
+    if (msg.type === 'ping' || msg.type === 'pong') return;
+    // Restaurant orders/presence/perms are domain messages for RestService —
+    // never handled by the generic DB sync, so hand them straight over.
+    if (msg.type.indexOf('rest-') === 0) {
+      if (window.RestService && RestService.onLanMessage) {
+        try { RestService.onLanMessage(msg); } catch (e) { console.error('[LAN] rest message error:', e); }
+      }
+      return;
+    }
+    if (msg.type === 'remote-reset') {
+      if (_role === 'sub') {
+        if (typeof DB !== 'undefined' && DB.reset) {
+          DB.reset().then(() => { setTimeout(() => location.reload(), 200); }).catch(() => {});
+        }
+      }
+      return;
+    }
     if (msg.type === 'hello') {
+      _deltaSince = 0; // a freshly-connected peer needs the full dataset first
       sendSnapshot();
       return;
     }
     if (msg.type === 'snapshot' && msg.data) {
       const apply = async () => {
+        let result = { dataChanged: false, metaOnly: false };
         if (typeof DB !== 'undefined' && DB.applyRemoteChanges) {
           const groups = [];
           const data = msg.data || {};
-          for (const s of ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'supplierReturns']) {
+          for (const s of ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'supplierReturns', 'companies', 'employees', 'attendance']) {
             if (Array.isArray(data[s]) && data[s].length) groups.push({ store: s, put: filterForStore(data[s], s) });
           }
           const metaRecs = [];
           const m = data.meta || {};
           if (m.nextBarcode != null) metaRecs.push({ id: 'nextBarcode', val: m.nextBarcode });
           if (m.nextInvoiceCounter != null) metaRecs.push({ id: 'nextInvoiceCounter', val: m.nextInvoiceCounter });
+          if (m.nextPaymentCounter != null) metaRecs.push({ id: 'nextPaymentCounter', val: m.nextPaymentCounter });
           if (m.lanTombstones) metaRecs.push({ id: 'lanTombstones', val: m.lanTombstones });
           if (metaRecs.length) groups.push({ store: 'meta', put: metaRecs });
-          if (groups.length) await DB.applyRemoteChanges(groups);
+          if (groups.length) result = await DB.applyRemoteChanges(groups);
         }
-        if (msg.data.users && typeof Auth !== 'undefined' && Auth.applyUsersPayload) {
-          Auth.applyUsersPayload(msg.data.users);
-        }
+        return result;
       };
-      apply().then(() => {
+      apply().then((result) => {
         _lastSync = Date.now();
-        scheduleRefresh();
+        // Only re-render the current page when user-visible data actually moved:
+        // rows applied/removed in a production store OR real user edits. Purely
+        // internal counter convergence (barcode/invoice sequence numbers) must
+        // never yank the page, the search box or the scrollbar.
+        if (result && (result.dataChanged || msg.data.users)) {
+          let usersApplied = 0;
+          if (msg.data.users && typeof Auth !== 'undefined' && Auth.applyUsersPayload) {
+            usersApplied = Auth.applyUsersPayload(msg.data.users);
+          }
+          if (result.dataChanged || usersApplied > 0) scheduleRefresh();
+        }
       }).catch(e => console.error('[LAN] Apply snapshot error:', e));
       return;
     }
     if (msg.type === 'users' && msg.users) {
+      let applied = 0;
       if (typeof Auth !== 'undefined' && Auth.applyUsersPayload) {
-        Auth.applyUsersPayload(msg.users);
+        applied = Auth.applyUsersPayload(msg.users);
       }
       _lastSync = Date.now();
-      scheduleRefresh();
+      if (applied > 0) scheduleRefresh();
       return;
     }
     if (msg.type === 'ops' && Array.isArray(msg.ops)) {
       const apply = async () => {
         if (typeof DB !== 'undefined' && DB.applyRemoteChanges) {
-          await DB.applyRemoteChanges(msg.ops);
+          return (await DB.applyRemoteChanges(msg.ops)) || {};
         }
+        return {};
       };
-      apply().then(() => {
+      apply().then((result) => {
         _lastSync = Date.now();
-        scheduleRefresh();
+        if (result && result.dataChanged) scheduleRefresh();
       }).catch(e => console.error('[LAN] Apply ops error:', e));
       return;
     }
@@ -273,6 +368,7 @@ const LANSync = (() => {
     hookDb,
     sendSnapshot,
     sendUsers,
+    sendRaw,
   };
 })();
 

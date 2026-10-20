@@ -58,6 +58,15 @@
       <button class="conn-tab" data-tab="recover" onclick="connSwitchTab('recover')" id="connTabRecoverBtn">
         <i class="fas fa-key"></i> <span data-i18n="connection.recoveryTab">استرداد الحساب</span>
       </button>
+      <button class="conn-tab" data-tab="scanner" onclick="connSwitchTab('scanner')" id="connTabScannerBtn">
+        <i class="fas fa-barcode"></i> <span data-i18n="connection.scannerTab">ماسح الجوال</span>
+      </button>
+      <button class="conn-tab" data-tab="restaurant" onclick="connSwitchTab('restaurant')" id="connTabRestaurantBtn">
+        <i class="fas fa-utensils"></i> <span data-i18n="rest.tab">المطعم</span>
+      </button>
+      <button class="conn-tab" data-tab="display" onclick="connSwitchTab('display')" id="connTabDisplayBtn">
+        <i class="fas fa-tv"></i> <span data-i18n="pd.tab">شاشة عرض السعر</span>
+      </button>
     </div>
 
     <!-- TAB: SETUP -->
@@ -229,7 +238,7 @@
 
           <!-- Step 2: Show result -->
           <div id="connRecStep2" style="display:none;">
-            <div class="conn-card" style="background:#f0f7ff;border:1px solid #0066B1;">
+            <div class="conn-card" style="background:#f0f7ff;border:1px solid var(--bmw-blue-1);">
               <div class="conn-card-body">
                 <div class="conn-store-row">
                   <div class="conn-store-label" data-i18n="connection.storeNameLabel">اسم المحل</div>
@@ -280,5 +289,389 @@
       </div>
     </div>
 
+    <!-- TAB: SCANNER (Phone barcode scanner over LAN) -->
+    <div class="conn-tab-content" id="connTabScanner">
+      <div class="conn-card">
+        <div class="conn-card-header">
+          <i class="fas fa-barcode"></i>
+          <span data-i18n="connection.scannerCard">ماسح الباركود عبر الجوال</span>
+        </div>
+        <div class="conn-card-body">
+          <p class="conn-info-text" data-i18n="connection.scannerDesc">حوّل أي هاتف على نفس شبكة المحل إلى ماسح باركود لاسلكي يغذي نفس حقل الباركود مثل الماسح السلكي. خدمة HTTPS محلية تعمل بتركيب شهادة CA خاصة — لا حاجة لصلاحيات إدارية على الأجهزة الأخرى.</p>
+
+          <!-- Enable toggle -->
+          <div class="conn-auto-toggle" style="margin-bottom:8px;">
+            <label class="switch">
+              <input type="checkbox" id="phsEnable" onchange="phsToggleEnable()">
+              <span class="slider"></span>
+            </label>
+            <span data-i18n="connection.scannerEnable">تفعيل ماسح الجوال</span>
+          </div>
+          <div class="conn-sync-result" id="phsToggleResult"></div>
+
+          <!-- Phone POS (البيع) -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-mobile-alt" style="color:#00966e;"></i> <span data-i18n="connection.psaleCard">نقطة بيع الهاتف (البيع)</span></h4>
+            <p class="conn-info-text" data-i18n="connection.psaleDesc">فكّر في موظفين يبيعون من الهواتف أثناء الزحمة: افتحوا صفحة البيع على نفس شبكة المحل، وليختار كل موظف اسمه، وبيعوا للعملاء والموردين بالخصم ومراقبة الأسعار. البيع يُنفَّذ على الكمبيوتر مباشرة فتظهر الفواتير والمخزون والرصيد فورًا في كل الأجهزة.</p>
+
+            <div class="conn-auto-toggle" style="margin-bottom:8px;">
+              <label class="switch">
+                <input type="checkbox" id="psaleEnable" onchange="psaleToggleEnable()">
+                <span class="slider"></span>
+              </label>
+              <span data-i18n="connection.psaleEnable">تفعيل البيع من الهاتف</span>
+            </div>
+            <div class="conn-sync-result" id="psaleToggleResult"></div>
+
+            <div class="phs-status-strip" id="psaleStatusStrip" style="display:none;margin-top:14px;">
+              <div class="phs-status-icon" id="psaleStatusIcon"><i class="fas fa-circle-notch fa-spin"></i></div>
+              <div>
+                <div class="phs-status-title" id="psaleStatusTitle">—</div>
+                <div class="phs-status-ips" id="psaleStatusIps" dir="ltr" style="text-align:left;"></div>
+                <div class="phs-status-clients" id="psaleStatusClients"></div>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;margin-top:22px;">
+              <div style="text-align:center;">
+                <div id="psaleQr" style="background:#fff;padding:10px;border-radius:10px;display:inline-block;"></div>
+                <div id="psaleQrUrl" dir="ltr" style="margin-top:8px;font-family:monospace;color:#888;font-size:12px;"></div>
+                <div style="margin-top:8px;">
+                  <button class="btn btn-secondary" onclick="phsCopyLink('sale', this)"><i class="fas fa-copy"></i> <span data-i18n="connection.copyLink">نسخ الرابط</span></button>
+                </div>
+              </div>
+              <div style="flex:1;min-width:240px;">
+                <ol class="phs-steps">
+                  <li data-i18n="connection.psaleStep1">فعّل البيع، وامسح QR بنفس هاتف ماسح الباركود (أو هاتف جديد — ستظهر الموافقة هنا).</li>
+                  <li data-i18n="connection.psaleStep2">افتح صفحة «ZMT البيع»، اختر الموظف من الشريط العلوي.</li>
+                  <li data-i18n="connection.psaleStep3">ابحث عن القطع، أضفها للسلة، اختر العميل/المورد، الخصم وطريقة الدفع.</li>
+                  <li data-i18n="connection.psaleStep4">أكّد البيع — الفاتورة والمخزون والرصيد تُحدَّث فورًا على الكمبيوتر.</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+
+          <!-- Status strip -->
+          <div class="phs-status-strip" id="phsStatusStrip" style="display:none;margin-top:14px;">
+            <div class="phs-status-icon" id="phsStatusIcon"><i class="fas fa-circle-notch fa-spin"></i></div>
+            <div>
+              <div class="phs-status-title" id="phsStatusTitle">—</div>
+              <div class="phs-status-ips" id="phsStatusIps" dir="ltr" style="text-align:left;"></div>
+              <div class="phs-status-clients" id="phsStatusClients"></div>
+            </div>
+          </div>
+
+          <!-- Firewall hint / button -->
+          <div class="conn-actions" style="margin-top:16px;gap:10px;">
+            <button class="btn btn-primary" id="phsFirewallBtn" onclick="phsEnsureFirewall()">
+              <i class="fas fa-shield-alt"></i> <span data-i18n="connection.scannerFirewall">تأكيد إذن الجدار الناري</span>
+            </button>
+          </div>
+          <div class="conn-sync-result" id="phsFirewallResult"></div>
+
+          <!-- Network address used in the QR links -->
+          <div class="phs-ip-pick" id="phsIpPickWrap" style="display:none;margin-top:16px;">
+            <label for="phsIpSelect" data-i18n="connection.scannerIpLabel">عنوان الشبكة المستخدم في رمز QR</label>
+            <select id="phsIpSelect" onchange="phsPickIp(this.value)"></select>
+          </div>
+
+          <!-- QR + pairing instructions -->
+          <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;margin-top:22px;">
+            <div style="text-align:center;">
+              <div id="phsQr" style="background:#fff;padding:10px;border-radius:10px;display:inline-block;"></div>
+              <div id="phsQrUrl" dir="ltr" style="margin-top:8px;font-family:monospace;color:#888;font-size:12px;"></div>
+              <div style="margin-top:8px;">
+                <button class="btn btn-secondary" onclick="phsCopyLink('scan', this)"><i class="fas fa-copy"></i> <span data-i18n="connection.copyLink">نسخ الرابط</span></button>
+              </div>
+            </div>
+            <div style="flex:1;min-width:240px;">
+              <ol class="phs-steps">
+                <li data-i18n="connection.scannerStep1">فعّل الخدمة وامسح رمز QR بهاتفك (نفس شبكة الواي فاي).</li>
+                <li data-i18n="connection.scannerStep2">افتح الصفحة ووجه الكاميرا لرمز السلع أو فاتورة البيع.</li>
+                <li data-i18n="connection.scannerStep3">عند فتح الهاتف لأول مرة ستظهر نافذة موافقة هنا — اختر "دائمًا" أو "هذه الجلسة".</li>
+                <li data-i18n="connection.scannerStep4">سيتم إدخال كل شفرة تُقرأ تلقائيًا في حقل الباركود المفتوح.</li>
+                <li data-i18n="connection.scannerStep5">بعد إزالة الشهادة مرة واحدة، أعِد فتح الصفحة لتثبيتها دائمًا.</li>
+              </ol>
+            </div>
+          </div>
+
+          <!-- Approved devices -->
+          <div class="phs-devices" style="margin-top:24px;">
+            <h4 style="margin-bottom:10px;"><i class="fas fa-mobile-alt"></i> <span data-i18n="connection.scannerDevices">الأجهزة المقترنة</span></h4>
+            <div id="phsDevicesList"></div>
+            <div id="phsDevicesEmpty" class="conn-empty-state">
+              <i class="fas fa-mobile-alt"></i>
+              <p data-i18n="connection.scannerNoDevices">لا توجد أجهزة مقترنة بعد</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: RESTAURANT («المطعم») -->
+    <div class="conn-tab-content" id="connTabRestaurant">
+      <div class="conn-card">
+        <div class="conn-card-header">
+          <i class="fas fa-utensils"></i>
+          <span data-i18n="rest.tab">المطعم</span>
+        </div>
+        <div class="conn-card-body">
+          <p class="conn-info-text" data-i18n="rest.pageSub">طلبات المطعم على الشبكة المحلية</p>
+
+          <!-- Enable toggle -->
+          <div class="conn-auto-toggle" style="margin-bottom:8px;">
+            <label class="switch">
+              <input type="checkbox" id="restEnable" onchange="restToggleEnable()">
+              <span class="slider"></span>
+            </label>
+            <span data-i18n="rest.enable">تفعيل خاصية المطعم</span>
+          </div>
+          <div class="conn-sync-result" id="restToggleResult"></div>
+
+          <!-- Live status -->
+          <div class="phs-status-strip" id="restStatusStrip" style="display:none;margin-top:14px;">
+            <div class="phs-status-icon" id="restStatusIcon"><i class="fas fa-circle-notch fa-spin"></i></div>
+            <div>
+              <div class="phs-status-title" id="restStatusTitle">—</div>
+              <div class="phs-status-clients" id="restStatusPeers"></div>
+            </div>
+          </div>
+
+          <!-- Role -->
+          <div id="restRoleSection" style="margin-top:18px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);display:none;">
+            <div class="form-group">
+              <label data-i18n="rest.roleLabel">دور هذا الجهاز</label>
+              <div class="rest-role-list">
+                <label class="conn-radio"><input type="radio" name="restRole" value="none" onchange="restApplyRole()"><span data-i18n="rest.roleNone">الجهاز غير مشترك</span></label>
+                <label class="conn-radio"><input type="radio" name="restRole" value="send" onchange="restApplyRole()"><span data-i18n="rest.roleSend">مرسل — يرسل الطلبات (نادل)</span></label>
+                <label class="conn-radio"><input type="radio" name="restRole" value="receive" onchange="restApplyRole()"><span data-i18n="rest.roleReceive">مستلم — يستقبل الطلبات (مطبخ/صندوق)</span></label>
+              </div>
+            </div>
+            <div class="rest-hint" id="restRoleHint" data-i18n="rest.roleNoneHint">فعّل المطعم واختر دور الجهاز للبدء.</div>
+          </div>
+
+          <!-- Device name -->
+          <div id="restIdentitySection" style="margin-top:14px;display:none;">
+            <div class="form-group">
+              <label data-i18n="rest.nameLabel">اسم هذا الجهاز</label>
+              <input type="text" class="form-input" id="restName" placeholder="مثال: مطبخ 1 أو نادل أحمد" data-i18n-placeholder="rest.namePlaceholder" onchange="restSaveName()">
+            </div>
+          </div>
+
+          <!-- Tables -->
+          <div id="restTablesSection" style="margin-top:14px;display:none;">
+            <div class="form-group">
+              <label data-i18n="rest.tablesLabel">قائمة الطاولات</label>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                <input type="text" class="form-input" id="restNewTable" style="max-width:140px;" placeholder="5">
+                <button class="btn btn-primary" onclick="restAddTable()"><i class="fas fa-plus"></i> <span data-i18n="rest.tablesAdd">إضافة طاولة</span></button>
+              </div>
+              <div id="restTablesList" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;"></div>
+              <p class="conn-info-text" style="margin-top:6px;" data-i18n="rest.tablesHint">اكتب رقم طاولة ثم اضغط إضافة.</p>
+            </div>
+          </div>
+
+          <!-- Kitchen printer -->
+          <div id="restPrinterSection" style="margin-top:14px;display:none;">
+            <div class="form-group">
+              <label data-i18n="rest.printerLabel">طابعة تذكرة المطبخ</label>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                <select class="form-input" id="restPrinter" style="max-width:340px;" onchange="restSavePrinter()"></select>
+                <button class="btn btn-primary" onclick="restLoadPrinters()"><i class="fas fa-sync-alt"></i> <span data-i18n="rest.printerListBtn">تحديث القائمة</span></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Permissions (manager) -->
+          <div id="restPermsSection" style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);display:none;">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-shield-alt"></i> <span data-i18n="rest.permsTitle">صلاحيات الأجهزة (المدير)</span></h4>
+            <p class="conn-info-text" data-i18n="rest.permsDesc">حدد لكل جهاز ماذا يستطيع: الإرسال، التحكم بالحالة، تأكيد البيع.</p>
+            <div id="restPermsGrid"></div>
+            <div class="conn-actions" style="margin-top:12px;">
+              <button class="btn btn-primary" onclick="restSavePerms()"><i class="fas fa-save"></i> <span data-i18n="rest.savePerms">حفظ الصلاحيات</span></button>
+            </div>
+            <div class="conn-sync-result" id="restPermsResult"></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+
+    <!-- TAB: PRICE DISPLAY (شاشة عرض السعر) -->
+    <div class="conn-tab-content" id="connTabDisplay">
+      <div class="conn-card">
+        <div class="conn-card-header">
+          <i class="fas fa-tv"></i>
+          <span data-i18n="pd.tab">شاشة عرض السعر</span>
+        </div>
+        <div class="conn-card-body">
+          <p class="conn-info-text" data-i18n="pd.tabDesc">شاشة ملء الشاشة تعرض فيديوهات المحل، وعند مسح أي باركود يظهر سعر بيعه 3 ثوانٍ ثم يعود الفيديو. البيانات والوسائط تُخزَّن محليًا على هذا الجهاز فقط.</p>
+
+          <!-- Enable -->
+          <div class="conn-auto-toggle" style="margin-bottom:8px;">
+            <label class="switch">
+              <input type="checkbox" id="pdEnable" onchange="pdSaveEnable()">
+              <span class="slider"></span>
+            </label>
+            <span data-i18n="pd.enable">تفعيل شاشة عرض السعر</span>
+          </div>
+          <div class="conn-sync-result" id="pdEnableResult"></div>
+
+          <!-- VIDEOS -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-film" style="color:#0066b1;"></i> <span data-i18n="pd.videosTitle">مقاطع الفيديو</span></h4>
+            <p class="conn-info-text" data-i18n="pd.videosDesc">تُعرض المقاطع بالترتيب ثم تُكرَّر تلقائيًا. يُمنع رفعها إلى السحابة — تُنسَخ داخل مجلد بيانات البرنامج المحلي.</p>
+            <div class="conn-actions" style="margin-bottom:10px;">
+              <button class="btn btn-primary" onclick="pdAddVideo()"><i class="fas fa-plus"></i> <span data-i18n="pd.videosAdd">إضافة فيديو</span></button>
+            </div>
+            <div id="pdVideoList" class="pd-vid-list"></div>
+            <div id="pdVideoEmpty" class="conn-empty-state">
+              <i class="fas fa-film"></i>
+              <p data-i18n="pd.videosEmpty">لا توجد مقاطع فيديو</p>
+            </div>
+            <div class="conn-sync-result" id="pdVideoResult"></div>
+          </div>
+
+          <!-- LOGO -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-image" style="color:#0066b1;"></i> <span data-i18n="pd.logoTitle">لوغو المحل</span></h4>
+            <p class="conn-info-text" data-i18n="pd.logoDesc">يظهر أعلى شاشة العرض وبجانب السعر. يُعرض في شاشة عرض السعر فقط.</p>
+            <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+              <div class="pd-logo-box" id="pdLogoBox"><i class="fas fa-image"></i></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-primary" onclick="pdPickLogo()"><i class="fas fa-upload"></i> <span data-i18n="pd.logoPick">اختيار صورة</span></button>
+                <button class="btn btn-secondary" id="pdLogoClearBtn" onclick="pdClearLogo()"><i class="fas fa-trash"></i> <span data-i18n="pd.logoClear">إزالة</span></button>
+              </div>
+            </div>
+            <div class="conn-sync-result" id="pdLogoResult"></div>
+          </div>
+
+          <!-- COLORS -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-palette" style="color:#0066b1;"></i> <span data-i18n="pd.colorsTitle">الألوان والخطوط</span></h4>
+            <div class="pd-grid">
+              <div class="pd-field">
+                <label for="pdBg"><span data-i18n="pd.bg">لون خلفية الصفحة</span></label>
+                <input type="color" id="pdBg" value="#0b1220" oninput="pdSaveLook()">
+              </div>
+              <div class="pd-field">
+                <label for="pdPriceColor"><span data-i18n="pd.priceColor">لون الأرقام (السعر)</span></label>
+                <input type="color" id="pdPriceColor" value="#ffd400" oninput="pdSaveLook()">
+              </div>
+              <div class="pd-field">
+                <label for="pdNameColor"><span data-i18n="pd.nameColor">لون اسم المحل</span></label>
+                <input type="color" id="pdNameColor" value="#ffffff" oninput="pdSaveLook()">
+              </div>
+              <div class="pd-field">
+                <label for="pdNameSize" data-i18n="pd.nameSize">حجم خط الاسم</label>
+                <div class="pd-range-row">
+                  <input type="range" id="pdNameSize" min="24" max="140" step="2" value="64" oninput="pdSaveLook()">
+                  <b id="pdNameSizeVal">64</b>
+                </div>
+              </div>
+              <div class="pd-field">
+                <label for="pdPriceSize" data-i18n="pd.priceSize">حجم الأرقام</label>
+                <div class="pd-range-row">
+                  <input type="range" id="pdPriceSize" min="60" max="320" step="4" value="160" oninput="pdSaveLook()">
+                  <b id="pdPriceSizeVal">160</b>
+                </div>
+              </div>
+              <div class="pd-field">
+                <label for="pdFont" data-i18n="pd.font">الخط</label>
+                <select class="form-input" id="pdFont" onchange="pdSaveLook()">
+                  <option value="Segoe UI, Tahoma, sans-serif">Segoe UI</option>
+                  <option value="Tahoma, Segoe UI, sans-serif">Tahoma</option>
+                  <option value="Arial, Helvetica, sans-serif">Arial</option>
+                  <option value="Verdana, Geneva, sans-serif">Verdana</option>
+                  <option value="Calibri, Segoe UI, sans-serif">Calibri</option>
+                  <option value="Cairo, Tahoma, sans-serif">Cairo</option>
+                  <option value="Impact, fantasy">Impact</option>
+                  <option value="Georgia, serif">Georgia</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- TICKER -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-stream" style="color:#0066b1;"></i> <span data-i18n="pd.tickerTitle">الشريط السفلي</span></h4>
+            <p class="conn-info-text" data-i18n="pd.tickerDesc">شريط أبيض متحرك أسفل الشاشة يحمل شعار البرنامج واسم ZMT SOFTWARE ومعلومات التواصل.</p>
+            <div class="conn-auto-toggle" style="margin-bottom:10px;">
+              <label class="switch">
+                <input type="checkbox" id="pdTickerOn" checked onchange="pdSaveTicker()">
+                <span class="slider"></span>
+              </label>
+              <span data-i18n="pd.tickerOn">إظهار الشريط السفلي</span>
+            </div>
+            <div class="pd-grid">
+              <div class="pd-field">
+                <label for="pdTickerPhone" data-i18n="pd.tickerPhone">رقم الهاتف داخل الشريط</label>
+                <input type="text" class="form-input" id="pdTickerPhone" dir="ltr" value="07.72.36.36.29" oninput="pdSaveTicker()">
+              </div>
+              <div class="pd-field">
+                <label for="pdTickerMail" data-i18n="pd.tickerMail">البريد داخل الشريط</label>
+                <input type="text" class="form-input" id="pdTickerMail" dir="ltr" value="zmtsouftware@gmail.com" oninput="pdSaveTicker()">
+              </div>
+            </div>
+          </div>
+
+          <!-- AUTO LOGIN -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-user-shield" style="color:#0066b1;"></i> <span data-i18n="pd.autoLoginTitle">الدخول التلقائي لشاشة العرض</span></h4>
+            <p class="conn-info-text" data-i18n="pd.autoLoginDesc">عند تشغيل البرنامج يُدخل هذا الحساب تلقائيًا بدون كلمة مرور وتفتح شاشة العرض بملء الشاشة مباشرة. اختر حسابًا تملك صلاحية «شاشة عرض السعر» فقط.</p>
+            <div class="conn-auto-toggle" style="margin-bottom:10px;">
+              <label class="switch">
+                <input type="checkbox" id="pdAutoLogin" onchange="pdSaveAutoLogin()">
+                <span class="slider"></span>
+              </label>
+              <span data-i18n="pd.autoLoginOn">تفعيل الدخول التلقائي</span>
+            </div>
+            <div class="pd-grid">
+              <div class="pd-field">
+                <label for="pdAutoUser" data-i18n="pd.autoLoginUser">الحساب</label>
+                <select class="form-input" id="pdAutoUser" onchange="pdSaveAutoLogin()"></select>
+              </div>
+              <div class="pd-field">
+                <label for="pdAutoPass" data-i18n="pd.autoLoginPass">كلمة المرور</label>
+                <input type="password" class="form-input" id="pdAutoPass" autocomplete="new-password" oninput="pdSaveAutoLogin()">
+              </div>
+            </div>
+            <div class="conn-sync-result" id="pdAutoLoginResult"></div>
+          </div>
+
+          <!-- AUTO START -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-power-off" style="color:#0066b1;"></i> <span data-i18n="pd.autoStartTitle">بدء التشغيل مع Windows</span></h4>
+            <p class="conn-info-text" data-i18n="pd.autoStartDesc">يفتح البرنامج تلقائيًا عند تشغيل الكمبيوتر ثم ينتقل مباشرة إلى شاشة عرض السعر.</p>
+            <div class="conn-auto-toggle" style="margin-bottom:8px;">
+              <label class="switch">
+                <input type="checkbox" id="pdAutoStart" onchange="pdSaveAutoStart()">
+                <span class="slider"></span>
+              </label>
+              <span data-i18n="pd.autoStartOn">تشغيل البرنامج مع بدء Windows</span>
+            </div>
+            <div class="conn-sync-result" id="pdAutoStartResult"></div>
+          </div>
+
+          <!-- LOCK PIN -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-key" style="color:#0066b1;"></i> <span data-i18n="pd.pinTitle">رمز القفل</span></h4>
+            <p class="conn-info-text" data-i18n="pd.pinDesc">يُطلب للخروج من شاشة العرض (زر القفل أو Ctrl+Shift+P). اتركه فارغًا لاستخدام كلمة مرور المحل الافتراضية.</p>
+            <div class="pd-grid">
+              <div class="pd-field">
+                <label for="pdPin" data-i18n="pd.pinLabel">رمز القفل</label>
+                <input type="password" class="form-input" id="pdPin" dir="ltr" autocomplete="new-password">
+              </div>
+            </div>
+            <div class="conn-actions" style="margin-top:10px;">
+              <button class="btn btn-primary" onclick="pdSavePin()"><i class="fas fa-save"></i> <span data-i18n="pd.pinSave">حفظ الرمز</span></button>
+            </div>
+            <div class="conn-sync-result" id="pdPinResult"></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
   </div>
 </div>

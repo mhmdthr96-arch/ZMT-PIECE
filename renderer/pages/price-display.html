@@ -1,0 +1,79 @@
+<div class="pd-stage" id="pdStage">
+
+  <!-- ===== HEADER: store logo + store name ===== -->
+  <header class="pd-header" id="pdHeader">
+    <img class="pd-logo" id="pdLogo" alt="" style="display:none;">
+    <h1 class="pd-store-name" id="pdStoreName">ZMT PIECE</h1>
+    <button class="pd-lock-btn" id="pdLockBtn" type="button"
+            title="قفل / خروج" aria-label="قفل / خروج"><i class="fas fa-lock"></i></button>
+  </header>
+
+  <!-- ===== VIDEO STAGE ===== -->
+  <div class="pd-video-wrap" id="pdVideoWrap">
+    <video class="pd-video" id="pdVideo" playsinline preload="auto"></video>
+    <div class="pd-video-empty" id="pdVideoEmpty">
+      <i class="fas fa-film"></i>
+      <p data-i18n="pd.noVideos">لا توجد مقاطع فيديو بعد</p>
+      <span data-i18n="pd.noVideosHint">أضف مقاطع فيديو من إعدادات الاتصال ← تبويب شاشة العرض</span>
+    </div>
+
+    <!-- ===== PRICE LAYER (3 seconds) ===== -->
+    <div class="pd-price-layer" id="pdPriceLayer" aria-live="polite">
+      <div class="pd-price-head">
+        <img class="pd-price-logo" id="pdPriceLogo" alt="" style="display:none;">
+        <span class="pd-price-store" id="pdPriceStore">ZMT PIECE</span>
+      </div>
+      <div class="pd-price-name" id="pdProdName"></div>
+      <div class="pd-price-value"><span id="pdPrice">0.00</span><em data-i18n="pd.currency">دج</em></div>
+      <div class="pd-price-miss" id="pdMiss" data-i18n="pd.notFound">المنتج غير موجود</div>
+    </div>
+  </div>
+
+  <!-- ===== FOOTER TICKER: white bar, royal-blue text ===== -->
+  <footer class="pd-footer" id="pdFooter">
+    <div class="pd-ticker" id="pdTicker">
+      <div class="pd-ticker-track" id="pdTickerTrack">
+        <span class="pd-ticker-item">
+          <svg class="pd-ico pd-ico-phone" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.03-.24c1.12.37 2.33.57 3.56.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.61 21 3 13.39 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.23.2 2.44.57 3.56a1 1 0 0 1-.25 1.02l-2.2 2.21z"/></svg>
+          <b id="pdTickerPhone">07.72.36.36.29</b>
+        </span>
+        <span class="pd-ticker-sep">•</span>
+        <span class="pd-ticker-item">
+          <svg class="pd-ico pd-ico-mail" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 4.24-8 4.76-8-4.76V6l8 4.76L20 6v2.24z"/></svg>
+          <b id="pdTickerMail">zmtsouftware@gmail.com</b>
+        </span>
+        <span class="pd-ticker-sep">•</span>
+        <span class="pd-ticker-item pd-ticker-brand">
+          <img class="pd-brand-logo" src="../assets/logo.png" alt="ZMT">
+          <b>ZMT SOFTWARE</b>
+        </span>
+        <span class="pd-ticker-sep">•</span>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ===== BARCODE HIDDEN FIELD (wedge scanner + LAN/phone scans) ===== -->
+  <input type="text" id="pdScannerField" class="pd-scanner-field" autocomplete="off"
+         tabindex="-1" aria-hidden="true" data-i18n-placeholder="pd.scanPlaceholder" placeholder="امسح الباركود هنا">
+
+  <!-- ===== LOCK / EXIT MODAL ===== -->
+  <div class="pd-lock-veil" id="pdLockVeil" style="display:none;">
+    <div class="pd-lock-dialog" role="dialog" aria-modal="true" aria-labelledby="pdLockTitle">
+      <div class="pd-lock-head">
+        <i class="fas fa-lock"></i>
+        <span id="pdLockTitle" data-i18n="pd.lockTitle">رمز المدير</span>
+        <button class="pd-lock-x" id="pdLockClose" type="button" aria-label="إغلاق"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="pd-lock-body">
+        <input type="password" id="pdLockInput" class="pd-lock-input" inputmode="numeric"
+               autocomplete="off" data-i18n-placeholder="pd.lockPlaceholder" placeholder="أدخل الرمز">
+        <div class="pd-lock-status" id="pdLockStatus"></div>
+      </div>
+      <div class="pd-lock-foot">
+        <button class="pd-lock-btn-ghost" id="pdLockCancel" type="button" data-i18n="pd.cancel">إلغاء</button>
+        <button class="pd-lock-btn-ok" id="pdLockOk" type="button" data-i18n="pd.unlock">فتح</button>
+      </div>
+    </div>
+  </div>
+
+</div>

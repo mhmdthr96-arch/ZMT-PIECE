@@ -1,0 +1,298 @@
+<div class="page" id="page-employees">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-id-badge"></i> <span data-i18n="employees.title">الموظفين</span></h1>
+      <p><span data-i18n="employees.sub">إدارة الموظفين والحضور والرواتب</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <!-- Stats -->
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#e3f2fd;color:#1565c0"><i class="fas fa-id-badge"></i></div>
+        <div class="stat-info">
+          <div class="stat-value" id="empStatTotal">0</div>
+          <div class="stat-label" data-i18n="employees.totalCount">إجمالي الموظفين</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#e8f5e9;color:#2e7d32"><i class="fas fa-user-check"></i></div>
+        <div class="stat-info">
+          <div class="stat-value" id="empStatPresent">0</div>
+          <div class="stat-label" data-i18n="employees.presentToday">حاضر اليوم</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#fff3e0;color:#e65100"><i class="fas fa-hand-holding-usd"></i></div>
+        <div class="stat-info">
+          <div class="stat-value" id="empStatDue">DA0</div>
+          <div class="stat-label" data-i18n="employees.dueThisMonth">مستحق هذا الشهر</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#e8f5e9;color:#2e7d32"><i class="fas fa-money-check-alt"></i></div>
+        <div class="stat-info">
+          <div class="stat-value" id="empStatPaid">DA0</div>
+          <div class="stat-label" data-i18n="employees.paidThisMonth">مدفوع هذا الشهر</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scanner -->
+    <div class="barcode-scanner-section" style="margin-bottom:16px">
+      <div class="scanner-input-wrap">
+        <i class="fas fa-qrcode scanner-icon"></i>
+        <input type="text" class="form-input scanner-input" id="empScanInput" dir="ltr" autocomplete="off"
+               onkeydown="handleEmpScan(event)"
+               data-i18n-placeholder="employees.scanLabel"
+               placeholder="امسح باركود الموظف للحضور أو الانصراف...">
+        <span class="scanner-status" id="empScanStatus" data-i18n="employees.scanReady">جاهز للمسح</span>
+      </div>
+      <div class="scanner-result" id="empScanResult" style="display:none"></div>
+    </div>
+
+    <!-- Today list -->
+    <div id="empTodayBox" style="margin-bottom:16px"></div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <div class="search-bar">
+        <i class="fas fa-search"></i>
+        <input type="text" id="empSearch" data-i18n-placeholder="employees.search" placeholder="بحث عن موظف...">
+      </div>
+      <button class="btn" onclick="toggleEmpSettlement()"><i class="fas fa-calculator"></i> <span data-i18n="employees.settlement">تسوية الرواتب</span></button>
+      <button class="btn btn-primary" onclick="openAddEmpModal()"><i class="fas fa-user-plus"></i> <span data-i18n="employees.add">إضافة موظف</span></button>
+    </div>
+
+    <div id="employeesList"></div>
+
+    <!-- Settlement -->
+    <div id="empSettlement" style="display:none">
+      <div class="page-header" style="margin-top:24px">
+        <div class="page-header-content">
+          <h1 style="font-size:20px"><i class="fas fa-calculator"></i> <span data-i18n="employees.settlement">تسوية الرواتب</span></h1>
+        </div>
+      </div>
+      <div class="toolbar" style="margin-top:8px">
+        <label style="font-weight:600"><span data-i18n="employees.month">الشهر</span></label>
+        <input type="month" class="form-input" id="empMonth" style="max-width:180px" onchange="renderEmpSettlement()">
+        <span id="empSettleSummary" style="font-weight:700"></span>
+      </div>
+      <div id="empSettleWarn" style="display:none"></div>
+      <div id="empSettleTable"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Add / Edit Employee Modal -->
+<div class="modal-overlay" id="empModal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-header">
+      <h3><i class="fas fa-user-plus"></i> <span id="empModalTitle" data-i18n="employees.addModalTitle">إضافة موظف جديد</span></h3>
+      <button class="modal-close" onclick="closeEmpModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label data-i18n="employees.formName">اسم الموظف</label> <span class="required">*</span>
+        <input type="text" class="form-input" id="empName" data-i18n-placeholder="employees.formNamePl" placeholder="مثال: محمد أمين">
+      </div>
+      <div class="form-group">
+        <label data-i18n="employees.formPhone">رقم الهاتف (اختياري)</label>
+        <input type="text" class="form-input" id="empPhone" dir="ltr" placeholder="0555123456">
+      </div>
+      <div class="form-group">
+        <label data-i18n="employees.formBarcode">الباركود</label> <span class="required">*</span>
+        <div style="display:flex;gap:8px">
+          <input type="text" class="form-input" id="empBarcode" dir="ltr" style="flex:1">
+          <button class="btn" onclick="empGenBarcode()"><i class="fas fa-sync"></i> <span data-i18n="employees.formBarcodeGen">توليد</span></button>
+        </div>
+        <small style="color:var(--silver-500);font-size:11px" data-i18n="employees.formBarcodeHelp">كود فريد لكل موظف — لا يتكرر مع المنتجات ولا مع موظف آخر</small>
+      </div>
+      <div class="form-group">
+        <label data-i18n="employees.formPhoto">الصورة (اختياري)</label>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div id="empPhotoPreview" style="width:64px;height:64px;border-radius:50%;background:var(--silver-200);display:flex;align-items:center;justify-content:center;overflow:hidden;border:2px solid var(--silver-300);flex-shrink:0">
+            <i class="fas fa-user" style="font-size:24px;color:var(--silver-400)"></i>
+          </div>
+          <input type="file" accept="image/*" id="empPhotoInput" style="font-size:12px">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="employees.formSalaryType">نوع الراتب</label>
+        <select class="form-input" id="empSalaryType" onchange="empSalaryTypeChanged()">
+          <option value="monthly" data-i18n="employees.salaryMonthly">شهري</option>
+          <option value="daily" data-i18n="employees.salaryDaily">يومي</option>
+        </select>
+      </div>
+      <div class="form-group" id="empMonthlyBox">
+        <label data-i18n="employees.formMonthly">الراتب الشهري (دج)</label>
+        <input type="number" class="form-input no-spinner" id="empMonthly" value="0" min="0" step="100" dir="ltr">
+      </div>
+      <div class="form-group" id="empDailyBox" style="display:none">
+        <label data-i18n="employees.formDaily">مبلغ اليوم (دج)</label>
+        <input type="number" class="form-input no-spinner" id="empDaily" value="0" min="0" step="50" dir="ltr">
+      </div>
+      <div class="form-group">
+        <small style="color:var(--silver-500);font-size:11px" data-i18n="employees.salaryHelp">الشهري يُقسم على 30 يومًا دائمًا: 30000 ← 1000/يوم (فبراير والمصر لا ينقصان)</small>
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="employees.formPayDay">يوم صرف الراتب</label>
+        <input type="number" class="form-input no-spinner" id="empPayDay" value="28" min="1" max="31" dir="ltr">
+        <small style="color:var(--silver-500);font-size:11px" data-i18n="employees.formPayDayHelp">من 1 إلى 31 — يوم استحقاق صرف الراتب الشهري</small>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--silver-200);margin:14px 0">
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="empTimingEnabled" onchange="empTimingChanged()">
+          <span data-i18n="employees.timingEnabled">تفعيل توقيت العمل (خصم التأخر والانصراف المبكر)</span>
+        </label>
+      </div>
+      <div id="empTimingBox" style="display:none">
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <div class="form-group" style="flex:1;min-width:130px">
+            <label data-i18n="employees.formWorkStart">بداية العمل</label>
+            <input type="time" class="form-input" id="empWorkStart" value="08:00" dir="ltr">
+          </div>
+          <div class="form-group" style="flex:1;min-width:130px">
+            <label data-i18n="employees.formWorkEnd">نهاية العمل</label>
+            <input type="time" class="form-input" id="empWorkEnd" value="16:00" dir="ltr">
+          </div>
+          <div class="form-group" style="flex:1;min-width:110px">
+            <label data-i18n="employees.formGrace">سماحية (دقائق)</label>
+            <input type="number" class="form-input no-spinner" id="empGrace" value="0" min="0" max="120" dir="ltr">
+          </div>
+        </div>
+        <div class="form-group">
+          <small style="color:var(--silver-500);font-size:11px"><span data-i18n="employees.perSecond">سعر الثانية</span>: <b id="empPerSecond" dir="ltr">—</b></small>
+        </div>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--silver-200);margin:14px 0">
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="empRestEnabled" onchange="empRestChanged()">
+          <span data-i18n="employees.restEnabled">تفعيل أيام الراحة</span>
+        </label>
+        <small style="color:var(--silver-500);font-size:11px" data-i18n="employees.restHelp">اختر حالة كل يوم. الراحة غير المدفوعة بلا حضور تُخصم من الراتب الشهري، وبوجود حضور تُعامَل كيوم عمل.</small>
+      </div>
+      <div id="empRestBox" style="display:none">
+        <div id="empRestDays" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="employees.formStatus">الحالة</label>
+        <select class="form-input" id="empStatus">
+          <option value="active" data-i18n="employees.statusActive">نشط</option>
+          <option value="inactive" data-i18n="employees.statusInactive">موقوف</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label data-i18n="employees.formNote">ملاحظة</label>
+        <input type="text" class="form-input" id="empNote">
+      </div>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn" id="empDeleteBtn" style="display:none;color:#e53935" onclick="deleteEmpFromModal()"><i class="fas fa-trash"></i> <span data-i18n="employees.del">حذف الموظف</span></button>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="closeEmpModal()"><span data-i18n="common.cancel">إلغاء</span></button>
+        <button class="btn btn-success" onclick="saveEmp()"><i class="fas fa-check"></i> <span data-i18n="common.save">حفظ</span></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Attendance Records Modal -->
+<div class="modal-overlay" id="empRecModal">
+  <div class="modal" style="max-width:820px">
+    <div class="modal-header">
+      <h3><i class="fas fa-clipboard-list"></i> <span data-i18n="employees.recTitle">سجل الحضور</span> — <span id="empRecName" style="color:var(--bmw-blue-1)"></span></h3>
+      <button class="modal-close" onclick="closeEmpRec()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="toolbar" style="margin-bottom:12px">
+        <label><span data-i18n="employees.month">الشهر</span></label>
+        <input type="month" class="form-input" id="empRecMonth" style="max-width:170px" onchange="renderEmpRec()">
+        <span id="empRecSummary" style="font-weight:700"></span>
+      </div>
+      <div id="empRecList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Day Modal -->
+<div class="modal-overlay" id="empDayModal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3><i class="fas fa-clock"></i> <span id="empDayTitle"></span></h3>
+      <button class="modal-close" onclick="closeEmpDay()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label data-i18n="employees.editInTitle">وقت الحضور</label>
+        <input type="time" class="form-input" id="empDayIn" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="employees.editOutTitle">وقت الانصراف</label>
+        <input type="time" class="form-input" id="empDayOut" dir="ltr">
+      </div>
+      <small style="color:var(--silver-500);font-size:11px">—</small>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeEmpDay()"><span data-i18n="common.cancel">إلغاء</span></button>
+      <button class="btn btn-success" onclick="saveEmpDay()"><i class="fas fa-check"></i> <span data-i18n="employees.saveRec">حفظ</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Pay Modal -->
+<div class="modal-overlay" id="empPayModal">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-header">
+      <h3><i class="fas fa-money-bill-wave"></i> <span data-i18n="employees.payTitle">صرف راتب</span></h3>
+      <button class="modal-close" onclick="closeEmpPay()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p id="empPayWho" style="font-weight:700;margin-bottom:10px"></p>
+      <div class="form-group">
+        <label data-i18n="employees.payAmount">المبلغ</label>
+        <input type="number" class="form-input no-spinner" id="empPayAmount" min="0" step="100" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="employees.payMethod">طريقة الدفع</label>
+        <select class="form-input" id="empPayMethod">
+          <option value="cash" data-i18n="sales.payCash">نقدي</option>
+          <option value="ccp" data-i18n="sales.payCcp">البريد CCP</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label data-i18n="employees.formNote">ملاحظة</label>
+        <input type="text" class="form-input" id="empPayNote">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeEmpPay()"><span data-i18n="common.cancel">إلغاء</span></button>
+      <button class="btn btn-success" onclick="confirmEmpPay()"><i class="fas fa-check"></i> <span data-i18n="employees.btnPay">صرف</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Badge Preview Modal -->
+<div class="modal-overlay" id="empBadgeModal">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-header">
+      <h3><i class="fas fa-id-badge"></i> <span data-i18n="employees.badgeTitle">بطاقة الموظف</span></h3>
+      <button class="modal-close" onclick="closeEmpBadge()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="empBadgePreview" style="text-align:center"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeEmpBadge()"><span data-i18n="common.cancel">إلغاء</span></button>
+      <button class="btn btn-primary" onclick="printEmpBadge()"><i class="fas fa-print"></i> <span data-i18n="employees.badgePrint">طباعة</span></button>
+    </div>
+  </div>
+</div>

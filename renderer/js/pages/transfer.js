@@ -11,18 +11,16 @@ function init_transfer() {
   renderTransferStoreInfo();
   setupTransferSearch();
 
-  const brands = [...BRANDS.global, ...BRANDS.chinese];
   const brandSel = document.getElementById('transferItemBrand');
-  if (brandSel) brandSel.innerHTML = brands.map(b => `<option value="${b.id}">${b.name}</option>`).join('');
-
-  const catSel = document.getElementById('transferItemCategory');
-  if (catSel) catSel.innerHTML = DB.getCategories().map(c => `<option value="${c}">${c}</option>`).join('');
+  if (brandSel) brandSel.innerHTML = (typeof buildBrandSelectOptions === 'function')
+    ? buildBrandSelectOptions()
+    : [...BRANDS.global, ...BRANDS.chinese].map(b => `<option value="${b.id}">${b.name}</option>`).join('');
 
   const sc = document.getElementById('transferBarcodeScanner');
   if (sc && !sc._zmtCleanBound) {
     sc._zmtCleanBound = true;
     sc.addEventListener('input', function() {
-      const cleaned = cleanScannedCode(this.value);
+      const cleaned = cleanScannedCode(this.value, { scanner: true });
       if (cleaned !== this.value) this.value = cleaned;
     });
   }
@@ -128,7 +126,7 @@ function handleTransferBarcodeScan(e) {
   e.preventDefault();
 
   const input = document.getElementById('transferBarcodeScanner');
-  const code = cleanScannedCode(input.value);
+  const code = cleanScannedCode(input.value, { scanner: true });
   if (!code) return;
 
   document.getElementById('transferScannerStatus').textContent = t('transfer.scannerProcessing');
@@ -162,7 +160,7 @@ function setupTransferSearch() {
   if (!input) return;
   const newInput = input.cloneNode(true);
   input.parentNode.replaceChild(newInput, input);
-  newInput.addEventListener('input', function() { searchTransferProduct(this.value); });
+  newInput.addEventListener('input', (typeof debounce === 'function') ? debounce(function() { searchTransferProduct(this.value); }, 180) : function() { searchTransferProduct(this.value); });
 }
 
 function searchTransferProduct(q) {
@@ -172,7 +170,7 @@ function searchTransferProduct(q) {
   const products = DB.getProducts();
   const matches = q
     ? products
-        .map(p => ({ p, score: productSearchScore(p.name, p.barcode, q) }))
+        .map(p => ({ p, score: productSearchScore(p.name, p.barcode, q, p.mark, p.reference, p.countryOfOrigin) }))
         .filter(x => x.score > 0)
         .sort((a, b) => b.score - a.score)
         .slice(0, 10)
@@ -215,12 +213,8 @@ function fillTransferFromProduct(id) {
   document.getElementById('transferItemBuyPrice').disabled = isTransferDonation();
   document.getElementById('transferItemSellPrice').value = product.sellPrice;
 
-  const brands = [...BRANDS.global, ...BRANDS.chinese];
   const brandSel = document.getElementById('transferItemBrand');
   if (brandSel) brandSel.value = product.brandId;
-
-  const catSel = document.getElementById('transferItemCategory');
-  if (catSel && product.category) catSel.value = product.category;
 
   document.getElementById('transferItemForm').style.display = '';
 }
@@ -237,7 +231,6 @@ function addTransferItem() {
   let buyPrice = parseFloat(document.getElementById('transferItemBuyPrice').value) || 0;
   const sellPrice = parseFloat(document.getElementById('transferItemSellPrice').value) || 0;
   const brandId = document.getElementById('transferItemBrand').value;
-  const category = document.getElementById('transferItemCategory').value;
 
   if (!name) { alert(t('transfer.searchFirst')); return; }
   if (qty <= 0) { alert(t('transfer.qtyZero')); return; }
@@ -259,7 +252,7 @@ function addTransferItem() {
   }
 
   _transferCart.push({
-    productId, name, qty, buyPrice, sellPrice, brandId, category, availQty: avail
+    productId, name, qty, buyPrice, sellPrice, brandId, availQty: avail
   });
   renderTransferCart();
   resetTransferItemForm();
@@ -282,25 +275,25 @@ function renderTransferCart() {
   const brands = [...BRANDS.global, ...BRANDS.chinese];
   countEl.textContent = `(${_transferCart.length})`;
   const total = _transferCart.reduce((sum, item) => sum + item.qty * item.buyPrice, 0);
-  totalEl.textContent = `DA${total.toFixed(2)}`;
+  totalEl.textContent = `DA${fmtMoney(total)}`;
 
   container.innerHTML = _transferCart.map((item, i) => {
     const brand = brands.find(b => b.id === item.brandId);
     return `<div class="cart-item">
       <div class="cart-item-info">
         <strong>${item.name}</strong>
-        <span class="text-muted">${brand ? brand.name : item.brandId} | ${item.category} | ${t('transfer.available')} ${item.availQty}</span>
+        <span class="text-muted">${brand ? brand.name : item.brandId} | ${t('transfer.available')} ${item.availQty}</span>
       </div>
       <div class="cart-item-details">
-        <span>${item.qty} × DA${item.buyPrice.toFixed(2)}</span>
-        <span class="cart-item-total">DA${(item.qty * item.buyPrice).toFixed(2)}</span>
+        <span>${item.qty} × DA${fmtMoney(item.buyPrice)}</span>
+        <span class="cart-item-total">DA${fmtMoney((item.qty * item.buyPrice))}</span>
       </div>
       <button class="btn btn-sm btn-danger" onclick="removeTransferItem(${i})"><i class="fas fa-times"></i></button>
     </div>`;
   }).join('');
 
   document.getElementById('transferPaymentSection').style.display = isTransferDonation() ? 'none' : '';
-  document.getElementById('transferPayTotal').textContent = `DA${total.toFixed(2)}`;
+  document.getElementById('transferPayTotal').textContent = `DA${fmtMoney(total)}`;
   const payInput = document.getElementById('transferPayAmount');
   if (parseFloat(payInput.value) > total) payInput.value = total;
   updateTransferPaymentSummary();
@@ -336,7 +329,7 @@ function updateTransferPaymentSummary() {
   const total = _transferCart.reduce((sum, item) => sum + item.qty * item.buyPrice, 0);
   const paid = parseFloat(document.getElementById('transferPayAmount').value) || 0;
   const debt = Math.max(0, total - paid);
-  document.getElementById('transferPayDebt').textContent = `DA${debt.toFixed(2)}`;
+  document.getElementById('transferPayDebt').textContent = `DA${fmtMoney(debt)}`;
 }
 
 function setTransferPayFull() {
@@ -382,9 +375,9 @@ async function executeTransfer() {
     `${t('transfer.confirmFrom')} ${srcCode}\n` +
     `${t('transfer.confirmTo')} ${destName} (${destCode})\n` +
     `${t('transfer.confirmProducts')} ${_transferCart.length}\n` +
-    `${t('transfer.confirmTotal')} DA${total.toFixed(2)}\n` +
-    `${t('transfer.confirmPaid')} DA${paid.toFixed(2)}\n` +
-    `${t('transfer.confirmRemaining')} DA${debt.toFixed(2)}`;
+    `${t('transfer.confirmTotal')} DA${fmtMoney(total)}\n` +
+    `${t('transfer.confirmPaid')} DA${fmtMoney(paid)}\n` +
+    `${t('transfer.confirmRemaining')} DA${fmtMoney(debt)}`;
   if (donation) msg += `\n\n⚠️ ${t('transfer.donationWarning')}`;
   msg += `\n\n${t('transfer.confirmContinue')}`;
 
@@ -428,16 +421,17 @@ async function executeTransfer() {
         allProducts[existingIdx].quantity += item.qty;
         allProducts[existingIdx].updatedAt = Date.now();
       } else {
+        const cid = (typeof Auth !== 'undefined' && Auth.getCompanyId) ? (Auth.getCompanyId() || '') : '';
         allProducts.push({
           id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
           name: item.name,
           barcode: DB.generateBarcode(),
           brandId: item.brandId,
-          category: item.category,
           buyPrice: item.buyPrice,
           sellPrice: item.sellPrice,
           quantity: item.qty,
           storeId: destCode,
+          companyId: cid || undefined,
           createdAt: Date.now(),
           updatedAt: Date.now(),
         });
@@ -458,6 +452,7 @@ async function executeTransfer() {
       createdAt: Date.now(),
       invoiceNumber: DB.getNextInvoiceNumber(),
       storeId: destCode,
+      companyId: (typeof Auth !== 'undefined' && Auth.getCompanyId) ? (Auth.getCompanyId() || '') : undefined,
       type: 'transfer_receive',
       date: Date.now(),
       items: receiverInvoiceItems,
@@ -510,7 +505,6 @@ async function executeTransfer() {
         buyPrice: item.buyPrice,
         sellPrice: item.sellPrice,
         brandId: item.brandId,
-        category: item.category,
       })),
       totalAmount: total,
       paidAmount: paid,
@@ -556,10 +550,10 @@ async function executeTransfer() {
     const itemSummary = _transferCart.map(it => `${it.name} (${it.qty})`).join(', ');
     let successMsg = `${t('transfer.transferSuccess')}\n\n`;
     successMsg += `${t('transfer.transferredProducts')} ${itemSummary}\n`;
-    successMsg += `${t('transfer.transferTotal')} DA${total.toFixed(2)}\n`;
+    successMsg += `${t('transfer.transferTotal')} DA${fmtMoney(total)}\n`;
     if (donation) successMsg += `✅ ${t('transfer.donationNote')}\n`;
-    if (paid > 0) successMsg += `${t('transfer.transferPaid')} DA${paid.toFixed(2)}\n`;
-    if (debt > 0) successMsg += `${t('transfer.transferRemaining')} DA${debt.toFixed(2)}\n`;
+    if (paid > 0) successMsg += `${t('transfer.transferPaid')} DA${fmtMoney(paid)}\n`;
+    if (debt > 0) successMsg += `${t('transfer.transferRemaining')} DA${fmtMoney(debt)}\n`;
     if (typeof CloudService !== 'undefined' && typeof CloudService.isLanSubDevice === 'function' && CloudService.isLanSubDevice()) {
       successMsg += `\n⚠️ ${t('connection.lanSubUploadMsg') || 'هذا الجهاز فرعي (LAN): رفع البيانات للسحابة يتم من السيرفر الرئيسي لهذا الموقع'}\n`;
     }
@@ -589,3 +583,4 @@ window._pageSyncHandlers['transfer'] = function transferSyncData() {
   const input = document.getElementById('transferProdSearch');
   searchTransferProduct(input ? input.value : '');
 };
+window.addEventListener('zmt:buyprice-toggle', function(){ renderTransferCart(); });

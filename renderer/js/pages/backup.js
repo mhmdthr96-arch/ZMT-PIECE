@@ -22,6 +22,7 @@ function init_backup() {
       orders: dbExport.orders,
       nextBarcode: dbExport.meta.nextBarcode || 100000,
       nextInvoiceCounter: dbExport.meta.nextInvoiceCounter || 0,
+      nextPaymentCounter: dbExport.meta.nextPaymentCounter || 0,
     };
     data.zmt_customers = dbExport.customers;
     data.zmt_suppliers = dbExport.suppliers;
@@ -30,10 +31,15 @@ function init_backup() {
     data.zmt_transfers = dbExport.transfers;
     data.zmt_discounts = dbExport.discounts;
     data.zmt_orders = dbExport.orders;
+    data.zmt_companies = dbExport.companies || [];
+    data.zmt_employees = dbExport.employees || [];
+    data.zmt_attendance = dbExport.attendance || [];
     const settingsKeys = [
       'zmt_store_name', 'zmt_store_address', 'zmt_store_phone',
-      'zmt_tva_rate', 'zmt_timbre_enabled', 'zmt_timbre_rate',
+      'zmt_company_name', 'zmt_tva_rate', 'zmt_timbre_enabled', 'zmt_timbre_rate',
       'zmt_invoice_prefix', 'zmt_next_invoice', 'zmt_low_stock_threshold',
+      'zmt_expiry_enabled', 'zmt_expiry_required', 'zmt_expiry_warn_days',
+      'zmt_pharmacy_mode',
     ];
     for (const k of settingsKeys) {
       const v = localStorage.getItem(k);
@@ -71,6 +77,7 @@ function init_backup() {
       merged.meta = {};
       if (dbData.nextBarcode) merged.meta.nextBarcode = dbData.nextBarcode;
       if (dbData.nextInvoiceCounter) merged.meta.nextInvoiceCounter = dbData.nextInvoiceCounter;
+      if (dbData.nextPaymentCounter) merged.meta.nextPaymentCounter = dbData.nextPaymentCounter;
     }
     if (hasDirectKeys) {
       merged.products = data.products || merged.products || [];
@@ -84,9 +91,12 @@ function init_backup() {
     if (data.zmt_transfers) merged.transfers = data.zmt_transfers;
     if (data.zmt_discounts) merged.discounts = data.zmt_discounts;
     if (data.zmt_orders) merged.orders = data.zmt_orders;
+    if (data.zmt_companies) merged.companies = data.zmt_companies;
+    if (data.zmt_employees) merged.employees = data.zmt_employees;
+    if (data.zmt_attendance) merged.attendance = data.zmt_attendance;
     await DB.importAll(merged);
     for (const [k, v] of Object.entries(data)) {
-      if (k.startsWith('zmt_') && !_BACKUP_EXCLUDE.includes(k) && !['zmt_db', 'zmt_customers', 'zmt_suppliers', 'zmt_payments', 'zmt_returns', 'zmt_transfers', 'zmt_discounts', 'zmt_orders'].includes(k)) {
+      if (k.startsWith('zmt_') && !_BACKUP_EXCLUDE.includes(k) && !['zmt_db', 'zmt_customers', 'zmt_suppliers', 'zmt_payments', 'zmt_returns', 'zmt_transfers', 'zmt_discounts', 'zmt_orders', 'zmt_companies', 'zmt_employees', 'zmt_attendance'].includes(k)) {
         localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
       }
     }
@@ -106,7 +116,8 @@ function init_backup() {
     const returns = data.zmt_returns?.length || 0;
     const discounts = data.zmt_discounts?.length || 0;
     const orders = (data.zmt_orders || data.zmt_db?.orders)?.length || 0;
-    return { products, invoices, customers, suppliers, payments, returns, discounts, orders };
+    const companies = data.zmt_companies?.length || 0;
+    return { products, invoices, customers, suppliers, payments, returns, discounts, orders, companies };
   }
 
   async function createBackup() {
@@ -128,7 +139,7 @@ function init_backup() {
       data: allData,
     };
 
-    const base64 = window._zmtGzipToBase64(backup);
+    const base64 = window._zmtGzipToBase64Async ? await window._zmtGzipToBase64Async(backup) : window._zmtGzipToBase64(backup);
 
     const result = await window.electronAPI.saveFile({
       defaultPath: `${storeName}_${new Date().toLocaleDateString('ar-EG-u-nu-latn').replace(/\//g, '-')}.zmt-backup`,
@@ -268,10 +279,14 @@ function init_backup() {
     const doubleConfirm = confirm(t('backup.deleteAllFinalConfirm'));
     if (!doubleConfirm) return;
 
-    const _KEEP = ['zmt_auth_user', 'zmt_store_code', 'zmt_store_type', 'zmt_parent_code', 'zmt_cloud_autosync', 'zmt_cloud_autosync_interval', 'zmt_cloud_last_sync'];
+    const _KEEP = ['zmt_auth_user', 'zmt_store_code', 'zmt_store_type', 'zmt_parent_code', 'zmt_cloud_autosync', 'zmt_cloud_autosync_interval', 'zmt_cloud_last_sync', 'zmt_lan_role', 'zmt_lan_ip', 'zmt_lan_port'];
     const keys = Object.keys(localStorage).filter(k => k.startsWith('zmt_') && !_KEEP.includes(k));
     for (const key of keys) localStorage.removeItem(key);
-    if (typeof DB !== 'undefined' && DB.reset) DB.reset();
+    if (typeof DB !== 'undefined' && DB.reset) {
+      DB.reset().then(() => { setTimeout(() => location.reload(), 300); }).catch(() => { setTimeout(() => location.reload(), 300); });
+    } else {
+      setTimeout(() => location.reload(), 300);
+    }
 
     setStatus(t('backup.deleteAllDone'), 'warning');
     loadBackupList();

@@ -1,0 +1,38 @@
+<div class="page" id="page-local-orders">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-utensils"></i> <span data-i18n="rest.pageTitle">الطلبات المحلية</span></h1>
+      <p><span data-i18n="rest.pageSub">طلبات المطعم على الشبكة المحلية</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+
+    <!-- Role / status strip -->
+    <div class="conn-status-card" id="restLoStatus" style="display:none;">
+      <div class="phs-status-icon" id="restLoStatusIcon"><i class="fas fa-utensils"></i></div>
+      <div style="flex:1;">
+        <div class="phs-status-title" id="restLoStatusTitle">—</div>
+        <div class="phs-status-clients" id="restLoStatusSub"></div>
+      </div>
+      <button class="rest-icon-btn" type="button" onclick="restLoRefresh()" title="تحديث"><i class="fas fa-sync-alt"></i></button>
+    </div>
+
+    <!-- Filter tabs (built by JS from the role) -->
+    <div class="rest-orders-toolbar" id="restLoToolbar" style="display:none;">
+      <div class="rest-orders-tabs" id="restLoTabs"></div>
+      <div class="rest-orders-side">
+        <span class="rest-orders-count" id="restLoCount"></span>
+      </div>
+    </div>
+
+    <!-- Orders list -->
+    <div id="restLoList" class="rest-orders-list"></div>
+    <div id="restLoEmpty" class="rest-orders-empty" style="display:none;">
+      <i class="fas fa-concierge-bell"></i>
+      <p data-i18n="rest.ordersEmpty">لا توجد طلبات بعد</p>
+      <span data-i18n="rest.emptyCartHint">تُضاف الأصناف هنا واحدًا تلو الآخر قبل الإرسال</span>
+    </div>
+
+  </div>
+</div>

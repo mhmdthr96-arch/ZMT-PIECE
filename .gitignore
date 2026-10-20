@@ -1,6 +1,23 @@
 node_modules/
 dist/
-build/
+dist-win7/
+# Generated update manifest (tools/publish-update.js writes it at release time)
+update.json
+build/*
+# NSIS include files are source, not build output - a fresh clone cannot
+# build the installers without them
+!build/installer.nsh
+!build/installer-win7.nsh
 zmt-website/
 error.log
 *.log
+# Phone license signer PRIVATE key + issued sample files (never commit)
+tools/keys/
+# Android license-editor build artifacts
+zmt-phone-editor/build/
+zmt-phone-editor/app/build/
+zmt-phone-editor/.gradle/
+# Android license-editor local + release signing secrets (never commit)
+zmt-phone-editor/local.properties
+zmt-phone-editor/keystore/
+zmt-phone-editor/keystore.properties

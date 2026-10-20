@@ -2,7 +2,41 @@
   position: fixed; inset: 0; z-index: 99999;
   background: #0a0c14;
   display: flex; align-items: center; justify-content: center;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 24px 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Scrollable card on short screens: some devices don't show the full card
+   height (small laptop / low DPI), so cap it to the viewport and let the
+   card scroll internally instead of clipping the key input + buttons. */
+.license-overlay .license-card {
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+/* Custom scrollbar matching the app theme */
+.license-overlay ::-webkit-scrollbar,
+.freeze-overlay ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.license-overlay ::-webkit-scrollbar-track,
+.freeze-overlay ::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+}
+.license-overlay ::-webkit-scrollbar-thumb,
+.freeze-overlay ::-webkit-scrollbar-thumb {
+  background: rgba(0, 102, 177, 0.55);
+  border-radius: 8px;
+}
+.license-overlay ::-webkit-scrollbar-thumb:hover,
+.freeze-overlay ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 102, 177, 0.85);
 }
 
 .license-bg-pattern {
@@ -16,6 +50,7 @@
 
 .license-card {
   position: relative; z-index: 2;
+  margin: auto;
   background: rgba(20,24,36,0.95);
   border: 1px solid rgba(0,102,177,0.2);
   border-radius: 20px;
@@ -87,6 +122,63 @@
   color: rgba(255,255,255,0.2);
   letter-spacing: 1px;
   font-family: 'Segoe UI', Tahoma, sans-serif;
+}
+
+.zmt-device-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.zmt-device-row .license-input {
+  flex: 1;
+}
+
+.zmt-copy-btn {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  background: rgba(255,255,255,0.06);
+  border: 2px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  color: rgba(255,255,255,0.7);
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.25s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.zmt-copy-btn:hover {
+  border-color: #0066B1;
+  color: #fff;
+  background: rgba(0,102,177,0.15);
+}
+
+.zmt-qr-box {
+  background: #fff;
+  padding: 10px;
+  border-radius: 12px;
+  margin-top: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  display: inline-block;
+}
+
+.zmt-qr-box canvas {
+  display: block;
+  border-radius: 4px;
+}
+
+.zmt-qr-box .qr-busy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 190px;
+  height: 190px;
+  color: #0a0c14;
+  font-size: 13px;
 }
 
 .license-activate-btn {
@@ -334,6 +426,12 @@
   background: rgba(10,12,20,0.97);
   display: flex; align-items: center; justify-content: center;
   backdrop-filter: blur(10px);
+  /* Must scroll on short screens — the freeze card holds the key input,
+     QR, EULA and buttons; without scrolling the bottom is unreachable. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 24px 0;
+  -webkit-overflow-scrolling: touch;
 }
 
 .freeze-card {
@@ -343,6 +441,11 @@
   padding: 40px;
   width: 420px;
   max-width: 90vw;
+  margin: auto; /* centers when there's room, scrolls fully when there isn't */
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   text-align: center;
   box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(220,53,69,0.1);
   animation: licenseCardIn 0.6s cubic-bezier(0.16, 1, 0.3, 1);
@@ -368,6 +471,37 @@
 
 .freeze-input-group {
   margin-bottom: 12px;
+}
+
+/* ===== OFFLINE PHONE LICENSE IMPORT ===== */
+.license-divider {
+  display: flex; align-items: center;
+  gap: 12px;
+  margin: 18px 0 12px;
+  color: rgba(255,255,255,0.4);
+  font-size: 12px;
+}
+.license-divider::before,
+.license-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255,255,255,0.12);
+}
+.license-import-btn {
+  width: 100%;
+  text-align: center;
+  border: 1px dashed rgba(0,180,120,0.4);
+  color: #2ecc8f;
+  background: rgba(0,180,120,0.06);
+  border-radius: 12px;
+  padding: 12px;
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+.license-import-btn:hover {
+  background: rgba(0,180,120,0.12);
+  border-color: rgba(0,180,120,0.8);
 }
 
 /* ===== WATERMARK COUNTDOWN ===== */

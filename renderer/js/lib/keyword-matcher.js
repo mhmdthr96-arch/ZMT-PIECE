@@ -19,6 +19,7 @@ window.KeywordMatcher = {
     paidAmount: ['paid', 'payment', 'montant_paye', 'montantpaye', 'verse', 'versement', 'amount_paid', 'amountpaid', 'مدفوع', 'مدفوعة', 'مدفوعات', 'المدفوع', 'المتبقي', 'rest', 'restant', 'reste_a_payer', 'resteapayer', 'credit', 'solde'],
     invoiceDiscount: ['discount', 'remise', 'rabais', 'reduction', 'réduction', 'خصم', 'تخفيض', 'discount_amount', 'discountamount', 'remise_montant', 'disc', 'disccount'],
     unitPrice: ['unit_price', 'unitprice', 'prix_unitaire', 'prixunitaire', 'prix_unit', 'price_unit', 'priceunit', 'سعر_الوحدة', 'سعر_القطعة', 'سعر_الوحدة', 'pu_ht', 'pu_ttc', 'pu'],
+    mark: ['mark', 'mrc', 'المارك', 'مارك', 'brand_mark'],
   },
 
   matchColumns(headers) {
@@ -70,6 +71,7 @@ window.KeywordMatcher = {
       sellPrice: { ar: 'سعر البيع', en: 'Sell Price', fr: 'Prix Vente', zh: '售价' },
       qty: { ar: 'الكمية', en: 'Quantity', fr: 'Quantité', zh: '数量' },
       brand: { ar: 'العلامة التجارية', en: 'Brand', fr: 'Marque', zh: '品牌' },
+      mark: { ar: 'المارك', en: 'Mark', fr: 'Marque produit', zh: '标记' },
       category: { ar: 'التصنيف', en: 'Category', fr: 'Catégorie', zh: '分类' },
       supplier: { ar: 'المورد', en: 'Supplier', fr: 'Fournisseur', zh: '供应商' },
       customer: { ar: 'العميل', en: 'Customer', fr: 'Client', zh: '客户' },

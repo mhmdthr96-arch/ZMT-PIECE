@@ -75,7 +75,7 @@ function filterByDate(items, range) {
 function getProfitMargin(invoices, productMap) {
   return invoices.reduce((s, inv) => {
     if (inv.isProvisional) return s;
-    if (DB.getInvoicePaidAmount(inv.id) < (inv.totalAmount || 0)) return s;
+    if (DB.getInvoiceEffectivePaid(inv) < (inv.totalAmount || 0)) return s;
     (inv.items || []).forEach(it => {
       const prod = productMap[it.productId];
       const buyPrice = prod ? (prod.buyPrice || 0) : 0;
@@ -86,14 +86,14 @@ function getProfitMargin(invoices, productMap) {
 }
 
 function formatDA(v) {
-  return 'DA' + (v || 0).toFixed(2);
+  return 'DA' + fmtMoney((v || 0));
 }
 
 function getProfitMarginSplit(invoices, productMap) {
   let marginCash = 0, marginCcp = 0, collectedCash = 0, collectedCcp = 0;
   invoices.forEach(inv => {
     if (inv.isProvisional) return;
-    if (DB.getInvoicePaidAmount(inv.id) < (inv.totalAmount || 0)) return;
+    if (DB.getInvoiceEffectivePaid(inv) < (inv.totalAmount || 0)) return;
     let margin = 0;
     (inv.items || []).forEach(it => {
       const prod = productMap[it.productId];
@@ -264,7 +264,7 @@ function renderReports() {
 
   // === SALES STATS (from invoice totals — real value of goods sold) ===
   const totalSalesAmount = salesInvoices.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
-  const paidSales = salesInvoices.filter(inv => DB.getInvoicePaidAmount(inv.id) >= (inv.totalAmount || 0));
+  const paidSales = salesInvoices.filter(inv => DB.getInvoiceEffectivePaid(inv) >= (inv.totalAmount || 0));
   const totalSalesProfit = paidSales.reduce((s, inv) => s + (inv.profit || 0), 0);
   const totalSalesQty = salesInvoices.reduce((s, inv) => s + inv.items.reduce((si, it) => si + it.qty, 0), 0);
   const totalSalesPaid = filteredPayments.reduce((s, p) => s + p.amount, 0);
@@ -327,7 +327,6 @@ function renderReports() {
   renderComparisonBar(salesInvoices, filteredReturns, invoiceMap);
   renderSalesTrend(salesInvoices);
   renderReturnsTrend(filteredReturns);
-  renderCategoryPie(salesInvoices, productMap);
   renderReturnsReasonPie(filteredReturns);
 
   // === TABLES ===
@@ -445,7 +444,7 @@ function renderSalesTrend(invoices) {
     const d = new Date(inv.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     if (!daily[d]) daily[d] = { sales: 0, profit: 0 };
     daily[d].sales += inv.totalAmount;
-    if (DB.getInvoicePaidAmount(inv.id) >= (inv.totalAmount || 0)) daily[d].profit += inv.profit || 0;
+    if (DB.getInvoiceEffectivePaid(inv) >= (inv.totalAmount || 0)) daily[d].profit += inv.profit || 0;
   });
 
   const labels = Object.keys(daily).sort();
@@ -709,7 +708,7 @@ function exportReportsPDF() {
 
   const totalSales = payments.reduce((s, p) => s + p.amount, 0);
   const totalProfit = salesInv
-    .filter(inv => DB.getInvoicePaidAmount(inv.id) >= (inv.totalAmount || 0))
+    .filter(inv => DB.getInvoiceEffectivePaid(inv) >= (inv.totalAmount || 0))
     .reduce((s, inv) => s + (inv.profit || 0), 0);
   const totalReturns = ret.reduce((s, r) => s + (r.qty || 0), 0);
 
@@ -753,3 +752,11 @@ function exportReportsPDF() {
   a.click();
   URL.revokeObjectURL(a.href);
 }
+
+// ===== LAN SYNC HANDLER =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['reports'] = function reportsSyncData() {
+  // Reports re-renders every section from the (preserved) date-range inputs, so
+  // a single in-place call keeps numbers fresh without wiping the page state.
+  renderReports();
+};

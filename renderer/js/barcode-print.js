@@ -23,7 +23,7 @@
 
   var _productId = null;
   var _modal = null;
-  var _cfg = { wMm: 40, hMm: 30, mode: MODE_SHEET };
+  var _cfg = { wMm: 40, hMm: 30, mode: MODE_SHEET, rotate: 0, flip: false, barH: 14, barW: 2, halign: 'center', valign: 'center', showPrice: true, showShop: true };
 
   // ---------- helpers ----------
 
@@ -58,23 +58,47 @@
   function readCfgFromInputs() {
     _cfg.wMm = clampNum(elVal('[data-bp-w]'), 10, 150);
     _cfg.hMm = clampNum(elVal('[data-bp-h]'), 10, 150);
+    var flipEl = modalEl('[data-bp-flip]');
+    if (flipEl) _cfg.flip = !!flipEl.checked;
+    _cfg.barH = clampNum(elVal('[data-bp-barh]'), 6, 120);
+    _cfg.barW = clampNum(elVal('[data-bp-barw]'), 1, 6);
+    var hEl = modalEl('[data-bp-halign]');
+    if (hEl) _cfg.halign = hEl.value || 'center';
+    var vEl = modalEl('[data-bp-valign]');
+    if (vEl) _cfg.valign = vEl.value || 'center';
+    var spEl = modalEl('[data-bp-showprice]');
+    if (spEl) _cfg.showPrice = !!spEl.checked;
+    var ssEl = modalEl('[data-bp-showshop]');
+    if (ssEl) _cfg.showShop = !!ssEl.checked;
     return _cfg;
   }
 
   function loadCfg() {
     var c = null;
     try { c = JSON.parse(localStorage.getItem(CFG_KEY) || 'null'); } catch (e) { c = null; }
-    var cfg = { wMm: 40, hMm: 30, mode: MODE_SHEET };
+    var cfg = { wMm: 40, hMm: 30, mode: MODE_SHEET, rotate: 0, flip: false, barH: 14, barW: 2, halign: 'center', valign: 'center', showPrice: true, showShop: true };
     if (c) {
       if (c.wMm > 0 && c.hMm > 0) { cfg.wMm = c.wMm; cfg.hMm = c.hMm; }
       if (c.mode === MODE_SHEET || c.mode === MODE_A4) cfg.mode = c.mode;
+      if ([0, 90, 180, 270].indexOf(c.rotate) >= 0) cfg.rotate = c.rotate;
+      if (typeof c.flip === 'boolean') cfg.flip = c.flip;
+      if (c.barH > 0) cfg.barH = c.barH;
+      if (c.barW > 0) cfg.barW = c.barW;
+      if (c.halign) cfg.halign = c.halign;
+      if (c.valign) cfg.valign = c.valign;
+      if (typeof c.showPrice === 'boolean') cfg.showPrice = c.showPrice;
+      if (typeof c.showShop === 'boolean') cfg.showShop = c.showShop;
     }
     return cfg;
   }
 
   function saveCfg() {
     try {
-      localStorage.setItem(CFG_KEY, JSON.stringify({ wMm: _cfg.wMm, hMm: _cfg.hMm, mode: _cfg.mode }));
+      localStorage.setItem(CFG_KEY, JSON.stringify({
+        wMm: _cfg.wMm, hMm: _cfg.hMm, mode: _cfg.mode, rotate: _cfg.rotate, flip: _cfg.flip,
+        barH: _cfg.barH, barW: _cfg.barW, halign: _cfg.halign, valign: _cfg.valign,
+        showPrice: _cfg.showPrice, showShop: _cfg.showShop
+      }));
     } catch (e) { /* ignore quota/security errors */ }
   }
 
@@ -125,8 +149,9 @@
     // JsBarcode requires an <svg> (or <canvas>) element as its target — a plain
     // <div> throws InvalidElementException and silently yields no bars.
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    var barW = (_cfg && _cfg.barW) ? _cfg.barW : 2;
     try {
-      JsBarcode(svg, ascii, { format: format, displayValue: false, width: 2, height: 60, margin: 0 });
+      JsBarcode(svg, ascii, { format: format, displayValue: false, width: barW, height: 80, margin: 0 });
       var w = parseFloat(svg.getAttribute('width')) || 100;
       var h = parseFloat(svg.getAttribute('height')) || 30;
       svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
@@ -143,19 +168,36 @@
   // ---------- label building ----------
 
   function buildLabelHtml(product, svg) {
-    var w = _cfg.wMm;
-    var h = _cfg.hMm;
-    var nameFont = Math.max(6, Math.min(11, Math.round(h * 0.30)));
-    var subFont = Math.max(6, Math.min(9, Math.round(h * 0.20)));
-    var svgHmm = Math.max(8, Math.round(h * 0.42));
-    var price = 'DA' + (parseFloat(product.sellPrice) || 0).toFixed(2);
-    return ''
-      + '<div class="bp-label" style="width:' + w + 'mm;height:' + h + 'mm">'
-      +   '<div class="bp-name" style="font-size:' + nameFont + 'px">' + esc(product.name) + '</div>'
-      +   '<div class="bp-svg" style="max-height:' + svgHmm + 'mm">' + svg + '</div>'
-      +   '<div class="bp-code" dir="ltr" style="font-size:' + subFont + 'px">' + esc(product.barcode) + '</div>'
-      +   '<div class="bp-price" style="font-size:' + subFont + 'px">' + price + '</div>'
-      + '</div>';
+    var rot = _cfg.rotate || 0;
+    var swap = (rot === 90 || rot === 270);
+    // For 90/270 the whole label is rotated, so swap its box dimensions to the
+    // physical paper size and let the CSS transform re-orient the content.
+    var w = swap ? _cfg.hMm : _cfg.wMm;
+    var h = swap ? _cfg.wMm : _cfg.hMm;
+    var nameFont = Math.max(6, Math.min(11, Math.round(h * 0.22)));
+    var subFont = Math.max(6, Math.min(9, Math.round(h * 0.16)));
+    var svgHmm = Math.max(6, _cfg.barH || Math.round(h * 0.42));
+    var price = 'DA' + fmtMoney((parseFloat(product.sellPrice) || 0));
+    var shop = getPrintInfo().name;
+    var transform = 'rotate(' + rot + 'deg)' + (_cfg.flip ? ' scaleX(-1)' : '');
+    var just = _cfg.valign === 'start' ? 'flex-start' : (_cfg.valign === 'end' ? 'flex-end' : 'center');
+    var ali = _cfg.halign === 'start' ? 'flex-start' : (_cfg.halign === 'end' ? 'flex-end' : 'center');
+
+    var html = ''
+      + '<div class="bp-label" style="width:' + w + 'mm;height:' + h + 'mm;'
+      + 'transform:' + transform + ';transform-origin:center center;'
+      + 'justify-content:' + just + ';align-items:' + ali + ';">'
+      +   '<div class="bp-name" style="font-size:' + nameFont + 'px">' + esc(product.name) + '</div>';
+    if (_cfg.showShop && shop) {
+      html += '<div class="bp-shop" style="font-size:' + subFont + 'px">' + esc(shop) + '</div>';
+    }
+    html += '<div class="bp-svg" style="max-height:' + svgHmm + 'mm">' + svg + '</div>'
+      +   '<div class="bp-code" dir="ltr" style="font-size:' + subFont + 'px">' + esc(product.barcode) + '</div>';
+    if (_cfg.showPrice) {
+      html += '<div class="bp-price" style="font-size:' + subFont + 'px">' + price + '</div>';
+    }
+    html += '</div>';
+    return html;
   }
 
   // isPrint=true -> full quantity laid out for the printer; false -> preview capped.
@@ -193,12 +235,12 @@
   var BP_CSS = ''
     + '.bp-label{box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;'
     + 'align-items:center;text-align:center;overflow:hidden;background:#fff;color:#111;'
-    + "font-family:'Segoe UI',Tahoma,Arial,sans-serif;}"
+    + "font-family:'ZMT Digits','Segoe UI',Tahoma,Arial,sans-serif;}"
     + '.bp-name{font-weight:700;max-width:98%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
     + '.bp-svg{display:flex;justify-content:center;align-items:center;flex:1 1 auto;min-height:0;max-width:98%;}'
     + '.bp-svg svg{display:block;width:100%;height:100%;max-width:98%;}'
     + '.bp-code{font-weight:700;letter-spacing:1px;}'
-    + '.bp-price{font-weight:600;color:#333;}'
+    + '.bp-price{font-weight:600;color:#333;direction:ltr;font-family:\'ZMT Digits\',\'Courier New\',monospace;}'
     + '.bp-more-note{font-size:12px;color:#888;padding:8px;text-align:center;}'
     + '.bp-error{padding:24px;color:#c0392b;text-align:center;font-size:14px;}'
     + '.bp-a4-sheet{background:#fff;box-shadow:0 1px 8px rgba(0,0,0,.18);}'
@@ -208,7 +250,9 @@
     + 'overflow:auto;margin-top:6px;}'
     + '.bp-scale{transform-origin:top right;display:inline-block;vertical-align:top;}'
     + '.bp-inner{display:inline-block;}'
-    + '.bp-mode-btn.active{background:var(--primary,#0066B1);color:#fff;}';
+    + '.bp-mode-btn.active{background:var(--primary,#0066B1);color:#fff;}'
+    + '.bp-shop{font-weight:700;color:#444;max-width:98%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
+    + '.bp-rot-btn.active{background:var(--primary,#0066B1);color:#fff;}';
 
   var MODAL_HTML = ''
     + '<div class="modal" style="max-width:560px">'
@@ -223,14 +267,14 @@
     +     '</div>'
     +     '<div class="form-group">'
     +       '<label>عدد النسخ <span style="font-weight:400;color:var(--silver-500,#888)">(الافتراضي = الكمية المخزنة)</span></label>'
-    +       '<input type="number" class="form-input no-spinner" data-bp-qty value="1" min="1" max="' + QTY_MAX + '">'
+    +       '<input type="text" inputmode="numeric" class="form-input no-spinner num-input" data-bp-qty value="1" min="1" max="' + QTY_MAX + '" dir="ltr">'
     +     '</div>'
     +     '<div class="form-group">'
     +       '<label>مقاس الملصق (عرض × ارتفاع بالمليمتر)</label>'
     +       '<div style="display:flex;align-items:center;gap:8px">'
-    +         '<input type="number" class="form-input no-spinner" data-bp-w value="40" min="10" max="150" style="width:110px">'
+    +         '<input type="text" inputmode="decimal" class="form-input no-spinner num-input" data-bp-w value="40" min="10" max="150" style="width:110px" dir="ltr">'
     +         '<span>×</span>'
-    +         '<input type="number" class="form-input no-spinner" data-bp-h value="30" min="10" max="150" style="width:110px">'
+    +         '<input type="text" inputmode="decimal" class="form-input no-spinner num-input" data-bp-h value="30" min="10" max="150" style="width:110px" dir="ltr">'
     +       '</div>'
     +     '</div>'
     +     '<div class="form-group">'
@@ -239,10 +283,47 @@
     +         '<button type="button" class="btn btn-sm bp-mode-btn" data-bp-mode-sheet><i class="fas fa-file"></i> ملصق لكل ورقة (حرارية)</button>'
     +         '<button type="button" class="btn btn-sm bp-mode-btn" data-bp-mode-a4><i class="fas fa-columns"></i> شبكة على A4</button>'
     +       '</div>'
-    +       '<div data-bp-cols-info class="text-muted" style="font-size:12px;margin-top:6px;display:none"></div>'
-    +     '</div>'
-    +     '<div class="form-group">'
-    +       '<label>معاينة</label>'
+      +       '<div data-bp-cols-info class="text-muted" style="font-size:12px;margin-top:6px;display:none"></div>'
+      +     '</div>'
+      +     '<div class="form-group">'
+      +       '<label>اتجاه ومرآة الملصق</label>'
+      +       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+      +         '<button type="button" class="btn btn-sm bp-rot-btn" data-bp-rot="0">0°</button>'
+      +         '<button type="button" class="btn btn-sm bp-rot-btn" data-bp-rot="90">90°</button>'
+      +         '<button type="button" class="btn btn-sm bp-rot-btn" data-bp-rot="180">180°</button>'
+      +         '<button type="button" class="btn btn-sm bp-rot-btn" data-bp-rot="270">270°</button>'
+      +         '<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;margin:0"><input type="checkbox" data-bp-flip> عكس أفقي (مرآة)</label>'
+      +       '</div>'
+      +     '</div>'
+      +     '<div class="form-group">'
+      +       '<label>حجم الباركود</label>'
+      +       '<div style="display:flex;align-items:center;gap:8px">'
+      +         '<span style="font-size:12px;color:var(--silver-500)">ارتفاع (مم)</span>'
+      +         '<input type="text" inputmode="decimal" class="form-input no-spinner num-input" data-bp-barh value="14" min="6" max="120" style="width:90px" dir="ltr">'
+      +         '<span style="font-size:12px;color:var(--silver-500)">سُمك الخط</span>'
+      +         '<input type="text" inputmode="decimal" class="form-input no-spinner num-input" data-bp-barw value="2" min="1" max="6" step="0.5" style="width:80px" dir="ltr">'
+      +       '</div>'
+      +     '</div>'
+      +     '<div class="form-group">'
+      +       '<label>التوسيط</label>'
+      +       '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+      +         '<select class="form-input" data-bp-halign style="width:140px">'
+      +           '<option value="center">أفقي: وسط</option><option value="start">أفقي: يمين</option><option value="end">أفقي: يسار</option>'
+      +         '</select>'
+      +         '<select class="form-input" data-bp-valign style="width:140px">'
+      +           '<option value="center">رأسي: وسط</option><option value="start">رأسي: أعلى</option><option value="end">رأسي: أسفل</option>'
+      +         '</select>'
+      +       '</div>'
+      +     '</div>'
+      +     '<div class="form-group">'
+      +       '<label>المحتوى المعروض</label>'
+      +       '<div style="display:flex;gap:14px;flex-wrap:wrap">'
+      +         '<label style="display:inline-flex;align-items:center;gap:4px;font-size:13px"><input type="checkbox" data-bp-showprice checked> إظهار السعر</label>'
+      +         '<label style="display:inline-flex;align-items:center;gap:4px;font-size:13px"><input type="checkbox" data-bp-showshop checked> إظهار اسم المحل</label>'
+      +       '</div>'
+      +     '</div>'
+      +     '<div class="form-group">'
+      +       '<label>معاينة</label>'
     +       '<div class="bp-preview" data-bp-preview>'
     +         '<div class="bp-scale" data-bp-scale><div class="bp-inner" data-bp-inner></div></div>'
     +       '</div>'
@@ -284,6 +365,18 @@
     if (sheetBtn) sheetBtn.addEventListener('click', function () { _cfg.mode = MODE_SHEET; renderPreview(); });
     var a4Btn = modalEl('[data-bp-mode-a4]');
     if (a4Btn) a4Btn.addEventListener('click', function () { _cfg.mode = MODE_A4; renderPreview(); });
+
+    _modal.querySelectorAll('[data-bp-rot]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        _cfg.rotate = parseInt(b.getAttribute('data-bp-rot'), 10) || 0;
+        renderPreview();
+      });
+    });
+    var readAndRender = function () { readCfgFromInputs(); renderPreview(); };
+    ['[data-bp-flip]', '[data-bp-barh]', '[data-bp-barw]', '[data-bp-halign]', '[data-bp-valign]', '[data-bp-showprice]', '[data-bp-showshop]'].forEach(function (sel) {
+      var el = modalEl(sel);
+      if (el) { el.addEventListener('input', readAndRender); el.addEventListener('change', readAndRender); }
+    });
   }
 
   function ensureModal() {
@@ -317,6 +410,13 @@
     }
   }
 
+  function updateRotUI() {
+    if (!_modal) return;
+    _modal.querySelectorAll('[data-bp-rot]').forEach(function (b) {
+      b.classList.toggle('active', parseInt(b.getAttribute('data-bp-rot'), 10) === (_cfg.rotate || 0));
+    });
+  }
+
   function renderPreview() {
     if (!_modal || typeof DB === 'undefined' || !_productId) return;
     var product = DB.getProduct(_productId);
@@ -331,6 +431,7 @@
     var res = buildLabelsHtml(product, qty, false);
     inner.innerHTML = res.ok ? res.html : '<div class="bp-error">' + esc(res.error) + '</div>';
     updateModeUI();
+    updateRotUI();
 
     // Fit preview to the available width.
     var natural = inner.offsetWidth;
@@ -348,6 +449,39 @@
   }
 
   // ---------- public API ----------
+
+  // Centralized print header resolver. When an active company exists its
+  // profile is used (name/phone/address/NIS/NIF/RC/ARTICLE) — matching the
+  // legal requirement to print the company instead of the store; otherwise
+  // the store's own stored values are used. Available as window.getPrintInfo().
+  function getPrintInfo() {
+    var store = {
+      name: (typeof localStorage !== 'undefined' ? localStorage.getItem('zmt_store_name') : '') || 'ZMT PIECE',
+      address: (typeof localStorage !== 'undefined' ? localStorage.getItem('zmt_store_address') : '') || '',
+      phone: (typeof localStorage !== 'undefined' ? localStorage.getItem('zmt_store_phone') : '') || '',
+      nis: (typeof localStorage !== 'undefined' ? localStorage.getItem('zmt_store_nis') : '') || '',
+      nif: (typeof localStorage !== 'undefined' ? localStorage.getItem('zmt_store_nif') : '') || '',
+      rcc: (typeof localStorage !== 'undefined' ? localStorage.getItem('zmt_store_rcc') : '') || '',
+      article: (typeof localStorage !== 'undefined' ? localStorage.getItem('zmt_store_article') : '') || ''
+    };
+    var company = null;
+    try {
+      var companyId = (typeof Auth !== 'undefined' && Auth.getCompanyId) ? Auth.getCompanyId() : null;
+      if (companyId && typeof DB !== 'undefined' && DB.getCompany) company = DB.getCompany(companyId);
+    } catch (e) { company = null; }
+    if (company) {
+      return {
+        name: company.storeName || company.name || store.name,
+        address: company.address || store.address,
+        phone: company.phone || store.phone,
+        nis: company.nis || store.nis,
+        nif: company.nif || store.nif,
+        rcc: company.rcc || store.rcc,
+        article: company.article || store.article
+      };
+    }
+    return store;
+  }
 
   function openPrintBarcodeModal(productId) {
     if (typeof DB === 'undefined' || typeof DB.getProduct !== 'function') return;
@@ -369,6 +503,22 @@
     var hEl = modalEl('[data-bp-h]');
     if (wEl) wEl.value = _cfg.wMm;
     if (hEl) hEl.value = _cfg.hMm;
+
+    var flipEl = modalEl('[data-bp-flip]');
+    if (flipEl) flipEl.checked = !!_cfg.flip;
+    var barhEl = modalEl('[data-bp-barh]');
+    if (barhEl) barhEl.value = _cfg.barH;
+    var barwEl = modalEl('[data-bp-barw]');
+    if (barwEl) barwEl.value = _cfg.barW;
+    var halignEl = modalEl('[data-bp-halign]');
+    if (halignEl) halignEl.value = _cfg.halign;
+    var valignEl = modalEl('[data-bp-valign]');
+    if (valignEl) valignEl.value = _cfg.valign;
+    var spEl = modalEl('[data-bp-showprice]');
+    if (spEl) spEl.checked = !!_cfg.showPrice;
+    var ssEl = modalEl('[data-bp-showshop]');
+    if (ssEl) ssEl.checked = !!_cfg.showShop;
+    updateRotUI();
 
     _modal.style.display = 'flex';
     renderPreview();
@@ -397,8 +547,10 @@
     var res = buildLabelsHtml(product, qty, true);
     if (!res.ok) { alert(res.error); return; }
 
-    var w = _cfg.wMm;
-    var h = _cfg.hMm;
+    var rot = _cfg.rotate || 0;
+    var swap = (rot === 90 || rot === 270);
+    var pw = swap ? _cfg.hMm : _cfg.wMm;
+    var ph = swap ? _cfg.wMm : _cfg.hMm;
     var pageCss;
     if (_cfg.mode === MODE_A4) {
       pageCss = ''
@@ -409,9 +561,9 @@
         + '.bp-more-note{display:none;}';
     } else {
       pageCss = ''
-        + '@page { size: ' + w + 'mm ' + h + 'mm; margin: 0; }'
+        + '@page { size: ' + pw + 'mm ' + ph + 'mm; margin: 0; }'
         + 'html,body{margin:0;padding:0;}'
-        + '.bp-sheet-page{page-break-after:always;break-after:page;}'
+        + '.bp-sheet-page{width:' + pw + 'mm;height:' + ph + 'mm;display:flex;align-items:center;justify-content:center;page-break-after:always;break-after:page;}'
         + '.bp-sheet-page:last-child{page-break-after:auto;break-after:auto;}'
         + '.bp-label{border:none;}'
         + '.bp-more-note{display:none;}';
@@ -445,4 +597,5 @@
   window.openPrintBarcodeModal = openPrintBarcodeModal;
   window.closePrintBarcodeModal = closePrintBarcodeModal;
   window.printBarcodeLabels = printLabels;
+  window.getPrintInfo = getPrintInfo;
 })();

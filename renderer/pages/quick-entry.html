@@ -1,0 +1,64 @@
+<div class="page" id="page-quick-entry">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-bolt"></i> <span data-i18n="quickEntry.title">الإدخال السريع</span></h1>
+      <p><span data-i18n="quickEntry.subtitle">فاتورة شراء سريعة — F1 للإغلاق</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <!-- Supplier Bar -->
+    <div class="qe-supplier-bar">
+      <div class="qe-field qe-supplier-field">
+        <i class="fas fa-truck"></i>
+        <input id="qeSupplierSearch" type="text" autocomplete="off" placeholder="اختيار المورّد بالاسم... (اختياري)" oninput="QE.searchSupplier(this.value)">
+        <div id="qeSupplierResults" class="qe-dropdown"></div>
+      </div>
+      <div id="qeSelectedSupplier" class="qe-selected-supplier" style="display:none">
+        <i class="fas fa-check-circle"></i>
+        <span><b>المورّد:</b> <span id="qeSupplierName"></span></span>
+        <button type="button" class="qe-x" onclick="QE.clearSupplier()">&times;</button>
+      </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="qe-toolbar card">
+      <button type="button" class="btn btn-primary" onclick="QE.addRow()"><i class="fas fa-plus"></i> <span data-i18n="quickEntry.addRow">إضافة سطر</span> <kbd>+</kbd></button>
+      <label class="qe-timbre"><input type="checkbox" id="qeTimbre"> <span data-i18n="quickEntry.timbre">طابع جبائي</span></label>
+      <span class="qe-hint" data-i18n="quickEntry.hint">F1 للإغلاق • أسهم للتنقل • + سطر جديد</span>
+    </div>
+
+    <!-- Grid -->
+    <div class="qe-grid-wrap">
+      <div class="qe-grid-head">
+        <div class="qe-col qe-col-product" data-i18n="quickEntry.searchProduct">ابحث عن منتج (اسم، باركود، مارك)...</div>
+        <div class="qe-col qe-col-num" data-i18n="quickEntry.qty">الكمية</div>
+        <div class="qe-col qe-col-num" data-i18n="quickEntry.buyPrice">سعر الشراء</div>
+        <div class="qe-col qe-col-num" data-i18n="quickEntry.sellPrice">سعر البيع</div>
+        <div class="qe-col qe-col-num" data-i18n="quickEntry.wholesalePrice">سعر البيع بالجملة</div>
+        <div class="qe-col" data-i18n="quickEntry.brand">العلامة</div>
+        <div class="qe-col" data-i18n="quickEntry.reference">المرجع</div>
+        <div class="qe-col" data-i18n="quickEntry.barcode">الباركود</div>
+        <div class="qe-col" data-i18n="quickEntry.countryOfOrigin">البلد المنشأ</div>
+        <div class="qe-col" data-i18n="quickEntry.mark">المارك</div>
+        <div class="qe-col" data-i18n="quickEntry.storageLocation">مكان التخزين</div>
+        <div class="qe-col qe-col-family" id="qeHeaderFamily"><span data-i18n="quickEntry.family">العائلة</span></div>
+        <div class="qe-col qe-col-expiry" id="qeHeaderExpiry"><span data-i18n="inventory.expiryDate">تاريخ انتهاء الصلاحية</span></div>
+        <div class="qe-col qe-col-del"></div>
+      </div>
+      <div id="qeRows"></div>
+    </div>
+
+    <!-- Footer -->
+    <div class="qe-footer card">
+      <div id="qeTotal" class="qe-total"><span data-i18n="quickEntry.total">الإجمالي:</span> DA0</div>
+      <button type="button" class="btn" onclick="QE.close()"><span data-i18n="quickEntry.cancel">إلغاء</span></button>
+      <button type="button" class="btn btn-primary" id="qeConfirmBtn" onclick="QE.confirm()"><i class="fas fa-check"></i> <span data-i18n="quickEntry.confirm">تأكيد الفاتورة</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Search result item template (cloned by JS) -->
+<template id="qeDropdownItemTpl">
+  <div class="qe-dropdown-item"></div>
+</template>

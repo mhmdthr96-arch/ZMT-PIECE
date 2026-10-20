@@ -1,0 +1,266 @@
+<div class="page" id="page-zakat">
+  <div class="page-header">
+    <div class="page-header-content sh-header">
+      <div class="sh-title-group">
+        <h1><i class="fas fa-hand-holding-heart"></i> <span data-i18n="zakat.title">حساب الزكاة</span></h1>
+        <p><span data-i18n="zakat.sub">زكاة عروض التجارة والأموال وفقاً لمذهب جمهور العلماء</span></p>
+      </div>
+      <button class="btn btn-primary sh-history-btn" onclick="printZakatReport()" style="display:flex;align-items:center;gap:6px;padding:9px 16px;font-size:14px">
+        <i class="fas fa-print"></i> <span data-i18n="zakat.print">طباعة تقرير الزكاة</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="page-body">
+
+    <!-- ===== NISAB INPUT ===== -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-body" style="padding:16px 20px">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
+          <div class="form-group" style="min-width:260px;flex:1">
+            <label class="form-label" style="display:block;font-size:12px;font-weight:600;color:var(--silver-700);margin-bottom:6px">
+              <i class="fas fa-balance-scale"></i> <span data-i18n="zakat.nisabLabel">قيمة النصاب لهذه السنة (DA)</span>
+            </label>
+            <input type="number" id="zakatNisabInput" class="form-input" min="0" step="0.01"
+                   placeholder="000000" oninput="zkScheduleRecalc()" style="width:100%">
+            <small style="display:block;margin-top:4px;color:var(--silver-500);font-size:11px" data-i18n="zakat.nisabHint">
+              يُدخل يدوياً بناءً على سعر الذهب/الفضة أو العملة المحلية
+            </small>
+          </div>
+          <div class="form-group" style="min-width:150px">
+            <label class="form-label" style="display:block;font-size:12px;font-weight:600;color:var(--silver-700);margin-bottom:6px">
+              <i class="fas fa-calendar-alt"></i> <span data-i18n="zakat.nisabYear">السنة</span>
+            </label>
+            <input type="text" id="zakatNisabYear" class="form-input" placeholder="1447" oninput="zkScheduleRecalc()" style="width:100%">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== RESULT HERO ===== -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-body" style="padding:20px 24px">
+        <div id="zkResultBox">
+          <div style="display:flex;flex-wrap:wrap;gap:24px;align-items:center;justify-content:space-between">
+            <div>
+              <div style="font-size:12px;font-weight:700;color:var(--silver-600);margin-bottom:4px">
+                <i class="fas fa-hand-holding-usd"></i> <span data-i18n="zakat.result">الزكاة الواجبة</span>
+              </div>
+              <div id="zkResultAmount" style="font-size:42px;font-weight:900;color:var(--bmw-blue-1);direction:ltr;text-align:right;letter-spacing:-1px">—</div>
+            </div>
+            <div>
+              <div id="zkStatusBadge" class="badge" style="font-size:13px;padding:6px 14px">—</div>
+              <div id="zkResultSub" style="font-size:11px;color:var(--silver-500);margin-top:8px" data-i18n="zakat.resultSub">ربع العشر (2.5%) من الوعاء الزكوي الصافي</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;align-items:stretch;min-width:220px">
+              <button id="zkRecordBtn" class="btn btn-primary" onclick="zkRecordZakat()"
+                      style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px 18px;font-size:14px;font-weight:700">
+                <i class="fas fa-hand-holding-heart"></i> <span data-i18n="zakat.payNow">إخراج الزكاة</span>
+              </button>
+              <div id="zkRecordHint" style="font-size:11px;color:var(--silver-500);text-align:center" data-i18n="zakat.noAmount">
+                بلغ النصاب أولاً ليتمكن التقييد
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== STATS GRID ===== -->
+    <div class="stats-grid" style="margin-bottom:20px">
+      <div class="stat-card">
+        <div class="stat-icon" style="background:var(--bmw-blue-1)"><i class="fas fa-boxes"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="zkStatInventory">DA0</span>
+          <span class="stat-label" data-i18n="zakat.stat1">قيمة المخزون (سعر السوق)</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#28a745"><i class="fas fa-money-bill-wave"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="zkStatCash">DA0</span>
+          <span class="stat-label" data-i18n="zakat.stat2">السيولة النقدية</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:var(--bmw-blue-light)"><i class="fas fa-university"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="zkStatCcp">DA0</span>
+          <span class="stat-label" data-i18n="zakat.stat3">الحسابات (CCP / بنك)</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#ff6d00"><i class="fas fa-hand-holding"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="zkStatReceivables">DA0</span>
+          <span class="stat-label" data-i18n="zakat.stat4">الديون لنا (مرجوة التحصيل)</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#dc3545"><i class="fas fa-hand-holding-heart"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="zkStatPayables">DA0</span>
+          <span class="stat-label" data-i18n="zakat.stat5">الديون علينا (إلى الموردين)</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#0f9d58"><i class="fas fa-truck"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="zkStatAtSuppliers">DA0</span>
+          <span class="stat-label" data-i18n="zakat.stat8">أموالنا عند الموردين (ديون لنا)</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#ff7043"><i class="fas fa-user"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="zkStatOwedCustomers">DA0</span>
+          <span class="stat-label" data-i18n="zakat.stat9">أموال العملاء لدينا (ديون علينا)</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#6f42c1"><i class="fas fa-calculator"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="zkStatBase">DA0</span>
+          <span class="stat-label" data-i18n="zakat.stat6">الوعاء الزكوي الصافي</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#e6a000"><i class="fas fa-balance-scale"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="zkStatNisab">DA0</span>
+          <span class="stat-label" data-i18n="zakat.stat7">قيمة النصاب</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== LIQUIDITY DETAIL ===== -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><i class="fas fa-coins"></i> <span data-i18n="zakat.lqTitle">تفصيل السيولة النقدية والحسابات</span></div>
+      <div class="card-body">
+        <p style="font-size:12px;color:var(--silver-500);margin:0 0 12px" data-i18n="zakat.lqSub">الداخل ناقص الخارج (منذ تسجيل النظام) + تسوية يدوية</p>
+        <div class="table-container" style="max-width:720px">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th style="text-align:left">DA</th>
+              </tr>
+            </thead>
+            <tbody id="zkLiquidityRows"></tbody>
+          </table>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:14px">
+          <div style="min-width:230px;flex:1;max-width:380px">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--silver-700);margin-bottom:6px" data-i18n="zakat.lqAdj">
+              تسوية يدوية (رصيد افتتاحي/سحوبات غير مسجلة)
+            </label>
+            <input type="number" id="zakatLiquidityAdj" class="form-input" min="0" step="0.01" value="0"
+                   oninput="zkScheduleRecalc()" style="width:100%">
+          </div>
+          <span style="font-size:11px;color:var(--silver-500)" data-i18n="zakat.lqNote">
+            التسوية اليدوية لا تُكتب داخل قاعدة البيانات إلا لحظة الحساب؛ احتفظ بها لنفس السنة.
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== INVENTORY BREAKDOWN ===== -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><i class="fas fa-box-open"></i> <span data-i18n="zakat.invTitle">تفصيل المخزون — التقويم بسعر السوق (المفرق)</span></div>
+      <div class="card-body">
+        <p style="font-size:12px;color:var(--silver-500);margin:0 0 12px" data-i18n="zakat.invSub">
+          سعر البيع بالوحدة لكل منتج، بغضّ النظر عن سعر الشراء أو التكلفة القديمة، موافقةً لقول جمهور العلماء
+        </p>
+        <div class="table-container" style="max-height:380px;overflow:auto">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th data-i18n="zakat.invColProduct">المنتج</th>
+                <th data-i18n="zakat.invColQty">الكمية</th>
+                <th data-i18n="zakat.invColBasis">أساس التقويم</th>
+                <th data-i18n="zakat.invColPrice">السعر (DA)</th>
+                <th data-i18n="zakat.invColValue">القيمة (DA)</th>
+              </tr>
+            </thead>
+            <tbody id="zkInventoryRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== DEBTS ===== -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><i class="fas fa-hand-holding-usd"></i> <span data-i18n="zakat.debtTitle">الديون</span></div>
+      <div class="card-body">
+        <p style="font-size:12px;color:var(--silver-500);margin:0 0 12px" data-i18n="zakat.debtNote">
+          تُضاف: ديون العملاء لنا وأموالنا عند الموردين (السلف المدفوعة له). وتُخصم: ديوننا للموردين وسلف العملاء المقبوضة (لا توجد بيانات آجال استحقاق في النظام).
+        </p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px">
+          <div>
+            <div class="section-title" style="font-size:13px;margin-bottom:10px"><i class="fas fa-user"></i> <span data-i18n="zakat.debtCustomers">ديون لنا على العملاء (مرجوة التحصيل)</span></div>
+            <div class="table-container" style="max-height:260px;overflow:auto">
+              <table class="data-table">
+                <thead><tr><th data-i18n="zakat.debtColName">الاسم</th><th data-i18n="zakat.debtColBalance">الرصيد (DA)</th></tr></thead>
+                <tbody id="zkCustomersRows"></tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <div class="section-title" style="font-size:13px;margin-bottom:10px"><i class="fas fa-truck"></i> <span data-i18n="zakat.debtSuppliers">ديون علينا للموردين الحالة</span></div>
+            <div class="table-container" style="max-height:260px;overflow:auto">
+              <table class="data-table">
+                <thead><tr><th data-i18n="zakat.debtColName">الاسم</th><th data-i18n="zakat.debtColBalance">الرصيد (DA)</th></tr></thead>
+                <tbody id="zkSuppliersRows"></tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <div class="section-title" style="font-size:13px;margin-bottom:10px"><i class="fas fa-truck"></i> <span data-i18n="zakat.debtAtSuppliers">أموالنا عند الموردين (ديون لنا)</span></div>
+            <div class="table-container" style="max-height:260px;overflow:auto">
+              <table class="data-table">
+                <thead><tr><th data-i18n="zakat.debtColName">الاسم</th><th data-i18n="zakat.debtColBalance">الرصيد (DA)</th></tr></thead>
+                <tbody id="zkAtSuppliersRows"></tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <div class="section-title" style="font-size:13px;margin-bottom:10px"><i class="fas fa-user"></i> <span data-i18n="zakat.debtOwedCustomers">أموال العملاء لدينا (ديون علينا)</span></div>
+            <div class="table-container" style="max-height:260px;overflow:auto">
+              <table class="data-table">
+                <thead><tr><th data-i18n="zakat.debtColName">الاسم</th><th data-i18n="zakat.debtColBalance">الرصيد (DA)</th></tr></thead>
+                <tbody id="zkOwedCustomersRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== METHODOLOGY ===== -->
+    <div class="card">
+      <div class="card-header"><i class="fas fa-book-open"></i> <span data-i18n="zakat.methodTitle">منهج الحسبة</span></div>
+      <div class="card-body">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+          <span class="badge badge-info" style="font-size:12px"><span data-i18n="zakat.methodRule">الأصل الفقهي المطبق</span>: <b data-i18n="zakat.resultSub">ربع العشر (2.5%) من الوعاء الزكوي الصافي</b></span>
+        </div>
+        <ul style="margin:0;padding-right:18px;font-size:13px;color:var(--silver-700);line-height:2">
+          <li data-i18n="zakat.methodB1">المخزون يُقوَّم بسعر السوق الحالي (سعر البيع) لا بسعر الشراء — روح التجارة السائدة.</li>
+          <li data-i18n="zakat.methodB2">الأرباح النقدية والعينية المحققة داخلة في الوعاء ضمنياً (المخزون بالسعر السوقي + النقد المتراكم) ولا تُضاف مرة أخرى.</li>
+          <li data-i18n="zakat.methodB3">الديون المرجوة التحصيل (على العملاء) تُضاف، والديون الحالة علينا (للموردين) تُخصم.</li>
+          <li data-i18n="zakat.methodB4">تخرج الزكاة بمعدل ربع العشر (2.5%) على كامل الوعاء الصافي متى بلغ النصاب عليه الحول.</li>
+        </ul>
+        <div style="margin-top:12px;padding:12px 16px;background:var(--silver-50);border-radius:var(--radius-sm);font-size:12px;color:var(--silver-700)">
+          <i class="fas fa-chart-line"></i> <span data-i18n="zakat.methodProfit">صافي الربح المرجعي (حسب صافي الحساب)</span>
+          <b id="zkNetProfitRef" style="color:var(--bmw-blue-1);direction:ltr;display:inline-block">DA0</b>
+          <div style="font-size:11px;color:var(--silver-500);margin-top:2px" data-i18n="zakat.methodProfitNote">معروض كإيضاح لتتبع الأرباح، وهي مدرجة ضمنياً في المخزون والنقد أعلاه.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  #page-zakat .card-header { border-bottom:1px solid var(--silver-200);padding:12px 16px;font-weight:700;font-size:14px;color:var(--silver-800); }
+  #page-zakat .data-table td { padding:8px 12px; }
+  #page-zakat .data-table th { white-space:nowrap; }
+</style>

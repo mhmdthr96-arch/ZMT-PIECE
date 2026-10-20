@@ -35,6 +35,16 @@
       </button>
     </div>
 
+    <!-- Balance tools toolbar -->
+    <div class="debts-toolbar">
+      <button class="btn btn-sm" id="debtsRecalcBtn" onclick="confirmRecalcAllBalances()" title="إعادة حساب أرصدة العملاء والموردين من الفواتير الحالية">
+        <i class="fas fa-sync-alt"></i> <span data-i18n="balanceTools.recalcBtn">إعادة حساب الأرصدة</span>
+      </button>
+      <button class="btn btn-sm" id="debtsSyncBtn" onclick="window.startBalanceSyncFromGestion ? window.startBalanceSyncFromGestion() : null" title="مزامنة الأرصدة من قاعدة Gestion Stock القديمة">
+        <i class="fas fa-exchange-alt"></i> <span data-i18n="balanceTools.syncBtn">مزامنة الأرصدة من STOCK.FDB</span>
+      </button>
+    </div>
+
     <!-- Search + list container -->
     <div class="debts-content">
       <div class="debts-list-panel">
@@ -64,13 +74,18 @@
 .debts-summary-card{flex:1;min-width:140px;background:#fff;border-radius:var(--radius);padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06)}
 .debts-summary-label{display:block;font-size:11px;color:var(--silver-500);margin-bottom:4px}
 .debts-summary-value{display:block;font-size:20px;font-weight:800}
-.debts-tabs{display:flex;gap:0;margin-bottom:14px;background:var(--silver-100);border-radius:var(--radius);padding:3px}
-.debts-tab{flex:1;padding:8px 12px;border:none;border-radius:4px;font-size:13px;font-weight:600;cursor:pointer;background:transparent;color:var(--silver-600);transition:all 0.15s;display:flex;align-items:center;justify-content:center;gap:6px}
-.debts-tab.active{background:#fff;color:var(--bmw-blue-1);box-shadow:0 1px 4px rgba(0,0,0,0.08)}
-.debts-tab-badge{font-size:10px;background:var(--bmw-blue-1);color:#fff;padding:0 7px;border-radius:10px;line-height:18px;font-weight:700}
-.debts-tab.active .debts-tab-badge{background:var(--bmw-blue-1)}
+.debts-tabs{display:flex;gap:8px;margin-bottom:16px;background:#fff;border:1px solid var(--silver-300);border-radius:12px;padding:6px;box-shadow:0 1px 4px rgba(0,0,0,0.05)}
+.debts-tab{flex:1;padding:11px 14px;border:1px solid transparent;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;background:var(--silver-50);color:var(--silver-600);transition:all 0.15s;display:flex;align-items:center;justify-content:center;gap:6px}
+.debts-tab:hover{border-color:var(--bmw-blue-1);background:rgba(var(--accent-rgb),0.06);color:var(--bmw-blue-1)}
+.debts-tab.active{background:var(--bmw-blue-1);color:#fff;border-color:var(--bmw-blue-1);box-shadow:0 3px 10px rgba(var(--accent-rgb),0.3)}
+.debts-tab-badge{font-size:10px;background:var(--bmw-blue-1);color:#fff;padding:1px 8px;border-radius:10px;line-height:18px;font-weight:700}
+.debts-tab:not(.active) .debts-tab-badge{background:var(--silver-400)}
+.debts-tab.active .debts-tab-badge{background:rgba(255,255,255,0.25)}
+.debts-toolbar{display:flex;gap:8px;justify-content:flex-end;margin-bottom:10px;flex-wrap:wrap}
+.debts-edit-btn{width:26px;height:26px;border:none;border-radius:6px;background:var(--silver-100,#f0f0f0);color:var(--silver-600,#666);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;transition:all 0.12s}
+.debts-edit-btn:hover{background:var(--bmw-blue-1,#2196F3);color:#fff}
 .debts-content{display:flex;gap:16px;align-items:flex-start}
-.debts-list-panel{flex:1;min-width:280px;max-width:400px}
+.debts-list-panel{flex:1;min-width:280px;max-width:400px;background:#fff;border:1px solid var(--silver-200);border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,0.05)}
 .debts-detail-panel{flex:2;min-width:0;background:#fff;border-radius:var(--radius);box-shadow:0 1px 4px rgba(0,0,0,0.06);overflow:hidden;display:none}
 .debts-detail-panel.open{display:block}
 .debts-search{position:relative;margin-bottom:8px}
@@ -78,8 +93,8 @@
 .debts-search input{padding-right:32px;width:100%}
 .debts-list{max-height:calc(100vh - 280px);overflow-y:auto}
 .debts-entity{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px solid var(--silver-200);border-radius:var(--radius-sm);margin-bottom:4px;cursor:pointer;transition:all 0.12s}
-.debts-entity:hover{border-color:var(--bmw-blue-1);box-shadow:0 0 0 2px rgba(0,102,177,0.06)}
-.debts-entity.selected{border-color:var(--bmw-blue-1);background:rgba(0,102,177,0.04)}
+.debts-entity:hover{border-color:var(--bmw-blue-1);box-shadow:0 0 0 2px rgba(var(--accent-rgb),0.06)}
+.debts-entity.selected{border-color:var(--bmw-blue-1);background:rgba(var(--accent-rgb),0.04)}
 .debts-entity-icon{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
 .debts-entity-icon.customer{background:rgba(40,167,69,0.12);color:#28a745}
 .debts-entity-icon.supplier{background:rgba(230,81,0,0.12);color:#e65100}

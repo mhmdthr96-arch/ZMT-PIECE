@@ -4,11 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ZMT PIECE</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
   <link rel="stylesheet" href="css/main.css">
   <link rel="stylesheet" href="css/license.css">
+  <link rel="stylesheet" href="css/rest.css">
+  <link rel="stylesheet" href="css/price-display.css">
 </head>
 <body>
+  <!-- Error Shield: MUST load first so init-phase renderer crashes show a
+       readable banner instead of a blank/white window. -->
+  <script src="js/error-shield.js"></script>
   <div class="app-container">
 
     <!-- ===== TITLE BAR ===== -->
@@ -38,6 +43,9 @@
             <button class="tb-dropdown-item" id="supportAnyDesk">
               <i class="fas fa-desktop"></i> دعم عن بُعد (AnyDesk)
             </button>
+            <button class="tb-dropdown-item" id="supportRustDesk">
+              <i class="fas fa-network-wired"></i> اتصال عن بُعد (RustDesk)
+            </button>
             <a class="tb-dropdown-item" id="supportWhatsapp" target="_blank" rel="noopener">
               <i class="fab fa-whatsapp"></i> تواصل واتساب
             </a>
@@ -46,12 +54,32 @@
             </a>
           </div>
         </div>
+        <button class="tb-btn" id="btnToggleSidebar" title="إظهار/إخفاء القائمة (Ctrl+B)">
+          <i class="fas fa-bars"></i>
+        </button>
+        <button class="tb-btn tb-ds" id="btnDisplaySettings" title="إعدادات العرض" aria-haspopup="dialog">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+              <path d="M3 7h4.6"/><path d="M12.4 7h8.6"/>
+              <path d="M3 12h10.6"/><path d="M18.4 12h2.6"/>
+              <path d="M3 17h6.6"/><path d="M14.4 17h6.6"/>
+            </g>
+            <g fill="currentColor">
+              <circle cx="10" cy="7" r="2.5"/><circle cx="16" cy="12" r="2.5"/><circle cx="12" cy="17" r="2.5"/>
+            </g>
+          </svg>
+          <span class="tb-ds-dot"></span>
+        </button>
         <button class="tb-btn" id="btnLang" title="Language">
           <i class="fas fa-globe"></i>
           <span class="lang-label" id="langLabel">AR</span>
         </button>
         <button class="tb-btn" id="btnTheme" title="الوضع الليلي">
           <i class="fas fa-moon"></i>
+        </button>
+        <button class="tb-btn tb-update" id="btnUpdate" title="التحديثات">
+          <i class="fas fa-cloud-arrow-down"></i>
+          <span class="tb-update-badge" id="updateBadge" style="display:none"></span>
         </button>
         <button class="tb-btn" id="btnMinimize"><i class="fas fa-minus"></i></button>
         <button class="tb-btn" id="btnMaximize"><i class="fas fa-square"></i></button>
@@ -77,13 +105,16 @@
         <a class="nav-item" data-page="brands" href="#"><i class="fas fa-tags"></i><span data-i18n="nav.brands">العلامات التجارية</span></a>
         <a class="nav-item" data-page="sales" href="#"><i class="fas fa-cart-plus"></i><span data-i18n="nav.sales">البيع</span></a>
         <a class="nav-item" data-page="orders" href="#"><i class="fas fa-clipboard-list"></i><span data-i18n="nav.orders">الطلبات</span><span class="nav-badge" id="ordersNavBadge" style="display:none">0</span></a>
+        <a class="nav-item" data-page="local-orders" href="#"><i class="fas fa-utensils"></i><span data-i18n="nav.localOrders">الطلبات المحلية</span><span class="nav-badge" id="localOrdersNavBadge" style="display:none">0</span></a>
         <a class="nav-item" data-page="invoices" href="#"><i class="fas fa-file-invoice"></i><span data-i18n="nav.invoices">الفواتير</span></a>
 
         <div class="nav-section-label" data-i18n="nav.manage">إدارة</div>
         <a class="nav-item" data-page="inventory" href="#"><i class="fas fa-warehouse"></i><span data-i18n="nav.inventory">المخزون</span></a>
+        <a class="nav-item" data-page="expiry" href="#"><i class="fas fa-hourglass-half"></i><span data-i18n="nav.expiry">انتهاء الصلاحية</span></a>
         <a class="nav-item" data-page="supplier-returns" href="#"><i class="fas fa-box-open"></i><span data-i18n="nav.supplierReturns">السلع الفاسدة</span></a>
         <a class="nav-item" data-page="suppliers" href="#"><i class="fas fa-truck"></i><span data-i18n="nav.suppliers">الموردين</span></a>
         <a class="nav-item" data-page="customers" href="#"><i class="fas fa-users"></i><span data-i18n="nav.customers">العملاء</span></a>
+        <a class="nav-item" data-page="employees" href="#"><i class="fas fa-id-badge"></i><span data-i18n="nav.employees">الموظفين</span></a>
         <a class="nav-item" data-page="debts" href="#"><i class="fas fa-hand-holding-usd"></i><span data-i18n="nav.debts">الديون</span></a>
         <a class="nav-item" data-page="store-debts" href="#"><i class="fas fa-store"></i><span data-i18n="nav.storeDebts">ديون المحلات</span></a>
 
@@ -96,6 +127,8 @@
 
         <div class="nav-section-label" data-i18n="nav.finance">المالية</div>
         <a class="nav-item" data-page="net-account" href="#"><i class="fas fa-balance-scale"></i><span data-i18n="nav.netAccount">صافي الحساب</span></a>
+        <a class="nav-item" data-page="zakat" href="#"><i class="fas fa-hand-holding-heart"></i><span data-i18n="nav.zakat">الزكاة</span></a>
+        <a class="nav-item" data-page="expenses" href="#"><i class="fas fa-money-bill-wave"></i><span data-i18n="nav.expenses">المصاريف</span></a>
         <a class="nav-item" data-page="discounts" href="#"><i class="fas fa-percent"></i><span data-i18n="nav.discounts">التخفيضات</span></a>
         <a class="nav-item" data-page="returns" href="#"><i class="fas fa-undo"></i><span data-i18n="nav.returns">المرتجعات</span></a>
         <a class="nav-item" data-page="reports" href="#"><i class="fas fa-chart-bar"></i><span data-i18n="nav.reports">التقارير</span></a>
@@ -104,6 +137,7 @@
         <a class="nav-item" data-page="backup" href="#"><i class="fas fa-database"></i><span data-i18n="nav.backup">النسخ الاحتياطي</span></a>
         <a class="nav-item" data-page="settings" href="#"><i class="fas fa-cog"></i><span data-i18n="nav.settings">الاعدادات</span></a>
         <a class="nav-item" data-page="connection" href="#"><i class="fas fa-cloud"></i><span data-i18n="nav.connection">اعدادات الاتصال</span></a>
+        <a class="nav-item" data-page="price-display" href="#"><i class="fas fa-tv"></i><span data-i18n="nav.priceDisplay">شاشة عرض السعر</span></a>
       </nav>
 
       <div class="sidebar-footer">
@@ -139,8 +173,19 @@
         <div class="license-status" id="licenseStatus" style="display:none"></div>
         <div class="license-input-group">
           <label>معرف هذا الجهاز (للإخبار به عند الطلب)</label>
-          <input type="text" id="licenseDeviceId" class="license-input license-input-readonly"
-                 readonly dir="ltr" placeholder="جارٍ قراءة الجهاز...">
+          <div class="zmt-device-row">
+            <input type="text" id="licenseDeviceId" class="license-input license-input-readonly"
+                   readonly dir="ltr" placeholder="جارٍ قراءة الجهاز...">
+            <button type="button" class="zmt-copy-btn" id="licenseCopyIdBtn"
+                    onclick="copyLicenseMachineId()" title="نسخ معرف الجهاز ورمز المتجر" aria-label="نسخ معرف الجهاز ورمز المتجر">
+              <i class="fas fa-copy"></i>
+            </button>
+          </div>
+          <div class="zmt-qr-box" id="licenseQrBox" style="display:none"></div>
+          <div class="license-hint">
+            <i class="fas fa-qrcode"></i>
+            لتفعيل من هاتف الموزِّع: امسح رمز QR (أعلاه) بتطبيق محرّر الرخص في الهاتف لملء المعرّف ورمز المتجر تلقائياً.
+          </div>
         </div>
         <div class="license-input-group">
           <label>رمز المتجر</label>
@@ -177,6 +222,18 @@
           <i class="fas fa-info-circle"></i>
           تواصل مع المزود للحصول على مفتاح التفعيل ورمز المتجر
         </div>
+        <div class="license-divider"><span>أو — تفعيل بدون إنترنت (من هاتف الموزّع)</span></div>
+        <div class="license-input-group">
+          <button type="button" class="license-switch-btn license-import-btn"
+                  onclick="document.getElementById('licensePhoneFile').click()">
+            <i class="fas fa-mobile-alt"></i> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+          </button>
+          <input type="file" id="licensePhoneFile" accept=".zmtlic,.json,application/json,text/plain" style="display:none">
+          <div class="license-hint">
+            <i class="fas fa-info-circle"></i>
+            في هاتف الموزِّع: افتح محرّر الرخص ← امسح رمز QR أعلاه ← اختر المدة ← «توليد ملف الترخيص» ← انقل ملف <b>.zmtlic</b> هنا عبر USB.
+          </div>
+        </div>
         <div class="license-switch">
           <button class="license-switch-btn" id="licenseSwitchBtn" onclick="doLicenseSwitchAccount()">
             <i class="fas fa-user-friends"></i> حساب مختلف — تسجيل الدخول
@@ -207,6 +264,20 @@
       <h1>انتهت مدة التفعيل</h1>
       <p style="color:var(--silver-500);margin-bottom:8px">يرجى إدخال مفتاح تفعيل جديد لاستمرار العمل</p>
       <p style="color:var(--silver-400);font-size:12px;margin-bottom:20px">بياناتك محفوظة وستعود بعد التفعيل</p>
+
+      <div class="freeze-input-group">
+        <label style="font-size:12px;color:var(--silver-400)">معرف هذا الجهاز (للإخبار به عند الطلب)</label>
+        <div class="zmt-device-row">
+          <input type="text" id="freezeDeviceId" class="license-input license-input-readonly"
+                 readonly dir="ltr" placeholder="جارٍ قراءة الجهاز...">
+          <button type="button" class="zmt-copy-btn" id="freezeCopyIdBtn"
+                  onclick="copyFreezeMachineId()" title="نسخ معرف الجهاز" aria-label="نسخ معرف الجهاز">
+            <i class="fas fa-copy"></i>
+          </button>
+        </div>
+        <div class="zmt-qr-box" id="freezeQrBox" style="display:none"></div>
+      </div>
+
       <div class="freeze-input-group">
         <input type="text" id="freezeStoreCode" class="license-input"
                placeholder="رمز المتجر" dir="ltr" autocomplete="off" spellcheck="false">
@@ -219,6 +290,12 @@
         <input type="text" id="freezeKeyInput" class="license-input"
                 placeholder="مفتاح التفعيل الجديد (ZMT-XXXX-XXXX-XXXX)" dir="ltr" autocomplete="off" spellcheck="false">
       </div>
+      <div class="license-divider"><span>أو — تفعيل بدون إنترنت (من هاتف الموزّع)</span></div>
+      <button type="button" class="license-switch-btn license-import-btn"
+              onclick="document.getElementById('freezePhoneFile').click()">
+        <i class="fas fa-mobile-alt"></i> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+      </button>
+      <input type="file" id="freezePhoneFile" accept=".zmtlic,.json,application/json,text/plain" style="display:none">
       <div class="eula-box">
         <button type="button" class="eula-show-btn" onclick="openEulaModal()">
           <i class="fas fa-file-contract"></i> عرض الشروط والأحكام كاملة
@@ -235,14 +312,16 @@
       <button class="license-activate-btn" onclick="doFreezeActivate()">
         <i class="fas fa-key"></i> تفعيل واستمرار
       </button>
-      <div class="license-switch">
-        <button class="license-switch-btn" onclick="doLicenseSwitchAccount()">
-          <i class="fas fa-user-friends"></i> حساب مختلف — تسجيل الدخول
-        </button>
-      </div>
+      <button type="button" class="license-switch-btn" id="freezeSyncTimeBtn"
+              onclick="doLicenseSyncTime()" style="width:100%;margin-top:8px">
+        <i class="fas fa-clock"></i> تصحيح ساعة الجهاز الآن
+      </button>
       <div class="license-switch">
         <button class="license-switch-btn license-switch-danger" onclick="doLicenseDeactivate()">
           <i class="fas fa-trash"></i> حذف مفتاح التفعيل نهائياً
+        </button>
+        <button class="license-switch-btn" onclick="doLicenseSwitchAccount()">
+          <i class="fas fa-user-friends"></i> حساب مختلف — تسجيل الدخول
         </button>
       </div>
       <div class="license-footer" style="margin-top:20px">
@@ -273,12 +352,13 @@
     </div>
   </div>
 
-  <script src="js/vendor/xlsx.min.js"></script>
+  <script src="js/vendor/xlsx-style.min.js"></script>
   <script src="js/vendor/chart.min.js"></script>
   <script src="js/vendor/supabase.min.js"></script>
   <script src="js/vendor/papaparse.min.js"></script>
   <script src="js/vendor/pako.min.js"></script>
   <script src="js/vendor/jsbarcode.min.js"></script>
+  <script src="js/vendor/qrcodegen.js"></script>
   <script src="js/vendor/sql-asm.js"></script>
   <script src="js/lib/file-detector.js"></script>
   <script src="js/lib/keyword-matcher.js"></script>
@@ -288,7 +368,13 @@
   <script src="js/lib/blob-utils.js"></script>
   <script src="js/lib/ai-agent.js"></script>
   <script src="js/auth.js"></script>
+  <!-- Shared family suggestions (العائلة) used by every product-entry form -->
+  <datalist id="familyDatalist"></datalist>
+
   <script src="js/db.js"></script>
+  <script src="js/payroll.js"></script>
+  <script src="js/sale-core.js"></script>
+  <script src="js/phone-sale-service.js"></script>
   <script src="js/supabase-service.js"></script>
   <script src="js/lan-service.js"></script>
   <script src="js/pages/login.js"></script>
@@ -296,7 +382,14 @@
   <script src="js/pages/net-account.js"></script>
   <script src="js/pages/supplier-returns.js"></script>
   <script src="js/license.js"></script>
+  <script src="js/sound.js"></script>
+  <script src="js/shortcuts.js"></script>
+  <script src="js/display-settings.js"></script>
+  <script src="js/thermal-print.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/rest-core.js"></script>
+  <script src="js/rest-service.js"></script>
   <script src="js/barcode-print.js"></script>
+  <script src="js/updater.js"></script>
 </body>
 </html>

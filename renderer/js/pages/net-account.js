@@ -1,8 +1,12 @@
 function init_net_account() {
-  calculateNet();
+  // Always start on «اليوم» (day): the page markup is rebuilt from the cached
+  // HTML on every navigation, so the .active highlight inside it would drift
+  // away from the persisted _netPeriod otherwise (e.g. blue on «هذا الشهر»
+  // while the numbers were still computed for «هذا الأسبوع»).
+  setNetPeriod('day');
 }
 
-var _netPeriod = 'month';
+var _netPeriod = 'day';
 
 function setNetPeriod(period) {
   _netPeriod = period;
@@ -23,13 +27,15 @@ function getNetDateRange() {
       fromTs = new Date(y, m, d).getTime();
       return { from: fromTs, to: fromTs + 86399999 };
     case 'week': {
-      const dayOfWeek = now.getDay();
-      const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      const monday = new Date(now);
-      monday.setDate(d - diff);
-      monday.setHours(0, 0, 0, 0);
-      fromTs = monday.getTime();
-      break;
+      // Rolling last 7 days instead of «since Monday» (same behaviour as the
+      // orders page): with a Monday-to-now window «اليوم» and «الأسبوع» used to
+      // return the exact same figure whenever nothing was recorded between
+      // Monday and yesterday.
+      const start = new Date(now);
+      start.setDate(d - 6);
+      start.setHours(0, 0, 0, 0);
+      fromTs = start.getTime();
+      return { from: fromTs, to: now.getTime() };
     }
     case 'year':
       fromTs = new Date(y, 0, 1).getTime();
@@ -48,28 +54,48 @@ function netRangeLabel(range) {
   return t('net.allTime') || 'الكل';
 }
 
+function _lineCostInfo(it, productMap) {
+  if (!it) return { cost: 0, isEst: true };
+  const prod = productMap && productMap[it.productId];
+  const costSnap = (it.costPrice !== undefined && it.costPrice !== null) ? Number(it.costPrice) : NaN;
+  const costCur = prod ? (prod.buyPrice || 0) : 0;
+  const cost = isFinite(costSnap) ? costSnap : costCur;
+  const isEst = !isFinite(costSnap);
+  return { cost, isEst };
+}
+
+function canSeeProfit() {
+  try {
+    if (typeof Auth === 'undefined' || !Auth) return false;
+    if (typeof Auth.isManager === 'function' && Auth.isManager()) return true;
+    if (typeof Auth.buyPriceVisible === 'function' && Auth.buyPriceVisible()) return true;
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
 function calcMargin(salesInvoices, productMap) {
-  return salesInvoices.reduce((s, inv) => {
-    if (inv.isProvisional) return s;
-    if (DB.getInvoicePaidAmount(inv.id) < (inv.totalAmount || 0)) return s;
+  let margin = 0;
+  salesInvoices.forEach(inv => {
+    if (inv.isProvisional) return;
     (inv.items || []).forEach(it => {
-      const prod = productMap[it.productId];
-      const buyPrice = prod ? (prod.buyPrice || 0) : 0;
-      s += (it.price - buyPrice) * it.qty;
+      const info = _lineCostInfo(it, productMap);
+      margin += (it.price - info.cost) * it.qty;
     });
-    return s;
-  }, 0);
+  });
+  return margin;
 }
 
 function calcMarginSplit(salesInvoices, productMap) {
   let marginCash = 0, marginCcp = 0, collectedCash = 0, collectedCcp = 0;
   salesInvoices.forEach(inv => {
     if (inv.isProvisional) return;
-    if (DB.getInvoicePaidAmount(inv.id) < (inv.totalAmount || 0)) return;
+    if (DB.getInvoiceEffectivePaid(inv) < (inv.totalAmount || 0)) return;
     let margin = 0;
     (inv.items || []).forEach(it => {
       const prod = productMap[it.productId];
-      const buyPrice = prod ? (prod.buyPrice || 0) : 0;
+      const info = _lineCostInfo(it, productMap); const buyPrice = info.cost;
       margin += (it.price - buyPrice) * it.qty;
     });
     const m = DB.getInvoicePaymentMethods(inv.id);
@@ -88,13 +114,13 @@ function calcMarginSplit(salesInvoices, productMap) {
 }
 
 function formatMarginSplitCard(margin, split) {
-  return `DA${margin.toFixed(2)}
+  return `DA${fmtMoney(margin)}
     <div style="font-size:10px;font-weight:400;margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;color:rgba(255,255,255,0.85)">
-      <span>💵 ${t('net.cashLabel')}: DA${split.collected.cash.toFixed(2)}</span>
-      <span>📮 CCP: DA${split.collected.ccp.toFixed(2)}</span>
+      <span>💵 ${t('net.cashLabel')}: DA${fmtMoney(split.collected.cash)}</span>
+      <span>📮 CCP: DA${fmtMoney(split.collected.ccp)}</span>
     </div>
     <div style="font-size:10px;font-weight:400;margin-top:2px;color:rgba(255,255,255,0.6)">
-      ${t('net.marginLabel')} — 💵 DA${split.margin.cash.toFixed(2)} · 📮 DA${split.margin.ccp.toFixed(2)}
+      ${t('net.marginLabel')} — 💵 DA${fmtMoney(split.margin.cash)} · 📮 DA${fmtMoney(split.margin.ccp)}
     </div>`;
 }
 
@@ -107,9 +133,16 @@ function computeNet(range) {
   const invById = {};
   invoices.forEach(i => { invById[i.id] = i; });
 
-  // الدفعة مصروف إذا: لها مورد، أو مشتريات مخزون، أو إرسال (فاتورة إرسال)، أو مرتبطة بفاتورة شراء (بمورد أو بدونه)
+  // الدفعة مصروف إذا: لها مورد، أو مشتريات مخزون، أو إرسال (فاتورة إرسال)، أو
+  // مرتبطة بفاتورة شراء (بمورد أو بدونه). أما الدفعات المرتبطة بفاتورة
+  // «بيع لمورد» (sup_sale) أو فاتورة عميل فهي مبيعات — فالمورد هنا مشترٍ
+  // وليس بائعاً، والفرق جوهري بين «فاتورة شراء من مورد» و«فاتورة بيع لمورد».
   function isNetExpensePayment(p) {
-    if (p.supplierId || p.type === 'stock_purchase' || p.type === 'dispatch') return true;
+    if (p.supplierId || p.type === 'stock_purchase' || p.type === 'dispatch') {
+      const inv = p.invoiceId ? invById[p.invoiceId] : null;
+      if (inv && (inv.type === 'sup_sale' || inv.type === 'customer')) return false;
+      return true;
+    }
     const inv = p.invoiceId ? invById[p.invoiceId] : null;
     return !!inv && (inv.type === 'supplier' || inv.type === 'purchase');
   }
@@ -160,8 +193,24 @@ function computeNet(range) {
   payments.forEach(p => {
     if (p.isProvisional) return;
     const ts = p.createdAt || 0;
-    const isExp = isNetExpensePayment(p);
     if (!inRange(ts)) return;
+    // Payment vouchers settle balances (سند قبض) and are tracked as their own
+    // invoice type — never let a linked Payment row leak into sales/expenses.
+    const invRef = p.invoiceId ? invById[p.invoiceId] : null;
+    if (invRef && invRef.type === 'payment') return;
+    // المقاصّة عند بيع لمورد (بضاعة سوّت ديننا القديم) = تسوية رصيد محايدة:
+    // لا تُحتسب في المبيعات ولا في المصروفات، لكنها تُخفض دين الفترة للمورد.
+    if (p.isSupSaleExpense) {
+      if (p.supplierId) supRange[p.supplierId] = (supRange[p.supplierId] || 0) - p.amount;
+      return;
+    }
+    // قيود الإدخال المباشر من صفحة صافي الحساب: تذهب للمشتريات أو المصروفات مباشرة
+    if (p.type === 'net_purchase' || p.type === 'net_expense') {
+      if (p.type === 'net_purchase') totalPurchases += p.amount;
+      else totalExpenses += p.amount;
+      return;
+    }
+    const isExp = isNetExpensePayment(p);
     if (isExp) {
       totalExpenses += p.amount;
       if (p.supplierId) supRange[p.supplierId] = (supRange[p.supplierId] || 0) - p.amount;
@@ -205,17 +254,17 @@ function computeNet(range) {
 function calculateNet() {
   const res = computeNet(getNetDateRange());
 
-  document.getElementById('netTotalSales').textContent = `DA${res.totalSales.toFixed(2)}`;
-  document.getElementById('netTotalPurchases').textContent = `DA${res.totalPurchases.toFixed(2)}`;
-  document.getElementById('netTotalExpenses').textContent = `DA${res.totalExpenses.toFixed(2)}`;
-  document.getElementById('netProfit').textContent = `DA${res.profit.toFixed(2)}`;
+  document.getElementById('netTotalSales').textContent = `DA${fmtMoney(res.totalSales)}`;
+  document.getElementById('netTotalPurchases').textContent = `DA${fmtMoney(res.totalPurchases)}`;
+  document.getElementById('netTotalExpenses').textContent = `DA${fmtMoney(res.totalExpenses)}`;
+  document.getElementById('netProfit').textContent = `DA${fmtMoney(res.profit)}`;
 
   // عرض الديون الحالية: دين علينا + دين لنا
-  let pendingHtml = `DA${res.pendingTotal.toFixed(2)}`;
+  let pendingHtml = `DA${fmtMoney(res.pendingTotal)}`;
   if (res.customerDebt > 0 || res.supplierDebt > 0) {
     pendingHtml += `<div style="font-size:10px;font-weight:400;margin-top:2px;display:flex;gap:8px;flex-wrap:wrap">
-      ${res.customerDebt > 0 ? `<span style="color:#28a745">${t('net.customerDebt')}: DA${res.customerDebt.toFixed(2)}</span>` : ''}
-      ${res.supplierDebt > 0 ? `<span style="color:#e65100">${t('net.supplierDebt')}: DA${res.supplierDebt.toFixed(2)}</span>` : ''}
+      ${res.customerDebt > 0 ? `<span style="color:#28a745">${t('net.customerDebt')}: DA${fmtMoney(res.customerDebt)}</span>` : ''}
+      ${res.supplierDebt > 0 ? `<span style="color:#e65100">${t('net.supplierDebt')}: DA${fmtMoney(res.supplierDebt)}</span>` : ''}
     </div>`;
   }
   document.getElementById('netPending').innerHTML = pendingHtml;
@@ -236,9 +285,19 @@ function renderNetTransactions() {
   const invById = {};
   invoices.forEach(i => { invById[i.id] = i; });
 
-  // الدفعة مصروف إذا: لها مورد، أو مشتريات مخزون، أو إرسال (فاتورة إرسال)، أو مرتبطة بفاتورة شراء (بمورد أو بدونه)
+  const productMap = {};
+  for (const p of DB.getProducts()) productMap[p.id] = p;
+
+  // الدفعة مصروف إذا: لها مورد، أو مشتريات مخزون، أو إرسال (فاتورة إرسال)، أو
+  // مرتبطة بفاتورة شراء (بمورد أو بدونه). أما الدفعات المرتبطة بفاتورة
+  // «بيع لمورد» (sup_sale) أو فاتورة عميل فهي مبيعات — فالمورد هنا مشترٍ
+  // وليس بائعاً، والفرق جوهري بين «فاتورة شراء من مورد» و«فاتورة بيع لمورد».
   function isNetExpensePayment(p) {
-    if (p.supplierId || p.type === 'stock_purchase' || p.type === 'dispatch') return true;
+    if (p.supplierId || p.type === 'stock_purchase' || p.type === 'dispatch') {
+      const inv = p.invoiceId ? invById[p.invoiceId] : null;
+      if (inv && (inv.type === 'sup_sale' || inv.type === 'customer')) return false;
+      return true;
+    }
     const inv = p.invoiceId ? invById[p.invoiceId] : null;
     return !!inv && (inv.type === 'supplier' || inv.type === 'purchase');
   }
@@ -271,6 +330,22 @@ function renderNetTransactions() {
   // الدفعات: المصروفات (موردون/مشتريات/إرسال) مقابل المبيعات (عملاء + walk-in)
   payments.forEach(p => {
     if (p.isProvisional) return;
+    // المقاصّة عند بيع لمورد = تسوية رصيد محايدة لا تظهر في سجل المعاملات.
+    if (p.isSupSaleExpense) return;
+    // قيود الإدخال المباشر من صفحة صافي الحساب
+    if (p.type === 'net_purchase' || p.type === 'net_expense') {
+      const isExpDirect = p.type === 'net_expense';
+      const base = isExpDirect ? t('net.directExpense') : t('net.directPurchase');
+      txLog.push({
+        date: new Date(p.createdAt),
+        desc: p.note ? `${base} — ${p.note}` : base,
+        type: isExpDirect ? t('net.expenses') : t('net.purchases'),
+        amount: -(p.amount || 0),
+        badge: isExpDirect ? 'danger' : 'warning',
+        ts: p.createdAt,
+      });
+      return;
+    }
     if (isNetExpensePayment(p)) {
       if (p.supplierId) {
         const s = suppliers.find(x => x.id === p.supplierId);
@@ -297,6 +372,8 @@ function renderNetTransactions() {
       const c = p.customerId ? customers.find(x => x.id === p.customerId) : null;
       const desc = c ? `${t('net.paymentFrom')}${c.name}` : (p.note?.includes('دفع') ? `${t('net.paymentNote')} - ${p.note}` : t('net.paymentWalkin'));
       const methodNote = p.method === 'ccp' || p.method === 'mixed' ? ` (${t('net.ccpPaidNote')})` : '';
+      const invRef = p.invoiceId ? invById[p.invoiceId] : null;
+      const invLink = (invRef && invRef.type === 'customer') ? invRef : null;
       txLog.push({
         date: new Date(p.createdAt),
         desc: (p.note ? `${desc} (${p.note})` : desc) + methodNote,
@@ -304,6 +381,8 @@ function renderNetTransactions() {
         amount: p.amount, // موجب = دخل
         badge: 'success',
         ts: p.createdAt,
+        invoice: invLink,
+        invId: invLink ? invLink.id : null,
       });
     }
   });
@@ -317,20 +396,118 @@ function renderNetTransactions() {
 
   let html = `<div class="table-container"><table class="data-table">
     <thead><tr>
-      <th>${t('net.col1')}</th><th>${t('net.col2')}</th><th>${t('net.col3')}</th><th>${t('net.col4')}</th>
+      <th>${t('net.col1')}</th><th>${t('net.col2')}</th><th>${t('net.col3')}</th><th>${t('net.col4')}</th><th style="width:28px"></th>
     </tr></thead><tbody>`;
+
+  const seeProfit = canSeeProfit();
+  let rowIdx = 0;
 
   txLog.slice(0, 30).forEach(tx => {
     const dateStr = tx.date.toLocaleDateString('ar-EG-u-nu-latn');
-      const amtColor = tx.amount < 0 ? '#dc3545' : '#28a745';
-      html += `<tr>
-        <td>${dateStr}</td>
-        <td>${tx.desc}</td>
-        <td><span class="badge badge-${tx.badge}">${tx.type}</span></td>
-        <td style="color:${amtColor}">${tx.amount < 0 ? '-' : '+'}DA${Math.abs(tx.amount).toFixed(2)}</td>
+    const amtColor = tx.amount < 0 ? '#dc3545' : '#28a745';
+    const hasDetail = !!(tx.invoice && (tx.invoice.items || []).length);
+    const toggleCell = hasDetail
+      ? `<i id="net-inv-toggle-${rowIdx}" class="fas fa-chevron-down" style="cursor:pointer;color:#8ab4f8;font-size:11px" data-row="${rowIdx}"></i>`
+      : '';
+    html += `<tr>
+      <td>${dateStr}</td>
+      <td>${tx.desc}</td>
+      <td><span class="badge badge-${tx.badge}">${tx.type}</span></td>
+      <td style="color:${amtColor}">${tx.amount < 0 ? '-' : '+'}DA${fmtMoney(Math.abs(tx.amount))}</td>
+      <td style="text-align:center">${toggleCell}</td>
+    </tr>`;
+
+    if (hasDetail) {
+      const items = tx.invoice.items;
+      let detRows = '';
+      let sumProfit = 0;
+      let sumTotal = 0;
+      let anyEst = false;
+      items.forEach(it => {
+        const info = _lineCostInfo(it, productMap);
+        if (info.isEst) anyEst = true;
+        const lineTotal = (Number(it.price) || 0) * (Number(it.qty) || 0);
+        const lineProfit = ((Number(it.price) || 0) - info.cost) * (Number(it.qty) || 0);
+        sumProfit += lineProfit;
+        sumTotal += lineTotal;
+        const marginPct = lineTotal > 0 ? (lineProfit / lineTotal * 100) : null;
+        const profitColor = lineProfit >= 0 ? '#28a745' : '#dc3545';
+        const estMark = info.isEst ? '<span title="' + t('net.costEstimated') + '" style="color:#e65100">*</span>' : '';
+        detRows += `<tr>
+          <td>${it.name || ''}${estMark}</td>
+          <td style="text-align:center">${it.qty}</td>
+          ${seeProfit ? `<td style="text-align:center">DA${fmtMoney(info.cost)}</td>` : ''}
+          <td style="text-align:center">DA${fmtMoney(Number(it.price) || 0)}</td>
+          <td style="text-align:center">${lineTotal > 0 ? 'DA' + fmtMoney(lineTotal) : '—'}</td>
+          ${seeProfit ? `<td style="text-align:center;color:${profitColor}">${lineTotal > 0 ? (lineProfit >= 0 ? '+' : '-') + 'DA' + fmtMoney(Math.abs(lineProfit)) : '—'}</td>` : ''}
+          ${seeProfit ? `<td style="text-align:center;color:${profitColor}">${marginPct !== null ? marginPct.toFixed(1) + '%' : '—'}</td>` : ''}
+        </tr>`;
+      });
+      const sumMarginPct = sumTotal > 0 ? (sumProfit / sumTotal * 100) : null;
+      const sumColor = sumProfit >= 0 ? '#28a745' : '#dc3545';
+      detRows += `<tr style="font-weight:700;background:rgba(255,255,255,0.04)">
+        <td>${t('net.invoiceDetails')}${anyEst ? ' <span style="color:#e65100;font-weight:400">*</span>' : ''}</td>
+        <td style="text-align:center"></td>
+        ${seeProfit ? `<td style="text-align:center"></td>` : ''}
+        <td style="text-align:center"></td>
+        <td style="text-align:center">DA${fmtMoney(sumTotal)}</td>
+        ${seeProfit ? `<td style="text-align:center;color:${sumColor}">${sumProfit >= 0 ? '+' : '-'}DA${fmtMoney(Math.abs(sumProfit))}</td>` : ''}
+        ${seeProfit ? `<td style="text-align:center;color:${sumColor}">${sumMarginPct !== null ? sumMarginPct.toFixed(1) + '%' : '—'}</td>` : ''}
       </tr>`;
+
+      html += `<tr id="net-line-detail-${rowIdx}" class="net-line-detail" style="display:none">
+        <td colspan="${seeProfit ? 7 : 5}" style="padding:8px 12px;background:rgba(0,0,0,0.25)">
+          <table class="data-table" style="width:100%;font-size:11px">
+            <thead><tr>
+              <th>${t('net.productCol')}</th>
+              <th style="text-align:center">${t('net.qtyCol')}</th>
+              ${seeProfit ? `<th style="text-align:center">${t('net.buyPriceCol')}</th>` : ''}
+              <th style="text-align:center">${t('net.sellPriceCol')}</th>
+              <th style="text-align:center">${t('net.lineTotalCol')}</th>
+              ${seeProfit ? `<th style="text-align:center">${t('net.profitCol')}</th>` : ''}
+              ${seeProfit ? `<th style="text-align:center">${t('net.marginPctCol')}</th>` : ''}
+            </tr></thead>
+            <tbody>${detRows}</tbody>
+          </table>
+        </td>
+      </tr>`;
+      rowIdx++;
+    }
   });
 
   html += `</tbody></table></div>`;
   container.innerHTML = html;
+
+  if (!container._netDetailBound) {
+    container._netDetailBound = true;
+    container.addEventListener('click', function (e) {
+      const tg = e.target.closest('[id^="net-inv-toggle-"]');
+      if (tg) {
+        const r = tg.getAttribute('data-row');
+        const det = document.getElementById('net-line-detail-' + r);
+        if (det) {
+          const open = det.style.display !== 'none';
+          det.style.display = open ? 'none' : '';
+          tg.className = open ? 'fas fa-chevron-down' : 'fas fa-chevron-up';
+        }
+        return;
+      }
+      const tr = e.target.closest('tr:not(.net-line-detail)');
+      if (tr && tr.parentElement && tr.parentElement.tagName === 'TBODY') {
+        const id = tr.id || '';
+        if (id.startsWith('net-line-detail-')) return;
+        const r = tr.querySelector('[id^="net-inv-toggle-"]');
+        if (r) r.click();
+      }
+    });
+  }
 }
+
+// ===== LAN SYNC HANDLER =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['net-account'] = function netAccountSyncData() {
+  // The dashboard/net view has no free-text search input, but it must reflect
+  // fresh totals + transactions without a destructive page rebuild. calculateNet
+  // re-renders only the result regions in place.
+  calculateNet();
+};

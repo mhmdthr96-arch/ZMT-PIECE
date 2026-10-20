@@ -30,7 +30,7 @@
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-icon" style="background:#0066B1"><i class="fas fa-calculator"></i></div>
+        <div class="stat-icon" style="background:var(--bmw-blue-1)"><i class="fas fa-calculator"></i></div>
         <div class="stat-info">
           <span class="stat-value" id="netProfit">DA0</span>
           <span class="stat-label" data-i18n="net.s3">صافي الربح</span>
@@ -50,9 +50,9 @@
       <div class="card-body">
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:18px">
           <span style="font-weight:600;font-size:13px;color:var(--silver-700);margin-left:8px" data-i18n="net.periodLabel">الفترة:</span>
-          <button class="period-btn" data-period="day" onclick="setNetPeriod('day')" data-i18n="net.today">اليوم</button>
-          <button class="period-btn" data-period="week" onclick="setNetPeriod('week')" data-i18n="reports.thisWeek">هذا الأسبوع</button>
-          <button class="period-btn active" data-period="month" onclick="setNetPeriod('month')" data-i18n="reports.thisMonth">هذا الشهر</button>
+          <button class="period-btn active" data-period="day" onclick="setNetPeriod('day')" data-i18n="net.today">اليوم</button>
+          <button class="period-btn" data-period="week" onclick="setNetPeriod('week')" data-i18n="net.last7Days">آخر 7 أيام</button>
+          <button class="period-btn" data-period="month" onclick="setNetPeriod('month')" data-i18n="reports.thisMonth">هذا الشهر</button>
           <button class="period-btn" data-period="year" onclick="setNetPeriod('year')" data-i18n="reports.thisYear">هذه السنة</button>
         </div>
         <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
@@ -63,7 +63,7 @@
               <span class="stat-label" style="color:rgba(255,255,255,0.8)" data-i18n="net.totalMargin">هامش الربح الكلي</span>
             </div>
           </div>
-          <div class="stat-card" style="background:linear-gradient(135deg,#0066B1,#004d8c);color:white">
+          <div class="stat-card" style="background:linear-gradient(135deg,var(--bmw-blue-1),var(--bmw-blue-2));color:white">
             <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-chart-line" style="color:white"></i></div>
             <div class="stat-info">
               <span class="stat-value" id="netPeriodMargin" style="color:white;font-size:22px">DA0</span>

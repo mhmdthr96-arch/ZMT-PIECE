@@ -3,6 +3,7 @@
     <div class="page-header-content">
       <h1><i class="fas fa-warehouse"></i> <span data-i18n="inventory.title">المخزون</span></h1>
       <p><span data-i18n="inventory.sub">إدارة مخزون قطع الغيار</span></p>
+      <div id="invScopeChip" style="display:none;align-items:center;gap:6px;margin-top:6px;padding:3px 10px;border:1px solid var(--silver-400,#999);border-radius:20px;font-size:12px;color:var(--silver-600,#666);max-width:max-content"></div>
     </div>
   </div>
 
@@ -12,31 +13,17 @@
         <i class="fas fa-search"></i>
         <input type="text" data-i18n-placeholder="inventory.search" placeholder="بحث في المخزون..." id="invSearch">
       </div>
+      <button class="btn btn-sm zmt-hide-toggle" id="invHideUntilSearchBtn" onclick="toggleInvHideUntilSearch()" title="إخفاء المنتجات حتى البحث (تظهر المطابقة فقط)" aria-pressed="false"><i class="fas fa-eye-slash"></i> <span>إخفاء حتى البحث</span></button>
       <button class="btn btn-primary hide-user" onclick="openInvAddModal()"><i class="fas fa-plus"></i> <span data-i18n="inventory.addWithInvoice">إضافة مخزون + فاتورة</span></button>
+      <button class="btn" id="btnAddInvDirect" onclick="openInvAddDirect()" style="background:#17a2b8;color:#fff"><i class="fas fa-cube"></i> <span data-i18n="inventory.addDirect">إضافة منتج من غير فاتورة</span></button>
+      <button class="btn" id="btnQuickAddProduct" onclick="openQuickAddProduct()" style="background:#28a745;color:#fff"><i class="fas fa-bolt"></i> <span data-i18n="inventory.quickAdd">إضافة منتج ثابت</span></button>
       <button class="btn btn-primary" onclick="navigateTo('transfer')" id="btnTransferProducts" style="display:none"><i class="fas fa-exchange-alt"></i> <span id="btnTransferText" data-i18n="inventory.transferBtn">نقل منتجات</span></button>
-      <button class="btn hide-user" onclick="exportProductsCSV()"><i class="fas fa-download"></i> <span data-i18n="inventory.exportCSV">تصدير CSV</span></button>
-      <button class="btn hide-user" onclick="document.getElementById('importCsvInput').click()"><i class="fas fa-upload"></i> <span data-i18n="inventory.importCSV">استيراد CSV</span></button>
-      <input type="file" id="importCsvInput" accept=".csv" style="display:none" onchange="importProductsCSV(this)">
+      <button class="btn hide-user" onclick="exportProductsExcel()"><i class="fas fa-file-excel"></i> <span data-i18n="inventory.exportExcel">تصدير Excel</span></button>
+      <button class="btn hide-user" onclick="document.getElementById('importCsvInput').click()"><i class="fas fa-upload"></i> <span data-i18n="inventory.importCSV">استيراد CSV / Excel</span></button>
+      <input type="file" id="importCsvInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="importProductsCSV(this)">
     </div>
 
-    <div class="table-container">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th><span data-i18n="inventory.col2">اسم القطعة</span></th>
-            <th><span data-i18n="inventory.col1">الباركود</span></th>
-            <th><span data-i18n="inventory.col3">العلامة</span></th>
-            <th data-i18n="inventory.categoryCol">التصنيف</th>
-            <th><span data-i18n="inventory.col4">الكمية</span></th>
-            <th class="hide-user"><span data-i18n="inventory.col5">سعر الشراء</span></th>
-            <th><span data-i18n="inventory.col6">سعر البيع</span></th>
-            <th><span data-i18n="inventory.col7">إجراءات</span></th>
-          </tr>
-        </thead>
-        <tbody id="invBody"></tbody>
-      </table>
-    </div>
+    <div class="prod-grid" id="invGrid"></div>
   </div>
 </div>
 
@@ -64,7 +51,7 @@
       <!-- Product search -->
       <div class="form-group">
         <label data-i18n="inventory.searchExisting">ابحث عن منتج موجود (بالاسم أو الباركود)</label>
-        <input type="text" class="form-input" id="invProdSearch" data-i18n-placeholder="inventory.searchExistingPlaceholder" placeholder="اسم المنتج أو الباركود..." oninput="searchInvProduct(this.value)">
+        <input type="text" class="form-input" id="invProdSearch" data-i18n-placeholder="inventory.searchExistingPlaceholder" placeholder="اسم المنتج أو الباركود..." oninput="searchInvProduct(this.value)" onkeydown="invSearchKey(event)">
       </div>
       <div id="invSearchResults" class="search-results"></div>
       <div id="invSelectedProduct" style="display:none" class="selected-prod-info">
@@ -76,15 +63,11 @@
 
       <hr>
 
-      <!-- Brand + Category -->
+      <!-- Brand -->
       <div class="form-row">
         <div class="form-group">
-          <label data-i18n="common.brand">العلامة التجارية <span class="required">*</span></label>
+          <label data-i18n="common.brand">العلامة التجارية</label>
           <select class="form-input" id="invBrand"></select>
-        </div>
-        <div class="form-group">
-          <label data-i18n="inventory.categoryCol">التصنيف <span class="required">*</span></label>
-          <select class="form-input" id="invCategory"></select>
         </div>
       </div>
 
@@ -106,21 +89,60 @@
       <div class="form-row">
         <div class="form-group">
           <label data-i18n="inventory.qty">الكمية <span class="required">*</span></label>
-          <input type="number" class="form-input no-spinner" id="invQty" value="1" min="1">
+          <input type="text" class="form-input no-spinner num-input" inputmode="numeric" id="invQty" value="1" min="1" dir="ltr">
         </div>
         <div class="form-group">
           <label data-i18n="inventory.buyPrice">سعر الشراء <span class="required">*</span></label>
-          <input type="number" class="form-input no-spinner" id="invBuyPrice" value="0" min="0">
+          <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invBuyPrice" value="0" min="0" dir="ltr">
         </div>
         <div class="form-group">
           <label data-i18n="inventory.sellPrice">سعر البيع <span class="required">*</span></label>
-          <input type="number" class="form-input no-spinner" id="invSellPrice" value="0" min="0">
+          <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invSellPrice" value="0" min="0" dir="ltr">
         </div>
       </div>
 
       <div class="form-group">
         <label data-i18n="inventory.wholesalePrice">سعر البيع بالجملة (اختياري)</label>
-        <input type="number" class="form-input no-spinner" id="invWholePrice" value="0" min="0">
+        <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invWholePrice" value="0" min="0" dir="ltr">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label data-i18n="inventory.expiryDate">تاريخ انتهاء الصلاحية</label>
+          <input type="date" class="form-input" id="invExpiry">
+        </div>
+      </div>
+
+      <div class="qe-subrow" style="border:1px solid var(--silver-300);border-radius:8px;padding:12px;margin:14px 0">
+        <div style="font-size:12px;font-weight:700;color:var(--silver-600);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+          <i class="fas fa-info-circle" style="color:var(--bmw-blue-1)"></i> <span>تفاصيل إضافية للمنتج</span>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="quickEntry.reference">المرجع</label>
+            <input type="text" class="form-input" id="invReference" dir="ltr">
+          </div>
+          <div class="form-group">
+            <label data-i18n="quickEntry.countryOfOrigin">البلد المنشأ</label>
+            <input type="text" class="form-input" id="invCountry">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="quickEntry.mark">المارك</label>
+            <input type="text" class="form-input" id="invMark">
+          </div>
+          <div class="form-group">
+            <label data-i18n="quickEntry.storageLocation">مكان التخزين</label>
+            <input type="text" class="form-input" id="invStorage">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="inventory.family">العائلة</label>
+            <input type="text" class="form-input" id="invFamily" list="familyDatalist" placeholder="مثال: مضادات حيوية / متلازمات...">
+          </div>
+        </div>
       </div>
 
       <!-- Supplier -->
@@ -170,6 +192,184 @@
           </div>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== ADD PRODUCT WITHOUT INVOICE MODAL ===== -->
+<div class="modal-overlay" id="invAddDirectModal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-header">
+      <h3><i class="fas fa-cube"></i> <span data-i18n="inventory.addDirectTitle">إضافة منتج من غير فاتورة</span></h3>
+      <button class="modal-close" onclick="closeInvAddDirect()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <!-- Barcode Scanner -->
+      <div class="barcode-scanner-section">
+        <div class="scanner-input-wrap">
+          <i class="fas fa-qrcode scanner-icon"></i>
+          <input type="text" class="form-input scanner-input" id="invDirectScanner"
+            data-i18n-placeholder="inventory.scanPlaceholder2" placeholder="امسح الباركود ضوئياً..." dir="ltr" autocomplete="off"
+            onkeydown="handleInvDirectScan(event)">
+          <span class="scanner-status" id="invDirectScannerStatus" data-i18n="inventory.scannerReady">جاهز للمسح</span>
+        </div>
+      </div>
+
+      <div style="font-size:12px;color:var(--silver-600);background:rgba(23,162,184,0.08);border:1px dashed rgba(23,162,184,0.4);border-radius:8px;padding:10px 12px;margin:10px 0;display:flex;gap:8px;align-items:center">
+        <i class="fas fa-info-circle" style="color:#17a2b8"></i> <span data-i18n="inventory.addDirectHint">يُضاف المنتج إلى المخزون مباشرة دون إنشاء فاتورة مشتريات. سعر الشراء اختياري.</span>
+      </div>
+
+      <!-- Brand -->
+      <div class="form-row">
+        <div class="form-group">
+          <label data-i18n="common.brand">العلامة التجارية</label>
+          <select class="form-input" id="invDirectBrand"></select>
+        </div>
+      </div>
+
+      <!-- Name + Barcode -->
+      <div class="form-row">
+        <div class="form-group" style="flex:2">
+          <label data-i18n="inventory.name">اسم المنتج <span class="required">*</span></label>
+          <input type="text" class="form-input" id="invDirectName" data-i18n-placeholder="inventory.name" placeholder="اسم القطعة">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label data-i18n="inventory.barcode">الباركود <span class="required">*</span></label>
+          <div class="barcode-row">
+            <input type="text" class="form-input" id="invDirectBar" data-i18n-placeholder="inventory.barcode" placeholder="الباركود" dir="ltr">
+            <button class="btn btn-sm" onclick="document.getElementById('invDirectBar').value=DB.generateBarcode()" data-i18n="inventory.generate2">توليد</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Qty + Buy + Sell -->
+      <div class="form-row">
+        <div class="form-group">
+          <label data-i18n="inventory.qty">الكمية <span class="required">*</span></label>
+          <input type="text" class="form-input no-spinner num-input" inputmode="numeric" id="invDirectQty" value="1" min="1" dir="ltr">
+        </div>
+        <div class="form-group">
+          <label data-i18n="inventory.buyPrice">سعر الشراء <span style="font-size:10px;font-weight:400;color:var(--silver-500)">(اختياري)</span></label>
+          <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invDirectBuy" value="0" min="0" dir="ltr">
+        </div>
+        <div class="form-group">
+          <label data-i18n="inventory.sellPrice">سعر البيع <span class="required">*</span></label>
+          <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invDirectSell" value="0" min="0" dir="ltr">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="inventory.wholesalePrice">سعر البيع بالجملة (اختياري)</label>
+        <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invDirectWhole" value="0" min="0" dir="ltr">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label data-i18n="inventory.expiryDate">تاريخ انتهاء الصلاحية</label>
+          <input type="date" class="form-input" id="invDirectExpiry">
+        </div>
+      </div>
+
+      <!-- Financial entry destination -->
+      <div style="border:1px dashed rgba(23,162,184,0.5);border-radius:8px;padding:10px 12px;margin:12px 0;background:rgba(23,162,184,0.05)">
+        <label style="font-size:12px;font-weight:700;color:var(--silver-700);display:flex;align-items:center;gap:6px;margin-bottom:8px">
+          <i class="fas fa-arrow-right-arrow-left" style="color:#17a2b8"></i> <span data-i18n="inventory.entryDestination">اتجاه القيد المالي (سعر الشراء × الكمية)</span>
+        </label>
+        <div style="display:flex;gap:18px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;font-size:13px">
+            <input type="checkbox" id="invDirectLedgerPurchase" checked>
+            <i class="fas fa-cart-plus" style="color:var(--bmw-blue-1);width:14px;text-align:center"></i> <span data-i18n="net.purchaseAdd">إضافة المبلغ إلى المشتريات</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;font-size:13px">
+            <input type="checkbox" id="invDirectLedgerExpense">
+            <i class="fas fa-money-bill-wave" style="color:#e65100;width:14px;text-align:center"></i> <span data-i18n="net.expenseAdd">إضافة إلى المصروفات</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Details -->
+      <div class="qe-subrow" style="border:1px solid var(--silver-300);border-radius:8px;padding:12px;margin:14px 0">
+        <div style="font-size:12px;font-weight:700;color:var(--silver-600);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+          <i class="fas fa-info-circle" style="color:var(--bmw-blue-1)"></i> <span>تفاصيل إضافية للمنتج</span>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="quickEntry.reference">المرجع</label>
+            <input type="text" class="form-input" id="invDirectReference" dir="ltr">
+          </div>
+          <div class="form-group">
+            <label data-i18n="quickEntry.countryOfOrigin">البلد المنشأ</label>
+            <input type="text" class="form-input" id="invDirectCountry">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="quickEntry.mark">المارك</label>
+            <input type="text" class="form-input" id="invDirectMark">
+          </div>
+          <div class="form-group">
+            <label data-i18n="quickEntry.storageLocation">مكان التخزين</label>
+            <input type="text" class="form-input" id="invDirectStorage">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="inventory.family">العائلة</label>
+            <input type="text" class="form-input" id="invDirectFamily" list="familyDatalist" placeholder="مثال: مضادات حيوية / متلازمات...">
+          </div>
+        </div>
+      </div>
+
+      <button class="btn btn-success" onclick="confirmInvAddDirect()" style="width:100%">
+        <i class="fas fa-check"></i> <span data-i18n="inventory.addDirectBtn">إضافة المنتج للمخزون</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== ADD FIXED PRODUCT MODAL (name + optional barcode + sell price only) ===== -->
+<div class="modal-overlay" id="invQuickAddModal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <h3><i class="fas fa-bolt"></i> <span data-i18n="inventory.quickAddTitle">إضافة منتج ثابت</span></h3>
+      <button class="modal-close" onclick="closeQuickAddProduct()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:12px;color:var(--silver-600);background:rgba(40,167,69,0.08);border:1px dashed rgba(40,167,69,0.4);border-radius:8px;padding:10px 12px;margin:0 0 14px;display:flex;gap:8px;align-items:center">
+        <i class="fas fa-info-circle" style="color:#28a745"></i> <span data-i18n="inventory.quickAddHint">منتج ثابت (مثل أصناف المطاعم): يُضاف مباشرة دون كمية أو سعر شراء ودون إنشاء فاتورة.</span>
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="common.brand">العلامة التجارية</label>
+        <select class="form-input" id="qaBrand"></select>
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="inventory.name">اسم المنتج <span class="required">*</span></label>
+        <input type="text" class="form-input" id="qaName" data-i18n-placeholder="inventory.quickAddNamePlaceholder" placeholder="مثال: برغر كبير" autocomplete="off">
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="inventory.barcode">الباركود <span style="font-size:10px;font-weight:400;color:var(--silver-500)" data-i18n="inventory.optional">(اختياري)</span></label>
+        <div class="barcode-row">
+          <input type="text" class="form-input" id="qaBar" placeholder="الباركود" dir="ltr" autocomplete="off" onkeydown="qaBarcodeKey(event)">
+          <button class="btn btn-sm" onclick="document.getElementById('qaBar').value=DB.generateBarcode()" data-i18n="inventory.generate2">توليد</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="inventory.family">العائلة</label>
+        <input type="text" class="form-input" id="qaFamily" list="familyDatalist" placeholder="مثال: مضادات حيوية / متلازمات...">
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="inventory.sellPrice">سعر البيع <span class="required">*</span></label>
+        <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="qaSell" value="0" min="0" dir="ltr">
+      </div>
+
+      <button class="btn btn-success" onclick="confirmQuickAddProduct()" style="width:100%;margin-top:4px">
+        <i class="fas fa-check"></i> <span data-i18n="inventory.quickAddBtn">إضافة المنتج</span>
+      </button>
     </div>
   </div>
 </div>

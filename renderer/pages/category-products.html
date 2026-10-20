@@ -2,7 +2,7 @@
   <div class="page-header">
     <div class="page-header-content">
       <h1>
-        <button class="btn-back" onclick="window.brandCtx ? navigateTo('brand-categories') : navigateTo('brands')"><i class="fas fa-arrow-right"></i></button>
+        <button class="btn-back" onclick="navigateTo('brands')"><i class="fas fa-arrow-right"></i></button>
         <i class="fas fa-cogs"></i>
         <span id="catTitle" data-i18n="catProducts.title">المنتجات</span>
       </h1>
@@ -18,6 +18,9 @@
       </div>
       <button class="btn btn-primary hide-user" onclick="openAddProduct()">
         <i class="fas fa-plus"></i> <span data-i18n="catProducts.addProduct">إضافة منتج</span>
+      </button>
+      <button class="btn" id="btnCatQuickAdd" onclick="catOpenQuickAddProduct()" style="background:#28a745;color:#fff">
+        <i class="fas fa-bolt"></i> <span data-i18n="inventory.quickAdd">إضافة منتج ثابت</span>
       </button>
     </div>
 
@@ -65,7 +68,7 @@
       <div class="tab-content" id="tabSearch">
         <div class="form-group">
           <label data-i18n="catProducts.searchExisting">ابحث بالاسم أو الباركود</label>
-          <input type="text" class="form-input" id="prodSearchInput" placeholder="اسم المنتج أو الباركود..." data-i18n-placeholder="catProducts.searchExistingPlaceholder" oninput="searchExistingProduct(this.value)">
+          <input type="text" class="form-input" id="prodSearchInput" placeholder="اسم المنتج أو الباركود..." data-i18n-placeholder="catProducts.searchExistingPlaceholder" oninput="searchExistingProduct(this.value)" onkeydown="catSearchKey(event)">
         </div>
         <div id="searchResults" class="search-results"></div>
         <div id="selectedProductInfo" style="display:none" class="selected-prod-info">
@@ -118,6 +121,42 @@
       </div>
 
       <div class="form-group">
+        <label data-i18n="inventory.expiryDate">تاريخ انتهاء الصلاحية</label>
+        <input type="date" class="form-input" id="prodExpiry">
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="inventory.family">العائلة</label>
+        <input type="text" class="form-input" id="prodFamily" list="familyDatalist" placeholder="مثال: مضادات حيوية / متلازمات...">
+      </div>
+
+      <div class="qe-subrow" style="border:1px solid var(--silver-300);border-radius:8px;padding:12px;margin:14px 0">
+        <div style="font-size:12px;font-weight:700;color:var(--silver-600);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+          <i class="fas fa-info-circle" style="color:var(--bmw-blue-1)"></i> <span>تفاصيل إضافية للمنتج</span>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="quickEntry.reference">المرجع</label>
+            <input type="text" class="form-input" id="newProdReference" dir="ltr">
+          </div>
+          <div class="form-group">
+            <label data-i18n="quickEntry.countryOfOrigin">البلد المنشأ</label>
+            <input type="text" class="form-input" id="newProdCountry">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label data-i18n="quickEntry.mark">المارك</label>
+            <input type="text" class="form-input" id="newProdMark">
+          </div>
+          <div class="form-group">
+            <label data-i18n="quickEntry.storageLocation">مكان التخزين</label>
+            <input type="text" class="form-input" id="newProdStorage">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
         <label data-i18n="catProducts.supplier">المورد</label>
         <div class="barcode-row">
           <input type="text" class="form-input" id="supplierSearchInput" placeholder="ابحث عن مورد بالاسم..." data-i18n-placeholder="catProducts.supplierPlaceholder" oninput="searchSuppliers(this.value)">
@@ -162,5 +201,47 @@
     </div>
   </div>
 </div>
+</div>
+
+<!-- ===== ADD FIXED PRODUCT MODAL (name + optional barcode + sell price only, brand fixed) ===== -->
+<div class="modal-overlay" id="catQuickAddModal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <h3><i class="fas fa-bolt"></i> <span data-i18n="inventory.quickAddTitle">إضافة منتج ثابت</span></h3>
+      <button class="modal-close" onclick="catCloseQuickAddProduct()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:12px;color:var(--silver-600);background:rgba(40,167,69,0.08);border:1px dashed rgba(40,167,69,0.4);border-radius:8px;padding:10px 12px;margin:0 0 14px;display:flex;gap:8px;align-items:center">
+        <i class="fas fa-info-circle" style="color:#28a745"></i> <span data-i18n="inventory.quickAddHint">منتج ثابت (مثل أصناف المطاعم): يُضاف مباشرة دون كمية أو سعر شراء ودون إنشاء فاتورة.</span>
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="inventory.name">اسم المنتج <span class="required">*</span></label>
+        <input type="text" class="form-input" id="qaName" data-i18n-placeholder="inventory.quickAddNamePlaceholder" placeholder="مثال: برغر كبير" autocomplete="off">
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="inventory.barcode">الباركود <span style="font-size:10px;font-weight:400;color:var(--silver-500)" data-i18n="inventory.optional">(اختياري)</span></label>
+        <div class="barcode-row">
+          <input type="text" class="form-input" id="qaBar" placeholder="الباركود" dir="ltr" autocomplete="off" onkeydown="catQaBarcodeKey(event)">
+          <button class="btn btn-sm" onclick="document.getElementById('qaBar').value=DB.generateBarcode()" data-i18n="inventory.generate2">توليد</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="inventory.family">العائلة</label>
+        <input type="text" class="form-input" id="qaFamily" list="familyDatalist" placeholder="مثال: مضادات حيوية / متلازمات...">
+      </div>
+
+      <div class="form-group">
+        <label data-i18n="inventory.sellPrice">سعر البيع <span class="required">*</span></label>
+        <input type="number" class="form-input no-spinner" id="qaSell" value="0" min="0">
+      </div>
+
+      <button class="btn btn-success" onclick="catConfirmQuickAddProduct()" style="width:100%;margin-top:4px">
+        <i class="fas fa-check"></i> <span data-i18n="inventory.quickAddBtn">إضافة المنتج</span>
+      </button>
+    </div>
+  </div>
 </div>
 

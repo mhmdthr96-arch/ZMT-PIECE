@@ -545,7 +545,13 @@
     </div>
   </div>
 
+  <script src="js/sound.js"></script>
   <script>
+    // Play the 3-second countdown intro in sync with the splash animation.
+    if (window.ZmtSound && typeof window.ZmtSound.intro === 'function') {
+      window.ZmtSound.intro();
+    }
+
     // Generate floating particles
     const particlesEl = document.getElementById('particles');
     for (let i = 0; i < 30; i++) {

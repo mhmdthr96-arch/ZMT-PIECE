@@ -35,17 +35,25 @@ function renderSdStats() {
   const s = DB.getSuppliers().find(x => x.id === _sdSupplierId);
   if (!s) return;
 
-  const totalPurchases = _sdInvoices.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
-  const payments = DB.getSupplierPayments(_sdSupplierId);
-  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+  const statInvoices = _sdInvoices.filter(inv => inv.type !== 'payment');
+  const statPayments = DB.getSupplierPayments(_sdSupplierId).filter(p => {
+    const r = p.invoiceId ? DB.getInvoice(p.invoiceId) : null;
+    return !(r && r.type === 'payment');
+  });
+  const totalPurchases = statInvoices.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
+  const totalSupSales = statInvoices.filter(inv => inv.type === 'sup_sale').reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
+  const netPurchases = totalPurchases - totalSupSales;
+  const totalPaid = statPayments.reduce((sum, p) => sum + p.amount, 0);
   const balance = parseFloat(s.balance) || 0;
 
-  document.getElementById('sdTotalPurchases').textContent = `DA${totalPurchases.toFixed(2)}`;
-  document.getElementById('sdTotalPaid').textContent = `DA${totalPaid.toFixed(2)}`;
-  document.getElementById('sdBalance').textContent = `DA${balance.toFixed(2)}`;
+  document.getElementById('sdTotalPurchases').innerHTML = `DA${fmtMoney(netPurchases)}${totalSupSales > 0 ? ` <span style="font-size:10px;color:#e65100">(بيع له: -DA${fmtMoney(totalSupSales)})</span>` : ''}`;
+  document.getElementById('sdTotalPaid').textContent = `DA${fmtMoney(totalPaid)}`;
+  document.getElementById('sdBalance').textContent = (balance < 0 ? '-' : '') + `DA${fmtMoney(Math.abs(balance))}`;
 
   document.getElementById('sdInvCount').textContent = _sdInvoices.length;
-  document.getElementById('sdPayCount').textContent = payments.length;
+  document.getElementById('sdPayCount').textContent = statPayments.length;
+  document.getElementById('sdRecCount').textContent = (DB.getSupplierReturns ? DB.getSupplierReturns() : [])
+    .filter(r => r.supplierId === _sdSupplierId).length;
 }
 
 function renderSdInvoices(filter) {
@@ -78,12 +86,14 @@ function renderSdInvoices(filter) {
       </div>
       <div class="sd-inv-body">
         <div class="sd-inv-items">
-          ${inv.items.slice(0, 3).map(it =>
+          ${inv.type === 'payment'
+            ? `<span class="sd-inv-item"><i class="fas fa-money-bill-wave"></i> سند دين لمورد</span>`
+            : inv.items.slice(0, 3).map(it =>
             `<span class="sd-inv-item">${escHtml(it.name)} x${it.qty}</span>`
           ).join('')}
-          ${inv.items.length > 3 ? `<span class="sd-inv-more">+${inv.items.length - 3}</span>` : ''}
+          ${inv.type !== 'payment' && inv.items.length > 3 ? `<span class="sd-inv-more">+${inv.items.length - 3}</span>` : ''}
         </div>
-        <div class="sd-inv-total">DA${inv.totalAmount.toFixed(2)}</div>
+        <div class="sd-inv-total">${inv.type === 'sup_sale' ? '<span style="font-size:10px;color:#e65100">بيع له — </span>' : ''}DA${fmtMoney(inv.totalAmount)}</div>
       </div>
     </div>`;
   }).join('');
@@ -103,22 +113,24 @@ function showSdInvoiceDetail(id) {
   const dateStr = date.toLocaleDateString('ar-EG-u-nu-latn');
   const timeStr = date.toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' });
 
-  const paidAmount = DB.getInvoicePaidAmount(id);
-  const remaining = Math.max(0, (inv.totalAmount || 0) - paidAmount);
+  const paidAmount = inv.type === 'payment' ? (inv.totalAmount || 0) : DB.getInvoicePaidAmount(id);
+  const remaining = inv.type === 'sup_sale'
+    ? DB.getSupSaleNetDue(inv)
+    : Math.max(0, (inv.totalAmount || 0) - paidAmount);
 
   document.getElementById('sdInvoiceBody').innerHTML = `
     <div class="sd-inv-detail-header">
       <span><strong>التاريخ:</strong> ${dateStr} ${timeStr}</span>
-      <span><strong>الإجمالي:</strong> <span style="color:#0066B1">DA${(inv.totalAmount || 0).toFixed(2)}</span></span>
+      <span><strong>الإجمالي:</strong> <span style="color:#0066B1">DA${fmtMoney((inv.totalAmount || 0))}</span></span>
     </div>
     <div style="display:flex;gap:20px;margin:12px 0;padding:12px 16px;background:var(--silver-50);border-radius:var(--radius-sm)">
       <div>
         <span style="font-size:11px;color:var(--silver-500)">المدفوع</span>
-        <div style="font-size:16px;font-weight:700;color:#28a745;margin-top:2px">DA${paidAmount.toFixed(2)}</div>
+        <div style="font-size:16px;font-weight:700;color:#28a745;margin-top:2px">DA${fmtMoney(paidAmount)}</div>
       </div>
       <div>
-        <span style="font-size:11px;color:var(--silver-500)">المتبقي</span>
-        <div style="font-size:16px;font-weight:700;color:${remaining > 0 ? '#e65100' : '#28a745'};margin-top:2px">DA${remaining.toFixed(2)}</div>
+        <span style="font-size:11px;color:var(--silver-500)">${inv.type === 'sup_sale' ? 'المتبقي على المورد' : 'المتبقي'}</span>
+        <div style="font-size:16px;font-weight:700;color:${remaining > 0 ? '#e65100' : '#28a745'};margin-top:2px">DA${fmtMoney(remaining)}</div>
       </div>
     </div>
     <div class="table-container">
@@ -132,8 +144,8 @@ function showSdInvoiceDetail(id) {
             <td>${escHtml(item.name)}</td>
             <td dir="ltr">${item.barcode}</td>
             <td>${item.qty}</td>
-            <td>DA${item.price.toFixed(2)}</td>
-            <td>DA${item.total.toFixed(2)}</td>
+            <td>DA${fmtMoney(item.price)}</td>
+            <td>DA${fmtMoney(item.total)}</td>
           </tr>`).join('')}
         </tbody>
       </table>
@@ -161,12 +173,14 @@ function payInvoiceFromDetail() {
   if (!inv) return;
 
   const paidAmount = DB.getInvoicePaidAmount(_sdCurrentInvoiceId);
-  const remaining = Math.max(0, (inv.totalAmount || 0) - paidAmount);
+  const remaining = inv.type === 'sup_sale'
+    ? DB.getSupSaleNetDue(inv)
+    : Math.max(0, (inv.totalAmount || 0) - paidAmount);
   if (remaining <= 0) { alert('هذه الفاتورة مدفوعة بالكامل'); return; }
 
   const amount = parseFloat(document.getElementById('sdPayInvoiceAmount').value);
   if (!amount || amount <= 0) { alert('الرجاء إدخال مبلغ صحيح'); return; }
-  if (amount > remaining) { alert(`لا يمكن تجاوز المبلغ المتبقي (DA${remaining.toFixed(2)})`); return; }
+  if (amount > remaining) { alert(`لا يمكن تجاوز المبلغ المتبقي (DA${fmtMoney(remaining)})`); return; }
 
   const invNum = _sdInvoices.findIndex(inv => inv.id === _sdCurrentInvoiceId) + 1;
 
@@ -181,7 +195,11 @@ function payInvoiceFromDetail() {
   const suppliers = DB.getSuppliers();
   const supIdx = suppliers.findIndex(s => s.id === _sdSupplierId);
   if (supIdx !== -1) {
-    suppliers[supIdx].balance = (parseFloat(suppliers[supIdx].balance) || 0) - amount;
+    if (inv.type === 'sup_sale') {
+      suppliers[supIdx].balance = (parseFloat(suppliers[supIdx].balance) || 0) + amount;
+    } else {
+      suppliers[supIdx].balance = (parseFloat(suppliers[supIdx].balance) || 0) - amount;
+    }
     DB.saveSuppliers(suppliers);
   }
 
@@ -191,7 +209,7 @@ function payInvoiceFromDetail() {
   renderSdInvoices();
 }
 
-function deleteInvoiceFromDetail() {
+function sdDeleteInvoiceFromDetail() {
   if (!confirm('هل أنت متأكد من حذف هذه الفاتورة بالكامل؟\nسيتم حذف المنتجات والكميات والدفعات المرتبطة.')) return;
 
   const inv = DB.getInvoice(_sdCurrentInvoiceId);
@@ -219,11 +237,15 @@ function deleteInvoiceFromDetail() {
     inv.items.forEach(item => {
       const prod = DB.getProduct(item.productId);
       if (prod) {
-        const newQty = prod.quantity - item.qty;
-        if (newQty <= 0) {
-          DB.deleteProduct(item.productId);
+        if (inv.type === 'sup_sale') {
+          DB.updateProduct(item.productId, { quantity: prod.quantity + item.qty });
         } else {
-          DB.updateProduct(item.productId, { quantity: newQty });
+          const newQty = prod.quantity - item.qty;
+          if (newQty <= 0) {
+            DB.deleteProduct(item.productId);
+          } else {
+            DB.updateProduct(item.productId, { quantity: newQty });
+          }
         }
       }
     });
@@ -242,9 +264,18 @@ function deleteInvoiceFromDetail() {
     const supIdx = suppliers.findIndex(s => s.id === inv.supplierId);
     if (supIdx !== -1) {
       const currentBalance = parseFloat(suppliers[supIdx].balance) || 0;
-      if (inv.type === 'dispatch') {
-        // Dispatch: at creation we subtracted totalAmount → add it back
+      if (inv.type === 'payment') {
+        // Supplier voucher is a debt note (سند دين): it added to the balance on
+        // creation — deleting it subtracts the same amount back.
+        suppliers[supIdx].balance = currentBalance - (inv.totalAmount || 0);
+} else if (inv.type === 'dispatch') {
+        // Dispatch: at creation we subtracted totalAmount — add it back
         suppliers[supIdx].balance = currentBalance + (inv.totalAmount || 0);
+      } else if (inv.type === 'sup_sale') {
+        // Sale to supplier: creation reduced the balance by the unpaid portion,
+        // deleting the invoice adds the same amount back.
+        const remaining = (inv.totalAmount || 0) - totalInvoicePaid;
+        suppliers[supIdx].balance = currentBalance + remaining;
       } else {
         // Regular invoice: subtract the unpaid portion that was added to balance
         const remaining = (inv.totalAmount || 0) - totalInvoicePaid;
@@ -282,7 +313,7 @@ function renderSdPayments() {
 
   container.innerHTML = `
     <div class="sd-pay-header">
-      <span>إجمالي الدفعات: <strong style="color:#28a745">DA${totalPaid.toFixed(2)}</strong></span>
+      <span>إجمالي الدفعات: <strong style="color:#28a745">DA${fmtMoney(totalPaid)}</strong></span>
     </div>
     <div class="sd-pay-list">
       ${payments.sort((a, b) => b.createdAt - a.createdAt).map(p => {
@@ -291,7 +322,7 @@ function renderSdPayments() {
         const timeStr = d.toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' });
         return `<div class="sd-pay-row">
           <div class="sd-pay-row-left">
-            <div class="sd-pay-amount" style="color:#28a745">-DA${p.amount.toFixed(2)}</div>
+            <div class="sd-pay-amount" style="color:#28a745">-DA${fmtMoney(p.amount)}</div>
             <div class="sd-pay-meta">
               <span class="sd-pay-date"><i class="far fa-calendar-alt"></i> ${dateStr} ${timeStr}</span>
               ${p.note ? `<span class="sd-pay-note"><i class="fas fa-sticky-note"></i> ${escHtml(p.note)}</span>` : ''}
@@ -303,10 +334,95 @@ function renderSdPayments() {
 }
 
 function switchSdTab(tab) {
-  document.querySelectorAll('.sd-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab || (tab === 'invoices' && !b.dataset.tab)));
-  const isInvoices = tab === 'invoices';
-  document.getElementById('sdTabInvoices').style.display = isInvoices ? '' : 'none';
-  document.getElementById('sdTabPayments').style.display = isInvoices ? 'none' : '';
+  document.querySelectorAll('#page-supplier-detail .sd-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.getElementById('sdTabInvoices').style.display = tab === 'invoices' ? '' : 'none';
+  document.getElementById('sdTabPayments').style.display = tab === 'payments' ? '' : 'none';
+  document.getElementById('sdTabRecords').style.display = tab === 'records' ? '' : 'none';
+  if (tab === 'records') renderSdRecords();
+}
+
+// ===== RECORDS TAB (سجل المورد) =====
+
+function _sdRecStatusLabel(status) {
+  switch (status) {
+    case 'returned': return 'تم الاسترجاع';
+    case 'not_returned': return 'لم تسترجع';
+    default: return 'جاري الاسترجاع';
+  }
+}
+
+function _sdRecStatusBadge(status) {
+  const cls = status === 'returned' ? 'badge-success' : (status === 'not_returned' ? 'badge-info' : 'badge-warning');
+  return `<span class="badge ${cls}">${_sdRecStatusLabel(status)}</span>`;
+}
+
+function renderSdRecords() {
+  const container = document.getElementById('sdRecordsList');
+  if (!container) return;
+
+  const invoices = DB.getInvoicesBySupplier(_sdSupplierId);
+  const purchases = invoices.filter(inv => inv.type === 'supplier' || inv.type === 'purchase');
+  const sales = invoices.filter(inv => inv.type === 'sup_sale');
+  const returns = (DB.getSupplierReturns ? DB.getSupplierReturns() : [])
+    .filter(r => r.supplierId === _sdSupplierId)
+    .slice()
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const purchaseAmount = purchases.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
+  const saleAmount = sales.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
+  const returnAmount = returns.reduce((s, r) => s + (r.amount || 0), 0);
+
+  let html = `
+    <div class="rec-stats" style="margin-bottom:18px">
+      <div class="rec-chip">
+        <span class="rec-chip-icon" style="background:#e3f2fd;color:#1565c0"><i class="fas fa-cart-arrow-down"></i></span>
+        <div>
+          <div class="rec-chip-label">عمليات الشراء من المورد</div>
+          <div class="rec-chip-val">${purchases.length} <small>فاتورة</small> · DA${fmtMoney(purchaseAmount)}</div>
+        </div>
+      </div>
+      <div class="rec-chip">
+        <span class="rec-chip-icon" style="background:#f3e5f5;color:#8e24aa"><i class="fas fa-handshake"></i></span>
+        <div>
+          <div class="rec-chip-label">عمليات البيع له</div>
+          <div class="rec-chip-val">${sales.length} <small>عملية</small> · DA${fmtMoney(saleAmount)}</div>
+        </div>
+      </div>
+      <div class="rec-chip">
+        <span class="rec-chip-icon" style="background:#fff3e0;color:#e65100"><i class="fas fa-box-open"></i></span>
+        <div>
+          <div class="rec-chip-label">السلع الفاسدة المرجعة</div>
+          <div class="rec-chip-val">${returns.length} <small>مرتجع</small> · DA${fmtMoney(returnAmount)}</div>
+        </div>
+      </div>
+    </div>
+    <div class="rec-section-title"><i class="fas fa-box-open" style="color:#e65100"></i> السلع الفاسدة المرجعة للمورد</div>`;
+
+  if (returns.length === 0) {
+    html += `<div class="rec-empty"><i class="fas fa-box-open"></i><p>لا توجد سلع فاسدة مرجعة لهذا المورد</p></div>`;
+  } else {
+    html += returns.map(r => {
+      const d = new Date(r.createdAt || Date.now());
+      const dateStr = d.toLocaleDateString('ar-EG-u-nu-latn');
+      const timeStr = d.toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' });
+      return `<div class="rec-row">
+        <div class="rec-row-main">
+          <div class="rec-row-name">${escHtml(r.productName || 'منتج')}</div>
+          <div class="rec-row-meta">
+            <span><strong>${r.qty ?? 0}</strong> قطعة</span>
+            <span class="rec-date"><i class="far fa-calendar-alt"></i> ${dateStr} ${timeStr}</span>
+            <span class="rec-id"><i class="fas fa-file-invoice"></i> ${escHtml(r.invoiceNumber || r.invoiceId || '—')}</span>
+            ${r.note ? `<span class="rec-note"><i class="fas fa-sticky-note"></i> ${escHtml(r.note)}</span>` : ''}
+          </div>
+        </div>
+        <div class="rec-row-side">
+          <span class="rec-value">DA${fmtMoney((r.amount || 0))}</span>
+          ${_sdRecStatusBadge(r.status)}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  container.innerHTML = html;
 }
 
 function showPayModal() {
@@ -315,7 +431,7 @@ function showPayModal() {
   const payments = DB.getSupplierPayments(_sdSupplierId);
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
   const balance = parseFloat(s.balance) || 0;
-  document.getElementById('sdPayBalance').textContent = `DA${balance.toFixed(2)}`;
+  document.getElementById('sdPayBalance').textContent = `DA${fmtMoney(balance)}`;
   document.getElementById('sdPayAmount').value = '';
   document.getElementById('sdPayNote').value = '';
   document.getElementById('sdPayModal').style.display = 'flex';
@@ -360,7 +476,41 @@ function showSdEditForm() {
   document.getElementById('editSupName').value = s.name;
   document.getElementById('editSupPhone').value = s.phone || '';
   document.getElementById('editSupAddress').value = s.address || '';
+  document.getElementById('editSupEmail').value = s.email || '';
   document.getElementById('editSupplierModal').style.display = 'flex';
+  setTimeout(() => document.getElementById('editSupName').focus(), 100);
+}
+
+function closeSdEdit() {
+  document.getElementById('editSupplierModal').style.display = 'none';
+}
+
+function confirmSdEdit() {
+  const id = document.getElementById('editSupId').value;
+  const name = document.getElementById('editSupName').value.trim();
+  if (!name) { alert('الرجاء إدخال اسم المورد'); return; }
+  const suppliers = DB.getSuppliers();
+  const idx = suppliers.findIndex(s => s.id === id);
+  if (idx === -1) return;
+  suppliers[idx].name = name;
+  suppliers[idx].phone = document.getElementById('editSupPhone').value.trim();
+  suppliers[idx].address = document.getElementById('editSupAddress').value.trim();
+  suppliers[idx].email = document.getElementById('editSupEmail').value.trim();
+  DB.saveSuppliers(suppliers);
+  DB.logAudit({ action: 'update', entity: 'supplier', entityId: id, detail: name });
+  closeSdEdit();
+
+  // Refresh the detail view live without a full navigation
+  document.getElementById('sdTitle').textContent = name;
+  document.getElementById('sdName').textContent = name;
+  const s = suppliers[idx];
+  const detailsEl = document.getElementById('sdDetails');
+  let html = '';
+  if (s.phone) html += `<span><i class="fas fa-phone"></i> ${escHtml(s.phone)}</span>`;
+  if (s.address) html += `<span><i class="fas fa-map-marker-alt"></i> ${escHtml(s.address)}</span>`;
+  if (!s.phone && !s.address) html += `<span class="text-muted">لا توجد معلومات إضافية</span>`;
+  detailsEl.innerHTML = html;
+  renderSdStats();
 }
 
 function confirmSdDelete() {
@@ -373,7 +523,7 @@ function confirmSdDelete() {
 }
 
 function _sdModalHandler(e) {
-  ['sdInvoiceModal', 'sdPayModal'].forEach(id => {
+  ['sdInvoiceModal', 'sdPayModal', 'editSupplierModal'].forEach(id => {
     const el = document.getElementById(id);
     if (e.target === el) el.style.display = 'none';
   });
@@ -381,3 +531,20 @@ function _sdModalHandler(e) {
 document.removeEventListener('click', _sdModalHandler);
 document.addEventListener('click', _sdModalHandler);
 if (window._pageListeners) window._pageListeners.push({ type: 'click', fn: _sdModalHandler });
+
+// ===== LAN SYNC HANDLER =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['supplier-detail'] = function sdSyncData() {
+  if (!_sdSupplierId) return;
+  const s = DB.getSuppliers().find(x => x.id === _sdSupplierId);
+  if (!s) { navigateTo('suppliers'); return; }
+  // Refresh header + stats, then rebuild the active lists in place.
+  document.getElementById('sdTitle').textContent = s.name;
+  document.getElementById('sdName').textContent = s.name;
+  _sdInvoices = DB.getInvoicesBySupplier(_sdSupplierId);
+  renderSdStats();
+  renderSdInvoices();
+  renderSdPayments();
+  const recTab = document.getElementById('sdTabRecords');
+  if (recTab && recTab.style.display !== 'none') renderSdRecords();
+};

@@ -64,7 +64,7 @@ function renderOrdersSuggestions() {
         <div class="ord-suggestion-meta" dir="ltr">${escHtml(g.barcode)}</div>
       </div>
       <span class="ord-suggestion-qty ${g.qty <= 0 ? 'ord-qty-oos' : 'ord-qty-low'}">${g.qty <= 0 ? t('orders.statusNotAvailable') : g.qty}</span>
-      <input type="number" class="form-input no-spinner ord-qty-input" id="ordsugqty_${i}" value="${Math.max(1, threshold)}" min="1">
+      <input type="text" class="form-input no-spinner ord-qty-input num-input" inputmode="numeric" id="ordsugqty_${i}" value="${Math.max(1, threshold)}" min="1" dir="ltr">
       <button class="btn btn-sm btn-primary" onclick="addOrdersProduct('${escHtml(g.barcode).replace(/'/g, "\\'")}', document.getElementById('ordsugqty_${i}').value)"><i class="fas fa-plus"></i> ${t('orders.tabMine')}</button>
     </div>`).join('');
 }
@@ -119,7 +119,7 @@ function renderOrdersList() {
           <div class="ord-card-name">${escHtml(g.name)}</div>
           <div class="ord-card-meta" dir="ltr">${escHtml(g.barcode)} • ${t('common.qty')}: ${g.qty}</div>
         </div>
-        <input type="number" class="form-input no-spinner ord-qty-input" id="ordsearchqty_${i}" value="1" min="1" style="width:70px">
+        <input type="text" class="form-input no-spinner ord-qty-input num-input" inputmode="numeric" id="ordsearchqty_${i}" value="1" min="1" style="width:70px" dir="ltr">
         <button class="btn btn-sm btn-primary" onclick="addOrdersProduct('${escHtml(g.barcode).replace(/'/g, "\\'")}', document.getElementById('ordsearchqty_${i}').value)"><i class="fas fa-plus"></i></button>
       </div>`).join('');
     return;
@@ -140,7 +140,7 @@ function renderOrdersList() {
     return `<div class="ord-card">
       <div class="ord-card-info">
         <div class="ord-card-name">${escHtml(o.productName || '')}</div>
-        <div class="ord-card-meta" dir="ltr">${escHtml(o.barcode || '')} • ${o.qty} × DA${(parseFloat(o.unitPrice) || 0).toFixed(2)} • ${_ordFmt(o.createdAt)}</div>
+        <div class="ord-card-meta" dir="ltr">${escHtml(o.barcode || '')} • ${o.qty} × DA${fmtMoney((parseFloat(o.unitPrice) || 0))} • ${_ordFmt(o.createdAt)}</div>
       </div>
       <span class="ord-st ${statusBadge}">${statusLabel}</span>
       <div class="ord-card-actions">
@@ -222,7 +222,7 @@ async function loadBranchOrders() {
         return `<div class="ord-card">
           <div class="ord-card-info">
             <div class="ord-card-name">${escHtml(o.productName || '')}</div>
-            <div class="ord-card-meta" dir="ltr">${escHtml(o.barcode || '')} • ${o.qty} × DA${(parseFloat(o.unitPrice) || 0).toFixed(2)} • ${_ordFmt(o.createdAt)}</div>
+            <div class="ord-card-meta" dir="ltr">${escHtml(o.barcode || '')} • ${o.qty} × DA${fmtMoney((parseFloat(o.unitPrice) || 0))} • ${_ordFmt(o.createdAt)}</div>
           </div>
           <span class="ord-st ${statusBadge}">${statusLabel}</span>
         </div>`;
@@ -232,14 +232,19 @@ async function loadBranchOrders() {
 
 function _ordFmt(ts) {
   if (!ts) return '';
-  try { return new Date(ts).toLocaleString(); } catch (e) { return ''; }
+  try { return (typeof window.toLatinDigits === 'function') ? window.toLatinDigits(new Date(ts).toLocaleString('en-US')) : new Date(ts).toLocaleString(); } catch (e) { return ''; }
 }
 
 // ===== LAN SYNC: live list refresh =====
 window._pageSyncHandlers = window._pageSyncHandlers || {};
 window._pageSyncHandlers['orders'] = function ordersSyncData() {
-  _ordOrdersCache = (typeof DB !== 'undefined' && DB.getOrders) ? DB.getOrders() : [];
-  renderOrdersSuggestions();
-  renderOrdersList();
-  updateOrdersBadge();
+  window.syncPreserveRefresh({
+    search: ['ordersSearch'],
+    render: () => {
+      _ordOrdersCache = (typeof DB !== 'undefined' && DB.getOrders) ? DB.getOrders() : [];
+      renderOrdersSuggestions();
+      renderOrdersList();
+      updateOrdersBadge();
+    },
+  });
 };

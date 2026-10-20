@@ -10,6 +10,54 @@ const CloudService = (() => {
   let _lastSyncHash = '';
   let _tokenFailReason = '';
   const COMMAND_POLL_MS = 12000;
+  // Full cloud-backup reconciliation (download + merge website orders) runs on
+  // every tick where local data changed, and otherwise only every N-th tick.
+  // At the default 120s auto-sync interval that is a safety-net pass every 20 min
+  // instead of one every two minutes while the app sits idle.
+  let _cloudReconcileTick = 0;
+  const CLOUD_RECONCILE_TICKS = 10;
+
+  // Very large stores can't ride in a single upserted Blob: the bucket is capped
+  // per-file and the old 30s timeout fails on multi-hundred-megabyte gzip builds.
+  // When a backup's raw JSON exceeds this budget it is split into a FIXED set of
+  // overwritten-in-place parts (`*_backup_partK.json`) plus a tiny manifest at the
+  // main path (`*_backup.json`). Same names => every re-upload replaces the old
+  // parts in place: no accumulation, no quota waste — a constant, bounded file
+  // set, exactly the model the user asked for.
+  const CLOUD_RAW_PART_BUDGET = 30 * 1024 * 1024;   // raw JSON per part (~8MB gzip)
+  const UPLOAD_TIMEOUT_MS = 180000;                  // full backup / parts / manifest
+  const INV_UPLOAD_TIMEOUT_MS = 120000;              // inventory view object
+
+  function _estimateChunkBytes(item) {
+    let n = 48;
+    if (!item || typeof item !== 'object') return n;
+    for (const k of ['name', 'barcode', 'reference', 'storageLocation', 'mark', 'countryOfOrigin']) {
+      if (typeof item[k] === 'string') n += item[k].length;
+    }
+    if (item.brandId) n += String(item.brandId).length;
+    return n;
+  }
+
+  // Split an array into chunks whose cumulative estimated raw size stays under
+  // budget. Returns [] for empty input so interleaving stays trivial.
+  function _chunkByBudget(items, budget) {
+    if (!Array.isArray(items) || !items.length) return [];
+    const chunks = [];
+    let cur = [];
+    let curBytes = 0;
+    for (const it of items) {
+      const b = _estimateChunkBytes(it);
+      if (cur.length && curBytes + b > budget) {
+        chunks.push(cur);
+        cur = [];
+        curBytes = 0;
+      }
+      cur.push(it);
+      curBytes += b;
+    }
+    if (cur.length) chunks.push(cur);
+    return chunks;
+  }
 
   // ===== TIMEOUT HELPER =====
   // Every network call is wrapped so a stalled request can never freeze the UI
@@ -147,12 +195,21 @@ const CloudService = (() => {
         return;
       }
       // Q10: server-time drift check (catches both clock-forward and clock-back
-      // tampering beyond a 10-minute tolerance).
+      // tampering beyond a 10-minute tolerance). The event carries the SIGNED
+      // drift in minutes so the freeze overlay can tell the owner exactly how
+      // far off — and in which direction — the system clock is. Most of these
+      // "تم رصد تعديل بالوقت" reports are a drifting Win7 clock, not an attack.
       const serverTime = d && d.data && d.data.serverTime ? new Date(d.data.serverTime).getTime() : 0;
       if (serverTime) {
-        const drift = Math.abs(serverTime - Date.now());
-        if (drift > 10 * 60 * 1000) {
-          window.dispatchEvent(new CustomEvent('zmt:license-clock', { detail: { drift } }));
+        const driftMs = serverTime - Date.now();
+        if (Math.abs(driftMs) > 10 * 60 * 1000) {
+          window.dispatchEvent(new CustomEvent('zmt:license-clock', {
+            detail: {
+              driftMinutes: Math.round(driftMs / 60000),
+              serverTime,
+              localTime: Date.now(),
+            },
+          }));
         }
       }
     } catch (e) { /* offline or transient — ignore, next cycle re-checks */ }
@@ -387,6 +444,7 @@ const CloudService = (() => {
       orders,
       nextBarcode: dbExport.meta.nextBarcode || 100000,
       nextInvoiceCounter: dbExport.meta.nextInvoiceCounter || 0,
+      nextPaymentCounter: dbExport.meta.nextPaymentCounter || 0,
     };
     data.zmt_customers = dbExport.customers;
     data.zmt_suppliers = dbExport.suppliers;
@@ -396,11 +454,16 @@ const CloudService = (() => {
     data.zmt_transfers = dbExport.transfers;
     data.zmt_discounts = dbExport.discounts;
     data.zmt_orders = orders;
+    data.zmt_companies = dbExport.companies || [];
+    data.zmt_employees = dbExport.employees || [];
+    data.zmt_attendance = dbExport.attendance || [];
     data.zmt_audit_logs = dbExport.auditLogs;
     const settingsKeys = [
       'zmt_store_name', 'zmt_store_address', 'zmt_store_phone',
-      'zmt_tva_rate', 'zmt_timbre_enabled', 'zmt_timbre_rate',
+      'zmt_company_name', 'zmt_tva_rate', 'zmt_timbre_enabled', 'zmt_timbre_rate',
       'zmt_invoice_prefix', 'zmt_next_invoice', 'zmt_low_stock_threshold',
+      'zmt_expiry_enabled', 'zmt_expiry_required', 'zmt_expiry_warn_days',
+      'zmt_pharmacy_mode',
     ];
     for (const k of settingsKeys) {
       const v = localStorage.getItem(k);
@@ -426,15 +489,39 @@ const CloudService = (() => {
   }
 
   function dataHash(data) {
+    // Cheap order-independent digest (no JSON.stringify): any record change bumps
+    // its updatedAt/createdAt, which flips the XOR below, so "skip unchanged"
+    // still works over million-row stores without serializing them every sync.
     try {
-      const str = JSON.stringify(data);
-      let hash = 0;
-      for (let i = 0; i < str.length; i++) {
-        const c = str.charCodeAt(i);
-        hash = ((hash << 5) - hash) + c;
-        hash |= 0;
+      function recHash(v) {
+        if (Array.isArray(v)) {
+          let h = v.length;
+          for (const r of v) {
+            if (!r || typeof r !== 'object') continue;
+            h = ((h * 31) + (typeof r.id === 'string' ? r.id.length : 0)) | 0;
+            let ts = 0;
+            const u = r.updatedAt;
+            if (typeof u === 'number') ts = u;
+            else if (u) ts = Date.parse(u);
+            else if (typeof r.createdAt === 'number') ts = r.createdAt;
+            h = (h ^ ts) | 0;
+          }
+          return h;
+        }
+        if (v && typeof v === 'object') {
+          // Recurse instead of String(v[k]).length: stringifying a nested array
+          // of records yields "[object Object],[object Object]…", so updatedAt
+          // edits inside zmt_db.products/invoices/orders would flip nothing and
+          // an edited-only store would be wrongly skipped as "unchanged".
+          let h = 0;
+          for (const k of Object.keys(v)) h = ((h * 31) + recHash(v[k])) | 0;
+          return h;
+        }
+        return String(v == null ? '' : v).length;
       }
-      return String(hash);
+      let h = 0;
+      for (const k of Object.keys(data || {})) h = ((h * 31) + recHash(data[k])) | 0;
+      return String(h);
     } catch { return ''; }
   }
 
@@ -515,6 +602,22 @@ const CloudService = (() => {
 
     if (!hasData()) return { success: true, skipped: true, reason: 'no_data' };
 
+    // ===== Idle short-circuit =====
+    // Website orders reach the desktop through the small commands file applied
+    // above, so the full cloud-backup download below is a redundant safety net.
+    // Running it on EVERY 120s tick meant a download + gunzip + JSON.parse of
+    // the whole dataset (~4.4 MB after a legacy import) even when nothing had
+    // changed — a couple of hundred milliseconds of frozen UI every two minutes.
+    // While local data is untouched the tick now stops here; every
+    // CLOUD_RECONCILE_TICKS-th tick still performs the full reconciliation so
+    // the safety net keeps its guarantee with bounded staleness.
+    const preHash = dataHash(data || collectAllData());
+    _cloudReconcileTick = (_cloudReconcileTick || 0) + 1;
+    const reconcileDue = _cloudReconcileTick % CLOUD_RECONCILE_TICKS === 0;
+    if (preHash === _lastSyncHash && !reconcileDue) {
+      return { success: true, skipped: true, reason: 'idle' };
+    }
+
     // ===== Merge website orders into the local DB before uploading =====
     // Safety net for orders created/updated on the website: pull the cloud copy
     // back in first so the desktop and the website stay in sync.
@@ -563,24 +666,10 @@ const CloudService = (() => {
     }
 
     // Backups are gzip-compressed to keep the free Supabase tier under quota.
-    const blob = window._zmtGzipBlob(payload);
-
-    // Atomic upsert: NEVER remove-then-upload, otherwise a concurrent website
-    // write can be lost in the gap between remove and upload.
-    // The client uploads Blobs via FormData, so the Blob's own type is what the
-    // server validates; this contentType option is ignored for Blob bodies.
-    // 'application/gzip' is whitelisted on the zmt-backups bucket.
-    const { error } = await withTimeout(
-      supabase.storage.from(BUCKET).upload(path, blob, {
-        contentType: 'application/gzip',
-        upsert: true,
-        cacheControl: 'no-cache',
-      }),
-      30000,
-      'انتهت مهلة رفع البيانات إلى السحابة (30 ثانية)'
-    );
-
-    if (error) throw error;
+    // Huge datasets are transparently split into a fixed set of overwritten-in-
+    // place parts (manifest + `*_backup_partK.json`) so a full store never breaks
+    // the per-file size limit or the upload timeout.
+    await _uploadPayload(path, payload);
 
     // Publish an inventory-only object (products, no orders/returns) so other
     // network members can see this store's stock through the storage RLS
@@ -594,15 +683,15 @@ const CloudService = (() => {
         products: (payload.data && payload.data.zmt_db && payload.data.zmt_db.products) || [],
         meta: (payload.data && payload.data.meta) || {},
       };
-      const invBlob = window._zmtGzipBlob(invPayload);
+      const invBlob = await _gzipBlob(invPayload);
       const invRes = await withTimeout(
         supabase.storage.from(BUCKET).upload(getInventoryPath(), invBlob, {
           contentType: 'application/gzip',
           upsert: true,
           cacheControl: 'no-cache',
         }),
-        30000,
-        'انتهت مهلة رفع المخزون إلى السحابة (30 ثانية)'
+        INV_UPLOAD_TIMEOUT_MS,
+        'انتهت مهلة رفع المخزون إلى السحابة'
       );
       if (invRes.error) console.warn('[Cloud] inventory upload skipped:', invRes.error.message);
     } catch (e) {
@@ -839,13 +928,42 @@ const CloudService = (() => {
 
     for (const path of paths) {
       try {
-        const data = await _downloadFresh(path);
-        if (!data) continue;
-        return await window._zmtParseBlob(data);
+        const data = await _readBackupFile(path);
+        if (data) return data;
       } catch (e) { /* try the next path */ }
     }
 
     throw new Error('لم يتم العثور على نسخة احتياطية لهذا الرمز');
+  }
+
+  // Pull ONLY the main store's company list into this branch device. No products,
+  // invoices, orders, customers, suppliers, payments, returns or any other
+  // operational data are ever touched — the main backup is read and only its
+  // `zmt_companies` array is merged (company-preserving) via DB.importAll. This is
+  // what lets a freshly-installed branch show exactly the companies its parent
+  // bound it to (then filtered by getCompaniesForStore), mirroring the website's
+  // behavior in me.ts/data.ts without granting access to any parent data.
+  async function pullCompaniesFromMain() {
+    const parent = getParentCode();
+    if (!parent) return { companies: 0, error: null };
+    if (getStoreType() !== 'branch') return { companies: 0, error: null };
+    const path = `${parent}/${parent}_backup.json`;
+    let backup;
+    try {
+      backup = await _readBackupFile(path);
+    } catch (e) {
+      return { companies: 0, error: 'download_failed' };
+    }
+    if (!backup || !backup.data) return { companies: 0, error: null };
+
+    let companies = Array.isArray(backup.data.zmt_companies) ? backup.data.zmt_companies : [];
+    if (!companies.length && backup.data.zmt_db && Array.isArray(backup.data.zmt_db.companies)) {
+      companies = backup.data.zmt_db.companies;
+    }
+    if (companies.length) {
+      await DB.importAll({ companies });
+    }
+    return { companies: companies.length, error: null };
   }
 
   async function requestStoreCode() {
@@ -1027,16 +1145,19 @@ const CloudService = (() => {
       throw new Error('لا تملك صلاحية الوصول لهذا المحل');
     }
 
-    const { data: branchData } = await supabase.from('branches').select('code, store_id, stores(code)').eq('code', targetCode).single();
+    const { data: branchData } = await supabase.from('branches').select('code, store_id, stores(code)').eq('code', targetCode).single().catch(e => {
+      console.warn('[supabase-service] branches lookup failed (406?), falling back:', e && e.message);
+      return { data: null };
+    });
 
     if (branchData) {
       const parentCode = branchData.stores?.code;
       if (!parentCode) throw new Error('لا يمكن تحديد المحل الرئيسي');
       if (targetCode !== getStoreCode() && parentCode !== getStoreCode()) throw new Error('لا تملك صلاحية الوصول لهذا المحل');
 
-      const { data, error } = await supabase.storage.from(BUCKET).download(`${parentCode}/${targetCode}_backup.json`);
-      if (error) throw new Error('لم يتم العثور على نسخة احتياطية');
-      return await window._zmtParseBlob(data);
+      const backup = await _readBackupFile(`${parentCode}/${targetCode}_backup.json`);
+      if (!backup) throw new Error('لم يتم العثور على نسخة احتياطية');
+      return backup;
     }
 
     const { data: files } = await supabase.storage.from(BUCKET).list(targetCode);
@@ -1051,6 +1172,28 @@ const CloudService = (() => {
     return await window._zmtParseBlob(data);
   }
 
+  // Codes of the branches explicitly attached to the ACTIVE company. Empty when
+  // no company is active → no company-based restriction on store lists. Used to
+  // scope which sibling/main stores appear for monitoring/orders/returns.
+  function _cloudCompanyStoreCodes() {
+    try {
+      const cid = (typeof Auth !== 'undefined' && Auth.getCompanyId) ? (Auth.getCompanyId() || '') : '';
+      if (!cid) return [];
+      const c = (typeof DB !== 'undefined' && DB.getCompany) ? DB.getCompany(cid) : null;
+      if (!c || !Array.isArray(c.storeCodes)) return [];
+      return c.storeCodes.map(String);
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function _cloudVisibleBranch(code, isMainLike) {
+    const set = _cloudCompanyStoreCodes();
+    if (!set.length) return true; // no active company → unrestricted
+    if (isMainLike) return true;  // the family's main store is always visible
+    return set.indexOf(String(code)) !== -1;
+  }
+
   async function listAccessibleStores() {
     await _obtainCloudToken();
     const supabase = getClient();
@@ -1059,11 +1202,15 @@ const CloudService = (() => {
     const myCode = getStoreCode();
     const type = getStoreType();
     const parent = getParentCode();
+    const active = _cloudCompanyStoreCodes().length > 0;
 
     if (type === 'main') {
       const branches = await Auth.listBranchesFull(myCode);
       const result = [{ code: myCode, name: 'المحل الرئيسي', type: 'main' }];
       for (const b of branches) {
+        // Main store keeps only the branches attached to the active company
+        // when one is chosen; otherwise all branches (legacy).
+        if (active && !_cloudVisibleBranch(b.code, false)) continue;
         result.push({ code: b.code, name: b.name, type: 'branch' });
       }
       return result;
@@ -1075,7 +1222,7 @@ const CloudService = (() => {
         result.push({ code: parent, name: 'المحل الرئيسي', type: 'main' });
         const branches = await Auth.listBranchesFull(parent);
         for (const b of branches) {
-          if (b.code !== myCode) {
+          if (b.code !== myCode && _cloudVisibleBranch(b.code, false)) {
             result.push({ code: b.code, name: b.name, type: 'branch' });
           }
         }
@@ -1139,6 +1286,186 @@ const CloudService = (() => {
     }, 3000);
   }
 
+  // Upload a backup payload to a single `path`, transparently switching to a
+  // fixed set of overwritten-in-place parts when the raw JSON would exceed the
+  // per-file budget. Returns { success, path, parts }. Every upload upserts the
+  // same names, so old content is always replaced (never accumulated).
+  // Prefer the off-main-thread compressor (CompressionStream) when available and
+  // fall back to the synchronous pako path on old runtimes. Returns a Promise so
+  // callers can uniformly `await` it.
+  function _gzipBlob(obj) {
+    if (typeof window._zmtGzipBlobAsync === 'function') return window._zmtGzipBlobAsync(obj);
+    return Promise.resolve(window._zmtGzipBlob(obj));
+  }
+
+  // Remove stale partition files so a store's cloud footprint stays exactly the
+  // intended file set. Two shrink cases leave orphans otherwise:
+  //   - a store that was partitioned (N parts) and later fits in a single file:
+  //     parts 0..N-1 must all go (keepParts = 0),
+  //   - a store that shrank from N parts to M parts: parts M..N-1 must go.
+  // Best-effort: never throws, never blocks the upload path.
+  async function _gcStaleParts(path, keepParts) {
+    try {
+      const supabase = getClient();
+      if (!supabase) return;
+      const dir = path.split('/').slice(0, -1).join('/');
+      const prefix = path.split('/').pop().replace(/_backup\.json$/, '_backup_part');
+      const { data: files } = await supabase.storage.from(BUCKET).list(dir);
+      for (const f of (files || [])) {
+        const m = f && f.name ? f.name.match(/^(.+_backup_part)(\d+)\.json$/) : null;
+        if (m && m[1] === prefix) {
+          const idx = parseInt(m[2], 10);
+          if (idx >= keepParts) {
+            try { await supabase.storage.from(BUCKET).remove([`${dir}/${f.name}`]); } catch (e) {}
+          }
+        }
+      }
+    } catch (e) { /* cleanup is best-effort */ }
+  }
+
+  async function _uploadPayload(path, payload) {
+    const supabase = getClient();
+    if (!supabase) throw new Error('Supabase غير متصل');
+
+    const data = payload.data || {};
+    const prod = (data.zmt_db && data.zmt_db.products) || [];
+    const inv = (data.zmt_db && data.zmt_db.invoices) || [];
+    let prodBytes = 0, invBytes = 0;
+    for (const p of prod) prodBytes += _estimateChunkBytes(p);
+    for (const i of inv) invBytes += _estimateChunkBytes(i);
+    const totalBytes = prodBytes + invBytes;
+
+    const baseData = Object.assign({}, data);
+    if (baseData.zmt_db) {
+      baseData.zmt_db = Object.assign({}, baseData.zmt_db, { products: [], invoices: [] });
+    }
+    const basePayload = Object.assign({}, payload, { data: baseData });
+
+    if (totalBytes <= CLOUD_RAW_PART_BUDGET) {
+      const blob = await _gzipBlob(payload);
+      const { error } = await withTimeout(
+        supabase.storage.from(BUCKET).upload(path, blob, {
+          contentType: 'application/gzip',
+          upsert: true,
+          cacheControl: 'no-cache',
+        }),
+        UPLOAD_TIMEOUT_MS,
+        'انتهت مهلة رفع البيانات إلى السحابة'
+      );
+      if (error) throw error;
+      // A single-file upload must leave no partition leftovers behind (the store
+      // may have shrunk below the partition budget since the last upload).
+      await _gcStaleParts(path, 0);
+      return { success: true, path, parts: 1 };
+    }
+
+    // ---- Partitioned (fixed part count, each part upserted in place) ----
+    const prodParts = _chunkByBudget(prod, CLOUD_RAW_PART_BUDGET);
+    const invParts = _chunkByBudget(inv, CLOUD_RAW_PART_BUDGET);
+    const parts = Math.max(prodParts.length, invParts.length, 1);
+    const basePath = path.replace(/_backup\.json$/, '_backup_part');
+
+    for (let k = 0; k < parts; k++) {
+      let partData = Object.assign({}, baseData);
+      if (k === 0) {
+        partData.zmt_db = Object.assign({}, baseData.zmt_db || {}, {
+          products: prodParts[k] || [],
+          invoices: invParts[k] || [],
+        });
+      } else {
+        // Part k>0 carries products/invoices only; every other dataset rides in
+        // part 0 so nothing is duplicated across parts.
+        for (const key of Object.keys(partData)) {
+          if (Array.isArray(partData[key]) && key !== 'zmt_db') partData[key] = [];
+        }
+        partData.zmt_db = {
+          products: prodParts[k] || [],
+          invoices: invParts[k] || [],
+        };
+      }
+      const partPayload = Object.assign({}, payload, { data: partData, createdAt: new Date().toISOString() });
+      const blob = await _gzipBlob(partPayload);
+      const partPath = basePath + k + '.json';
+      const { error } = await withTimeout(
+        supabase.storage.from(BUCKET).upload(partPath, blob, {
+          contentType: 'application/gzip',
+          upsert: true,
+          cacheControl: 'no-cache',
+        }),
+        UPLOAD_TIMEOUT_MS,
+        'انتهت مهلة رفع جزء النسخة الاحتياطية إلى السحابة'
+      );
+      if (error) throw error;
+    }
+
+    // Tiny manifest at the main path so downloads know how many parts to fetch.
+    const manifest = {
+      version: 'partition',
+      partitioned: true,
+      parts,
+      storeCode: payload.storeCode,
+      storeType: payload.storeType,
+      parentCode: payload.parentCode,
+      createdAt: new Date().toISOString(),
+      storeName: payload.storeName || '',
+    };
+    const manifestBlob = await _gzipBlob(manifest);
+    const { error: mErr } = await withTimeout(
+      supabase.storage.from(BUCKET).upload(path, manifestBlob, {
+        contentType: 'application/gzip',
+        upsert: true,
+        cacheControl: 'no-cache',
+      }),
+      UPLOAD_TIMEOUT_MS,
+      'انتهت مهلة رفع مؤشر النسخة الاحتياطية إلى السحابة'
+    );
+    if (mErr) throw mErr;
+
+    // Garbage-collect stale parts (e.g. dataset shrinks 4 -> 2 parts) so the file
+    // set stays exactly `parts`: nothing accumulates.
+    await _gcStaleParts(path, parts);
+
+    return { success: true, path, parts };
+  }
+
+  // Download a backup path, transparently reassembling a partitioned backup
+  // (manifest + `*_backup_partK.json`) back into the exact shape a single-file
+  // backup would have (products/invoices concatenated over the parts).
+  async function _readBackupFile(path) {
+    const blob = await _downloadFresh(path);
+    if (!blob) return null;
+    const parsed = await window._zmtParseBlob(blob);
+    if (!parsed || parsed.partitioned !== true) return parsed;
+
+    const parts = Math.max(1, parseInt(parsed.parts, 10) || 1);
+    const basePath = path.replace(/_backup\.json$/, '_backup_part');
+    let products = [];
+    let invoices = [];
+    let base = null;
+    for (let k = 0; k < parts; k++) {
+      let partBlob = null;
+      try { partBlob = await _downloadFresh(basePath + k + '.json'); } catch (e) { partBlob = null; }
+      if (!partBlob) continue;
+      let part = null;
+      try { part = await window._zmtParseBlob(partBlob); } catch (e) { part = null; }
+      if (!part || !part.data) continue;
+      if (!base) base = part;
+      const zdb = part.data.zmt_db || {};
+      if (Array.isArray(zdb.products)) products = products.concat(zdb.products);
+      if (Array.isArray(zdb.invoices)) invoices = invoices.concat(zdb.invoices);
+    }
+    if (!base) return null;
+    const mergedData = Object.assign({}, base.data);
+    if (base.data && base.data.zmt_db) {
+      mergedData.zmt_db = Object.assign({}, base.data.zmt_db, { products, invoices });
+    }
+    return Object.assign({}, base, {
+      createdAt: parsed.createdAt || base.createdAt,
+      parts,
+      data: mergedData,
+    });
+  }
+
   async function uploadBackupForStore(targetCode, targetStoreType, targetParentCode) {
     await requireCloudToken();
     const supabase = getClient();
@@ -1157,8 +1484,15 @@ const CloudService = (() => {
     }
 
     const dbExport = DB.exportAll();
-    const storeProducts = (dbExport.products || []).filter(p => p.storeId === targetCode);
-    const storeInvoices = (dbExport.invoices || []).filter(inv => inv.storeId === targetCode);
+    // Never drop a product/invoice from the backup just because it lacks a
+    // storeId (created in guest/offline mode). Such records are carried along and
+    // stamped with the target store in the uploaded copy so nothing is lost.
+    const storeProducts = (dbExport.products || [])
+      .filter(p => p.storeId === targetCode || !p.storeId)
+      .map(p => (!p.storeId ? Object.assign({}, p, { storeId: targetCode }) : p));
+    const storeInvoices = (dbExport.invoices || [])
+      .filter(inv => inv.storeId === targetCode || !inv.storeId)
+      .map(inv => (!inv.storeId ? Object.assign({}, inv, { storeId: targetCode }) : inv));
 
     const storeData = {
       zmt_db: {
@@ -1169,7 +1503,30 @@ const CloudService = (() => {
     };
 
     storeData.zmt_transfers = (dbExport.transfers || []).filter(t => t.fromCode === targetCode || t.toCode === targetCode);
-    storeData.zmt_payments = dbExport.payments || [];
+
+    // Filter payments to those belonging to the target store. Payments don't
+    // carry a storeId of their own, so they are scoped through the record they
+    // reference: the invoice, customer or supplier they belong to. Any payment
+    // with no linking record is guest/offline data and is carried along (and,
+    // like products/invoices, never silently dropped).
+    const storeInvoiceIds = new Set((dbExport.invoices || [])
+      .filter(inv => !inv.storeId || inv.storeId === targetCode)
+      .map(inv => inv.id));
+    const storeTransfers = (dbExport.transfers || [])
+      .filter(t => t.fromCode === targetCode || t.toCode === targetCode);
+    const storeTransferInvoiceIds = new Set(storeTransfers
+      .map(t => t.invoiceId)
+      .filter(Boolean));
+    const storeCustomerIds = new Set((dbExport.customers || []).map(c => c.id));
+    const storeSupplierIds = new Set((dbExport.suppliers || []).map(s => s.id));
+
+    storeData.zmt_payments = (dbExport.payments || []).filter(p => {
+      if (p.storeId) return p.storeId === targetCode;
+      if (p.invoiceId) return storeInvoiceIds.has(p.invoiceId) || storeTransferInvoiceIds.has(p.invoiceId);
+      if (p.customerId) return storeCustomerIds.has(p.customerId);
+      if (p.supplierId) return storeSupplierIds.has(p.supplierId);
+      return true; // guest/offline payment with no linkage
+    });
 
     const storeUsers = JSON.parse(localStorage.getItem('zmt_users_' + targetCode) || '[]');
     storeData['zmt_users_' + targetCode] = storeUsers;
@@ -1187,19 +1544,9 @@ const CloudService = (() => {
       data: storeData,
     };
 
-    // Backups are gzip-compressed to keep the free Supabase tier under quota.
-    const blob = window._zmtGzipBlob(payload);
-
-    const { error } = await withTimeout(
-      supabase.storage.from(BUCKET).upload(path, blob, {
-        contentType: 'application/gzip',
-        upsert: true,
-      }),
-      30000,
-      'انتهت مهلة رفع البيانات إلى السحابة (30 ثانية)'
-    );
-
-    if (error) throw error;
+    // Same fixed-partition mechanism as _uploadBackupOnce: full gzip, single file
+    // when it fits, fixed overwritten-in-place parts when it does not.
+    await _uploadPayload(path, payload);
 
     // Publish an inventory-only object (products, no orders/returns) for this
     // store so other network members can see its stock via the RLS
@@ -1213,7 +1560,7 @@ const CloudService = (() => {
         products: storeProducts,
         meta: storeData.zmt_db ? storeData.zmt_db.meta || {} : {},
       };
-      const invBlob = window._zmtGzipBlob(invPayload);
+      const invBlob = await _gzipBlob(invPayload);
       const invPath = targetStoreType === 'branch'
         ? `${targetParentCode || targetCode}/${targetCode}_inventory.json`
         : `${targetCode}/${targetCode}_inventory.json`;
@@ -1223,8 +1570,8 @@ const CloudService = (() => {
           upsert: true,
           cacheControl: 'no-cache',
         }),
-        30000,
-        'انتهت مهلة رفع المخزون إلى السحابة (30 ثانية)'
+        INV_UPLOAD_TIMEOUT_MS,
+        'انتهت مهلة رفع المخزون إلى السحابة'
       );
       if (invRes.error) console.warn('[Cloud] inventory upload skipped:', invRes.error.message);
     } catch (e) {
@@ -1254,6 +1601,7 @@ const CloudService = (() => {
     uploadBackup,
     uploadBackupForStore,
     downloadBackup,
+    pullCompaniesFromMain,
     applyRemoteCommands,
     pushLocalChange,
     getDesktopCommandsPath,

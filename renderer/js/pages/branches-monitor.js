@@ -6,6 +6,49 @@ let _bmBranches = [];
 let _bmBranchData = {};
 let _bmCurrentBranch = null;
 
+// Active company scope. When a company is active, branches-monitor only shows
+// records tagged with that company (companyId). Global/store-level (untagged)
+// records are shown too. Returns '' when no company is active (unfiltered).
+function _bmActiveCompanyId() {
+  try {
+    if (typeof Auth !== 'undefined' && Auth.getCompanyId) return (Auth.getCompanyId() || '');
+  } catch (e) {}
+  return '';
+}
+
+function _bmScopeRecords(records) {
+  const cid = _bmActiveCompanyId();
+  if (!cid || !Array.isArray(records)) return records;
+  return records.filter(r => !r.companyId || r.companyId === cid);
+}
+
+// The codes of the branches explicitly attached to the ACTIVE company
+// (storeCodes of DB.getCompany(activeCompanyId)). Empty array when no company
+// is active → no company-based restriction on the store list. Read-only use:
+// this only filters WHICH sibling/main stores appear for monitoring, the data
+// pull itself remains gated by CloudService access rules.
+function _bmCompanyStoreCodes() {
+  try {
+    const cid = _bmActiveCompanyId();
+    if (!cid) return [];
+    const c = (typeof DB !== 'undefined' && DB.getCompany) ? DB.getCompany(cid) : null;
+    if (!c || !Array.isArray(c.storeCodes)) return [];
+    return c.storeCodes.map(String);
+  } catch (e) {
+    return [];
+  }
+}
+
+function _bmIsInActiveCompany(code) {
+  const set = _bmCompanyStoreCodes();
+  if (!set.length) return true; // no active company → unrestricted
+  return set.indexOf(String(code)) !== -1;
+}
+
+function _bmActiveCompanyRestricts() {
+  return _bmCompanyStoreCodes().length > 0;
+}
+
 function init_branches_monitor() {
   bmLoadBranches();
 }
@@ -21,12 +64,26 @@ async function bmLoadBranches() {
     const myCode = Auth.getUserCode();
 
     if (storeType === 'main') {
-      // Main store: load its branches
-      _bmBranches = await Auth.listBranchesFull(myCode);
+      // Main store: load its branches. When a company is active, only the
+      // branches explicitly attached to it appear; otherwise all branches (legacy).
+      const allBranches = await Auth.listBranchesFull(myCode);
+      _bmBranches = allBranches.filter(b => _bmIsInActiveCompany(b.code));
     } else if (storeType === 'branch' && myCode) {
-      // A branch only monitors its OWN store: transaction data (invoices,
-      // payments, net) of the main store or sibling branches stays private.
-      _bmBranches = [{ code: myCode, name: localStorage.getItem('zmt_store_name') || 'محلك' }];
+      const parent = Auth.getParentCode();
+      if (!parent || !_bmActiveCompanyRestricts()) {
+        // Standalone branch, or no company chosen → only own store (legacy).
+        _bmBranches = [{ code: myCode, name: _bmOwnStoreName() }];
+      } else {
+        // Branch monitors the parent main store + the sibling branches explicitly
+        // attached to the active company. Inventory only — transactions stay private.
+        const branches = (await Auth.listBranchesFull(parent)) || [];
+        _bmBranches = [
+          { code: parent, name: 'المحل الرئيسي', type: 'main' },
+          ...branches
+            .filter(b => b.code !== myCode && _bmIsInActiveCompany(b.code))
+            .map(b => ({ code: b.code, name: b.name, type: 'branch' })),
+        ];
+      }
     } else {
       _bmBranches = [];
     }
@@ -37,23 +94,33 @@ async function bmLoadBranches() {
     const isMain = storeType === 'main';
     const isManager = Auth.isManager();
 
-    // Load each store's backup (other stores only, NOT own store)
+    // Load each store's data. The main store gets its full backup. A branch
+    // viewing the parent or a sibling only gets the read-only inventory
+    // (products) — invoices/payments/net stay private via _canAccessStore.
     const loadPromises = _bmBranches.map(async (b) => {
       try {
-        const backup = await CloudService.downloadStoreBackup(b.code);
-        const data = backup?.data || {};
-        const db = typeof data.zmt_db === 'string' ? JSON.parse(data.zmt_db) : (data.zmt_db || {});
-        const products = db.products || [];
-        const invoices = db.invoices || [];
-        const payments = Array.isArray(data.zmt_payments) ? data.zmt_payments : [];
-        const sales = invoices.filter(i => i.type === 'sale' || i.type === 'customer');
-        const salesTotal = sales.reduce((s, i) => s + (i.totalAmount || 0), 0);
+        if (isMain || b.code === myCode) {
+          const backup = await CloudService.downloadStoreBackup(b.code);
+          const data = backup?.data || {};
+          const inner = typeof data.zmt_db === 'string' ? JSON.parse(data.zmt_db) : (data.zmt_db || {});
+          const products = _bmScopeRecords(inner.products || []);
+          const invoices = _bmScopeRecords(inner.invoices || []);
+          const payments = _bmScopeRecords(Array.isArray(data.zmt_payments) ? data.zmt_payments : []);
+          const sales = invoices.filter(i => i.type === 'sale' || i.type === 'customer');
+          const salesTotal = sales.reduce((s, i) => s + (i.totalAmount || 0), 0);
 
-        _bmBranchData[b.code] = { products, invoices, payments, sales, salesTotal, loaded: true };
+          _bmBranchData[b.code] = { products, invoices, payments, sales, salesTotal, loaded: true };
 
-        totalProducts += products.length;
-        totalSales += sales.length;
-        totalRevenue += salesTotal;
+          totalProducts += products.length;
+          totalSales += sales.length;
+          totalRevenue += salesTotal;
+        } else {
+          // A non-manager (branch) store: inventory-only view of the selected store.
+          const raw = (await CloudService.downloadStoreInventory(b.code)) || [];
+          const products = _bmScopeRecords(raw);
+          _bmBranchData[b.code] = { products, invoices: [], payments: [], sales: [], salesTotal: 0, loaded: true };
+          totalProducts += products.length;
+        }
       } catch {
         _bmBranchData[b.code] = { products: [], invoices: [], payments: [], sales: [], salesTotal: 0, loaded: false };
       }
@@ -123,18 +190,22 @@ async function bmShowBranchDetail(code, name) {
   const storeType = Auth.getStoreType();
   const isMain = storeType === 'main';
   const isManager = Auth.isManager();
+  // Financial tabs are only available when this store is being viewed with a
+  // full backup: the main store over its branches, or a branch over ITSELF.
+  // Branches viewing the parent store or a sibling only ever have inventory.
+  const canViewFinance = isMain || code === Auth.getUserCode();
 
-  // Hide financial tabs for non-managers (prevent spying)
-  document.querySelector('.bm-tab[data-tab="invoices"]').style.display = isManager ? '' : 'none';
-  document.querySelector('.bm-tab[data-tab="purchases"]').style.display = isManager ? '' : 'none';
-  document.querySelector('.bm-tab[data-tab="net"]').style.display = isManager ? '' : 'none';
+  // Hide financial tabs when not allowed (prevent spying)
+  document.querySelector('.bm-tab[data-tab="invoices"]').style.display = canViewFinance ? '' : 'none';
+  document.querySelector('.bm-tab[data-tab="purchases"]').style.display = canViewFinance ? '' : 'none';
+  document.querySelector('.bm-tab[data-tab="net"]').style.display = canViewFinance ? '' : 'none';
 
-  // Hide financial summary cards for non-managers
+  // Hide financial summary cards when not allowed
   const detSummaryCards = document.querySelectorAll('#bmDetailSummary .bm-summary-card');
   if (detSummaryCards.length >= 4) {
-    detSummaryCards[1].style.display = isManager ? '' : 'none';
-    detSummaryCards[2].style.display = isManager ? '' : 'none';
-    detSummaryCards[3].style.display = isManager ? '' : 'none';
+    detSummaryCards[1].style.display = canViewFinance ? '' : 'none';
+    detSummaryCards[2].style.display = canViewFinance ? '' : 'none';
+    detSummaryCards[3].style.display = canViewFinance ? '' : 'none';
   }
 
   const d = _bmBranchData[code];
@@ -167,7 +238,7 @@ async function bmShowBranchDetail(code, name) {
 
   bmRenderInventory(d.products);
 
-  if (isManager) {
+  if (canViewFinance) {
     document.getElementById('bmDetInvoices').textContent = totalInvoices;
     document.getElementById('bmDetSales').textContent = d.sales.length;
     document.getElementById('bmDetNet').textContent = _formatNumber(netAccount) + ' DA';
@@ -223,7 +294,7 @@ function bmSearchProduct(q) {
   for (const [storeCode, d] of Object.entries(_bmBranchData)) {
     if (!d || !d.loaded || !d.products) continue;
     const storeName = storeCode === myCode
-      ? (localStorage.getItem('zmt_store_name') || 'محلك')
+      ? _bmOwnStoreName()
       : (_bmBranches.find(b => b.code === storeCode)?.name || storeCode);
 
     for (const p of d.products) {
@@ -371,7 +442,7 @@ function bmRenderNetAccount(sales, purchases, transferIncome, transferCost, netA
         <span style="color:#388e3c;font-weight:bold;">+${_formatNumber(totalSales)} DA</span>
       </div>
       ${transferIncome > 0 ? `<div class="bm-net-row">
-        <span><i class="fas fa-arrow-up" style="color:#1565c0;"></i> ${t('branchesMonitor.transferIncome')} (${(transferIncome || 0).toFixed(0)} DA)</span>
+        <span><i class="fas fa-arrow-up" style="color:#1565c0;"></i> ${t('branchesMonitor.transferIncome')} (${fmtMoney(transferIncome)} DA)</span>
         <span style="color:#1565c0;font-weight:bold;">+${_formatNumber(transferIncome)} DA</span>
       </div>` : ''}
       <div class="bm-net-row">
@@ -379,7 +450,7 @@ function bmRenderNetAccount(sales, purchases, transferIncome, transferCost, netA
         <span style="color:#c62828;font-weight:bold;">-${_formatNumber(totalPurchases)} DA</span>
       </div>
       ${transferCost > 0 ? `<div class="bm-net-row">
-        <span><i class="fas fa-arrow-down" style="color:#e65100;"></i> ${t('branchesMonitor.transferCost')} (${(transferCost || 0).toFixed(0)} DA)</span>
+        <span><i class="fas fa-arrow-down" style="color:#e65100;"></i> ${t('branchesMonitor.transferCost')} (${fmtMoney(transferCost)} DA)</span>
         <span style="color:#e65100;font-weight:bold;">-${_formatNumber(transferCost)} DA</span>
       </div>` : ''}
       <div class="bm-net-row bm-net-total">
@@ -405,3 +476,42 @@ function _escHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+// Display name for "my store": prefers the active company's store name (per-company,
+// persists with its backup), otherwise the global store name.
+function _bmOwnStoreName() {
+  try {
+    if (typeof DB !== 'undefined' && DB.getActiveCompanyStoreName) {
+      const n = DB.getActiveCompanyStoreName();
+      if (n) return n;
+    }
+  } catch (e) {}
+  try {
+    const local = localStorage.getItem('zmt_store_name') || '';
+    if (local) return local;
+  } catch (e) {}
+  return 'محلك';
+}
+
+// ===== LAN SYNC HANDLER =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['branches-monitor'] = function bmSyncData() {
+  // Cloud-backed page: never rebuild it from a LAN op. Refresh only this
+  // device's own inventory slice in memory, and re-render the local products
+  // table when the user is viewing their own store on the inventory tab.
+  const myCode = Auth.getUserCode();
+  if (myCode && _bmBranchData[myCode]) {
+    _bmBranchData[myCode].products = _bmScopeRecords(DB.getProducts());
+  }
+  if (_bmCurrentBranch && _bmCurrentBranch === myCode) {
+    const d = _bmBranchData[myCode];
+    if (d && d.loaded && document.getElementById('bmDetProducts')) {
+      document.getElementById('bmDetProducts').textContent = d.products.length;
+      const activeTab = document.querySelector('.bm-tab.active');
+      if (activeTab && activeTab.getAttribute('data-tab') === 'inventory') {
+        const el = document.getElementById('bmInventoryContent');
+        if (el && el.isConnected) bmRenderInventory(d.products);
+      }
+    }
+  }
+};

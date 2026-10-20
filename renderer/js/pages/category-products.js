@@ -3,102 +3,152 @@ var _invoiceCart = [];
 var _cartSupplierId = null;
 
 function init_category_products() {
-  const ctx = window.catCtx;
-  if (!ctx) { navigateTo('brands'); return; }
+  // Brand-scoped product screen: we arrive here directly from a brand card.
+  const ctx = window.brandCtx;
+  if (!ctx || !ctx.brandId) { navigateTo('brands'); return; }
 
-  const brand = [...BRANDS.global, ...BRANDS.chinese].find(b => b.id === ctx.brandId);
+  const brand = findBrandById(ctx.brandId);
   if (!brand) { navigateTo('brands'); return; }
 
-  document.getElementById('catTitle').textContent = `${brand.name} - ${ctx.category}`;
+  document.getElementById('catTitle').textContent = brand.name;
   document.getElementById('catSub').textContent = 'المنتجات المتوفرة';
   window._brandCtx = ctx;
+  window.catCtx = { brandId: ctx.brandId }; // backward-compat alias
 
+  if (window._catPager) { window._catPager.destroy(); window._catPager = null; }
   renderProducts();
   setupProdSearch();
   const sc = document.getElementById('barcodeScannerInput');
   if (sc && !sc._zmtCleanBound) {
     sc._zmtCleanBound = true;
     sc.addEventListener('input', function() {
-      const cleaned = cleanScannedCode(this.value);
+      const cleaned = cleanScannedCode(this.value, { scanner: true });
       if (cleaned !== this.value) this.value = cleaned;
     });
   }
+  // Hover + press E to edit the highlighted product (layout-independent via e.code).
+  window._prodEditShortcut = function (id) { editProduct(id); };
+  _bindProdShortcuts();
+  // Right-click context menu handlers for product cards (permissions mirror the card buttons).
+  const isManager = Auth.isManager();
+  window._registerProdCtxHandlers({
+    edit: editProduct,
+    canEdit: isManager,
+    ret: openSupplierReturnModal,
+    canRet: isManager || Auth.canEdit('supplier-returns'),
+    del: deleteProduct,
+    canDel: isManager,
+  });
+  // Fixed product quick-add button visibility + overlay click-outside close.
+  const qaBtn = document.getElementById('btnCatQuickAdd');
+  if (qaBtn) qaBtn.style.display = (isManager || Auth.canEdit('inventory')) ? '' : 'none';
+  const qaModal = document.getElementById('catQuickAddModal');
+  if (qaModal) qaModal.addEventListener('click', function(e) {
+    if (e.target === qaModal) catCloseQuickAddProduct();
+  });
 }
 
-function renderProducts() {
+function catProductCardHTML(p, i) {
+  const brand = findBrandById(p.brandId);
+  const isManager = Auth.isManager();
+  const qtyBadge = p.quantity < 5 ? 'danger' : 'ok';
+  return `<div class="prod-card" data-id="${p.id}" ondblclick="${isManager ? `editProduct('${p.id}')` : ''}">
+    <div class="prod-card-head">
+      <div class="prod-card-head-main">
+        <div class="prod-card-title">${escHtml(p.name)}</div>
+        <div class="prod-card-meta">
+          <span class="prod-meta"><i class="fas fa-tag"></i> ${t('quickEntry.mark')}: <b>${escHtml(p.mark || '-')}</b></span>
+          <span class="prod-meta mono"><i class="fas fa-barcode"></i> ${escHtml(p.barcode || '-')}</span>
+        </div>
+      </div>
+      <span class="prod-card-badge ${qtyBadge}">${p.quantity} ${t('inventory.col4')}</span>
+    </div>
+    <div class="prod-card-fields">
+      <div class="prod-field full"><span class="prod-field-label"><i class="fas fa-hashtag"></i> ${t('quickEntry.reference')}</span><span class="prod-field-value">${referenceCellHTML(p.reference)}</span></div>
+      <div class="prod-field full"><span class="prod-field-label"><i class="fas fa-globe"></i> ${t('quickEntry.countryOfOrigin')}</span><span class="prod-field-value">${escHtml(p.countryOfOrigin || '-')}</span></div>
+      <div class="prod-field"><span class="prod-field-label"><i class="fas fa-warehouse"></i> ${t('quickEntry.storageLocation')}</span><span class="prod-field-value">${escHtml(p.storageLocation || '-')}</span></div>
+      <div class="prod-field"><span class="prod-field-label"><i class="fas fa-trademark"></i> ${t('inventory.col3')}</span><span class="prod-field-value">${escHtml(brand ? brand.name : (p.brandId || '-'))}</span></div>
+    </div>
+    ${Auth.buyPriceVisible() ? `<div class="prod-card-cost"><span class="prod-field-label"><i class="fas fa-money-bill-wave"></i> ${t('inventory.col5')}</span><span class="prod-cost-value">DA${fmtMoney((p.buyPrice || 0))}</span></div>` : `<div class="prod-card-cost"><span class="prod-field-label"><i class="fas fa-money-bill-wave"></i> ${t('inventory.col5')}</span><span class="prod-cost-value">••••</span></div>`}
+    <div class="prod-card-pricerow">
+      <div class="price-pill price-unit"><span>${t('inventory.col6')}</span><b>DA${fmtMoney((p.sellPrice || 0))}</b></div>
+      <div class="price-pill price-whole"><span>${t('quickEntry.wholesalePrice')}</span><b>DA${fmtMoney((p.wholesalePrice || 0))}</b></div>
+    </div>
+    <div class="prod-card-actions" ondblclick="event.stopPropagation()">
+      <button class="btn btn-sm" onclick="openPrintBarcodeModal('${p.id}')" title="طباعة باركود"><i class="fas fa-barcode"></i></button>
+      ${isManager ? `<button class="btn btn-sm" onclick="editProduct('${p.id}')"><i class="fas fa-edit"></i></button>` : ''}
+      ${(isManager || Auth.canEdit('supplier-returns')) ? `<button class="btn btn-sm btn-return" onclick="openSupplierReturnModal('${p.id}')" title="${t('supplierReturns.modalTitle')}"><i class="fas fa-undo-alt"></i></button>` : ''}
+      ${isManager ? `<button class="btn btn-sm btn-danger" onclick="deleteProduct('${p.id}')"><i class="fas fa-trash"></i></button>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderProducts(q) {
   const ctx = window._brandCtx;
   if (!ctx) return;
-  const products = DB.getProductsByBrandCategory(ctx.brandId, ctx.category);
+  const all = DB.getProductsByBrand(ctx.brandId);
+  const qs = (typeof q === 'string') ? normSearch(q) : '';
+  // Fast pre-filter over the cached search text + real score for candidates,
+  // capped so a huge category never renders an unbounded DOM.
+  const products = (qs && qs.trim().length >= 2)
+    ? productsMatchingQuery(all, qs, 60)
+    : all;
   const container = document.getElementById('categoryProducts');
+  if (!container) return;
 
   if (products.length === 0) {
+    if (window._catPager) { window._catPager.destroy(); window._catPager = null; }
     container.innerHTML = `<div class="placeholder-box">
       <i class="fas fa-box-open" style="font-size:48px;color:#555"></i>
-      <p>لا توجد منتجات في هذا التصنيف</p>
+      <p>${qs ? 'لا توجد نتائج مطابقة' : 'لا توجد منتجات في هذا التصنيف'}</p>
     </div>`;
     return;
   }
 
-  const isManager = Auth.isManager();
-  container.innerHTML = `<div class="table-container">
-    <table class="data-table">
-      <thead><tr>
-        <th>#</th>
-        <th>الاسم</th>
-        <th>الباركود</th>
-        <th>الكمية</th>
-        <th>${isManager ? 'سعر الشراء' : ''}</th>
-        <th>سعر البيع</th>
-        <th>المورد</th>
-        <th>إجراءات</th>
-      </tr></thead>
-      <tbody id="prodTableBody"></tbody>
-    </table>
-  </div>`;
-
-  const tbody = document.getElementById('prodTableBody');
-  const suppliers = DB.getSuppliers();
-  const rows = products.map((p, i) => {
-    const sup = p.supplierId ? suppliers.find(s => s.id === p.supplierId) : null;
-    return `<tr>
-      <td>${i + 1}</td>
-      <td><strong>${p.name}</strong></td>
-      <td dir="ltr">${p.barcode}</td>
-      <td>${p.quantity}</td>
-      <td>${isManager ? `DA${p.buyPrice.toFixed(2)}` : '-'}</td>
-      <td>DA${p.sellPrice.toFixed(2)}</td>
-      <td>${sup ? sup.name : '-'}</td>
-      <td>
-        <button class="btn btn-sm" onclick="openPrintBarcodeModal('${p.id}')" title="طباعة باركود"><i class="fas fa-barcode"></i></button>
-        ${isManager ? `<button class="btn btn-sm" onclick="editProduct('${p.id}')"><i class="fas fa-edit"></i></button>` : ''}
-        ${(isManager || Auth.canEdit('supplier-returns')) ? `<button class="btn btn-sm btn-return" onclick="openSupplierReturnModal('${p.id}')" title="${t('supplierReturns.modalTitle')}"><i class="fas fa-undo-alt"></i></button>` : ''}
-        ${isManager ? `<button class="btn btn-sm btn-danger" onclick="deleteProduct('${p.id}')"><i class="fas fa-trash"></i></button>` : ''}
-      </td>
-    </tr>`;
-  });
-  tbody.innerHTML = rows.join('');
+  let grid = document.getElementById('catProdGrid');
+  if (!grid) {
+    container.innerHTML = '';
+    grid = document.createElement('div');
+    grid.id = 'catProdGrid';
+    grid.className = 'prod-grid';
+    container.appendChild(grid);
+  }
+  if (window._catPager) {
+    window._catPager.updateData(products);
+  } else {
+    window._catPager = new InfiniteScrollPager({
+      data: products,
+      container: grid,
+      pageSize: 25,
+      renderItem: (p, i) => catProductCardHTML(p, i),
+      renderEmpty: null,
+      scrollContainer: document.querySelector('.main-content') || window,
+      maxNodes: 400,
+    });
+    window._activePager = window._catPager;
+  }
 }
 
+var _catSearchDebounce = null;
 function setupProdSearch() {
   const input = document.getElementById('prodSearch');
-  if (input) {
-    input.oninput = function() {
-      const q = this.value.toLowerCase();
-      const rows = document.querySelectorAll('#prodTableBody tr');
-      rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
-        row.style.display = text.includes(q) ? '' : 'none';
-      });
-    };
-  }
+  if (!input) return;
+  input.oninput = function () {
+    const v = this.value;
+    clearTimeout(_catSearchDebounce);
+    _catSearchDebounce = setTimeout(() => renderProducts(v), 300);
+  };
 }
 
 function openAddProduct() {
   if (!Auth.isManager()) { alert(t('common.noPermission')); return; }
   editingProductId = null;
   document.getElementById('addProductModal').style.display = 'flex';
+  applyExpiryField('prodExpiry');
+  applyFamilyField('prodFamily');
+  if (typeof window.refreshFamilySuggestions === 'function') window.refreshFamilySuggestions();
   resetAddForm();
-  focusBarcodeScanner();
+  setTimeout(() => { const s = document.getElementById('supplierSearchInput'); if (s) s.focus(); }, 50);
 }
 
 function resetAddForm() {
@@ -112,6 +162,10 @@ function resetAddForm() {
   document.getElementById('prodBuyPrice').value = '0';
   document.getElementById('prodSellPrice').value = '0';
   document.getElementById('prodWholePrice').value = '0';
+  const prodExpiryEl = document.getElementById('prodExpiry');
+  if (prodExpiryEl) prodExpiryEl.value = '';
+  const prodFamilyEl = document.getElementById('prodFamily');
+  if (prodFamilyEl) prodFamilyEl.value = '';
   document.getElementById('supplierSearchInput').value = '';
   document.getElementById('supplierResults').innerHTML = '';
   document.getElementById('selectedSupplierInfo').style.display = 'none';
@@ -126,6 +180,61 @@ function closeAddProduct() {
   document.getElementById('addProductModal').style.display = 'none';
 }
 
+// ===== QUICK ADD FIXED PRODUCT (no quantity / no buy price / no invoice, brand fixed) =====
+
+function catOpenQuickAddProduct() {
+  if (!Auth.isManager() && !Auth.canEdit('inventory')) { alert(t('common.noPermission')); return; }
+  const modal = document.getElementById('catQuickAddModal');
+  if (!modal) return;
+  catResetQuickAddForm();
+  applyFamilyField('qaFamily');
+  if (typeof window.refreshFamilySuggestions === 'function') window.refreshFamilySuggestions();
+  modal.style.display = 'flex';
+  setTimeout(() => { const f = document.getElementById('qaName'); if (f) f.focus(); }, 150);
+}
+
+function catCloseQuickAddProduct() {
+  const modal = document.getElementById('catQuickAddModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function catResetQuickAddForm() {
+  const nameEl = document.getElementById('qaName');
+  const barEl = document.getElementById('qaBar');
+  const familyEl = document.getElementById('qaFamily');
+  const sellEl = document.getElementById('qaSell');
+  if (nameEl) nameEl.value = '';
+  if (barEl) barEl.value = '';
+  if (familyEl) familyEl.value = '';
+  if (sellEl) sellEl.value = '0';
+}
+
+function catQaBarcodeKey(e) {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const f = document.getElementById('qaName');
+  if (f) f.focus();
+}
+
+function catConfirmQuickAddProduct() {
+  if (!Auth.isManager() && !Auth.canEdit('inventory')) { alert(t('common.noPermission')); return; }
+  const ctx = window._brandCtx;
+  const name = document.getElementById('qaName').value.trim();
+  const barcode = document.getElementById('qaBar').value.trim();
+  const family = document.getElementById('qaFamily').value.trim();
+  const sellPrice = document.getElementById('qaSell').value;
+
+  const res = quickAddProduct({ name, barcode, brandId: ctx ? ctx.brandId : null, family, sellPrice });
+  if (!res.ok) {
+    alert(res.error || 'تعذرت الإضافة');
+    return;
+  }
+  catCloseQuickAddProduct();
+  renderProducts();
+  const msgKey = res.updated ? 'inventory.quickAddUpdated' : 'inventory.quickAddSuccess';
+  alert(`${t(msgKey) || 'تمت الإضافة'}: ${res.product.name}`);
+}
+
 function switchProdTab(tab) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.getElementById('tabSearch').style.display = tab === 'search' ? '' : 'none';
@@ -134,6 +243,30 @@ function switchProdTab(tab) {
 
 // ===== SEARCH EXISTING PRODUCT =====
 
+function catSearchKey(e) {
+  const box = document.getElementById('searchResults');
+  if (!box) return;
+  const items = Array.prototype.slice.call(box.querySelectorAll('.search-result-item:not(.disabled)'));
+  if (!items.length) return;
+  let idx = items.findIndex(it => it.classList.contains('qe-sel'));
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    idx = (idx + 1) % items.length;
+    catHighlightSearch(items, idx);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    idx = (idx - 1 + items.length) % items.length;
+    catHighlightSearch(items, idx);
+  } else if (e.key === 'Enter') {
+    if (idx >= 0) { e.preventDefault(); items[idx].click(); }
+  }
+}
+
+function catHighlightSearch(items, idx) {
+  items.forEach((it, i) => it.classList.toggle('qe-sel', i === idx));
+  if (items[idx].scrollIntoView) items[idx].scrollIntoView({ block: 'nearest' });
+}
+
 function searchExistingProduct(q) {
   const results = document.getElementById('searchResults');
   q = normSearch(q);
@@ -141,10 +274,7 @@ function searchExistingProduct(q) {
   const ctx = window._brandCtx;
   const all = DB.getProducts();
   const matches = q
-    ? all.filter(p =>
-        p.name.toLowerCase().includes(q.toLowerCase()) ||
-        p.barcode.includes(q)
-      ).slice(0, 10)
+    ? productsMatchingQuery(all, q, 10)
     : all.slice(0, 10);
 
   if (matches.length === 0) {
@@ -153,7 +283,7 @@ function searchExistingProduct(q) {
   }
 
   results.innerHTML = matches.map(p => {
-    const sameBrand = p.brandId === ctx?.brandId && p.category === ctx?.category;
+    const sameBrand = p.brandId === ctx?.brandId;
     return `<div class="search-result-item ${sameBrand ? '' : 'diff-context'}" onclick="selectExistingProduct('${p.id}')">
       <strong>${p.name}</strong>
       <span class="text-muted" dir="ltr">${p.barcode}</span>
@@ -175,6 +305,10 @@ function selectExistingProduct(id) {
   document.getElementById('prodBuyPrice').value = p.buyPrice;
   document.getElementById('prodSellPrice').value = p.sellPrice;
   document.getElementById('prodWholePrice').value = p.wholesalePrice || 0;
+  const prodExpirySel = document.getElementById('prodExpiry');
+  if (prodExpirySel) prodExpirySel.value = p.expiryDate || '';
+  const prodFamilySel = document.getElementById('prodFamily');
+  if (prodFamilySel) prodFamilySel.value = p.family || '';
 }
 
 // ===== SUPPLIER SEARCH =====
@@ -215,7 +349,7 @@ function handleBarcodeScan(e) {
   if (e.key === 'Enter') {
     e.preventDefault();
     const input = document.getElementById('barcodeScannerInput');
-    const code = cleanScannedCode(input.value);
+    const code = cleanScannedCode(input.value, { scanner: true });
     if (!code) return;
 
     document.getElementById('scannerStatus').textContent = 'جاري المعالجة...';
@@ -225,7 +359,7 @@ function handleBarcodeScan(e) {
     const resultDiv = document.getElementById('scannerResult');
 
     if (existing) {
-      switchProdTab('search');
+  switchProdTab('new');
       document.getElementById('prodSearchInput').value = existing.name;
       searchExistingProduct(existing.name);
       selectExistingProduct(existing.id);
@@ -268,6 +402,9 @@ function getFormItem() {
   const buyPrice = parseFloat(document.getElementById('prodBuyPrice').value) || 0;
   const sellPrice = parseFloat(document.getElementById('prodSellPrice').value) || 0;
   const wholesalePrice = parseFloat(document.getElementById('prodWholePrice').value) || 0;
+  const prodExpiryEl = document.getElementById('prodExpiry');
+  const expiryDate = prodExpiryEl ? prodExpiryEl.value : '';
+  const family = (document.getElementById('prodFamily')?.value || '').trim();
 
   if (tab === 'search') {
     productId = document.getElementById('selProdId').value;
@@ -283,7 +420,12 @@ function getFormItem() {
     if (!barcode) { alert('الرجاء إدخال الباركود'); return null; }
   }
 
-  return { productId, name, barcode, qty, buyPrice, sellPrice, wholesalePrice };
+  const reference = (document.getElementById('newProdReference')?.value || '').trim();
+  const countryOfOrigin = (document.getElementById('newProdCountry')?.value || '').trim();
+  const mark = (document.getElementById('newProdMark')?.value || '').trim();
+  const storageLocation = (document.getElementById('newProdStorage')?.value || '').trim();
+
+  return { productId, name, barcode, qty, buyPrice, sellPrice, wholesalePrice, family, reference, countryOfOrigin, mark, storageLocation, expiryDate };
 }
 
 function addToCart() {
@@ -292,6 +434,7 @@ function addToCart() {
 
   const item = getFormItem();
   if (!item) return;
+  if (window.getPharmacyMode() && !item.family) { alert(t('inventory.familyRequired')); return; }
 
   if (item.barcode) {
     const conflict = DB.findProductsByBarcode(item.barcode).find(p => !DB.isSameProductIdentity(p, item));
@@ -322,7 +465,7 @@ function renderCart() {
 
   countEl.textContent = `(${_invoiceCart.length})`;
   const total = _invoiceCart.reduce((sum, item) => sum + item.qty * item.buyPrice, 0);
-  totalEl.textContent = `DA${total.toFixed(2)}`;
+  totalEl.textContent = `DA${fmtMoney(total)}`;
 
   container.innerHTML = _invoiceCart.map((item, i) =>
     `<div class="cart-item">
@@ -331,8 +474,8 @@ function renderCart() {
         <span class="text-muted">${item.barcode}</span>
       </div>
       <div class="cart-item-details">
-        <span>${item.qty} × DA${item.buyPrice.toFixed(2)}</span>
-        <span class="cart-item-total">DA${(item.qty * item.buyPrice).toFixed(2)}</span>
+        <span>${item.qty} × DA${fmtMoney(item.buyPrice)}</span>
+        <span class="cart-item-total">DA${fmtMoney((item.qty * item.buyPrice))}</span>
       </div>
       <button class="btn btn-sm btn-danger" onclick="removeFromCart(${i})"><i class="fas fa-times"></i></button>
     </div>`
@@ -383,10 +526,14 @@ function confirmInvoice() {
     // same prices, keep a separate row when prices differ.
     const res = DB.addOrMergeProduct({
       name: item.name, barcode: item.barcode,
-      brandId: ctx.brandId, category: ctx.category,
+      brandId: ctx.brandId,
       buyPrice: item.buyPrice, sellPrice: item.sellPrice,
       wholesalePrice: item.wholesalePrice || 0,
       quantity: item.qty, supplierId,
+      family: item.family || '',
+      reference: item.reference || '', countryOfOrigin: item.countryOfOrigin || '',
+      mark: item.mark || '', storageLocation: item.storageLocation || '',
+      expiryDate: item.expiryDate || '',
     });
 
     if (!res.ok) {
@@ -449,8 +596,8 @@ function confirmInvoice() {
 
   const productCount = invoiceItems.length;
   const totalQty = invoiceItems.reduce((s, it) => s + it.qty, 0);
-  let msg = `تم تسجيل فاتورة بقيمة DA${totalAmount.toFixed(2)} تشمل ${productCount} منتج (${totalQty} قطعة)`;
-  if (timbreFiscal > 0) msg += ` + طابع جبائي DA${timbreFiscal.toFixed(2)}`;
+  let msg = `تم تسجيل فاتورة بقيمة DA${fmtMoney(totalAmount)} تشمل ${productCount} منتج (${totalQty} قطعة)`;
+  if (timbreFiscal > 0) msg += ` + طابع جبائي DA${fmtMoney(timbreFiscal)}`;
   alert(msg);
 }
 
@@ -462,6 +609,9 @@ function editProduct(id) {
   if (!p) return;
   editingProductId = id;
   document.getElementById('addProductModal').style.display = 'flex';
+  applyExpiryField('prodExpiry');
+  applyFamilyField('prodFamily');
+  if (typeof window.refreshFamilySuggestions === 'function') window.refreshFamilySuggestions();
   document.getElementById('selProdId').value = p.id;
   document.getElementById('selProdBarcodeVal').value = p.barcode;
   document.getElementById('selectedProductInfo').style.display = 'flex';
@@ -471,6 +621,10 @@ function editProduct(id) {
   document.getElementById('prodBuyPrice').value = p.buyPrice;
   document.getElementById('prodSellPrice').value = p.sellPrice;
   document.getElementById('prodWholePrice').value = p.wholesalePrice || 0;
+  const prodExpiryEdit = document.getElementById('prodExpiry');
+  if (prodExpiryEdit) prodExpiryEdit.value = p.expiryDate || '';
+  const prodFamilyEdit = document.getElementById('prodFamily');
+  if (prodFamilyEdit) prodFamilyEdit.value = p.family || '';
   if (p.supplierId) {
     const sup = DB.getSuppliers().find(s => s.id === p.supplierId);
     if (sup) {
@@ -524,7 +678,14 @@ if (window._pageListeners) window._pageListeners.push({ type: 'click', fn: _catP
 // ===== LAN SYNC: re-render product list without closing open modals =====
 window._pageSyncHandlers = window._pageSyncHandlers || {};
 window._pageSyncHandlers['category-products'] = function categoryProductsSyncData() {
-  renderProducts();
-  const input = document.getElementById('prodSearch');
-  if (input && input.value && typeof input.oninput === 'function') input.oninput();
+  window.syncPreserveRefresh({
+    search: ['prodSearch'],
+    render: () => {
+      renderProducts();
+      const input = document.getElementById('prodSearch');
+      if (input && input.value && typeof input.oninput === 'function') input.oninput();
+    },
+  });
 };
+
+window.addEventListener('zmt:buyprice-toggle', function(){ renderProducts(); renderCart(); });

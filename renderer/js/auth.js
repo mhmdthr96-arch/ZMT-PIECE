@@ -49,6 +49,51 @@ const Auth = (() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
   }
 
+  // Patch the persisted session in place. getCurrentUser() re-reads localStorage
+  // and re-parses on EVERY call, so mutating the returned object and never saving
+  // it (the old login flow) silently discarded every companyId/role change. All
+  // cross-page session edits must go through here so the write is guaranteed.
+  function updateSession(patch) {
+    const user = getCurrentUser();
+    if (!user) {
+      // Diagnostic trail: this silent no-op once left an offline manager
+      // login with NO session at all (view-only app, "lost permissions").
+      console.warn('[Auth] updateSession ignored — no active session', Object.keys(patch || {}));
+      return null;
+    }
+    const next = Object.assign({}, user, patch || {});
+    saveUser(next);
+    return next;
+  }
+
+  // Open a session directly from ALREADY-VERIFIED local credentials when the
+  // server lookup (loginWithCode) is unreachable — e.g. a shop machine with no
+  // internet. Without this, an offline manager login ends with no session at
+  // all: getPermissions() then returns {} (not null) so every canEdit() denies
+  // and the whole app renders view-only — reported as "the manager lost all
+  // permissions", persisting across restarts because each boot wipes the
+  // session and repeats the same failing login path.
+  function startLocalSession(user) {
+    if (!user || !user.code) return null;
+    const next = Object.assign({ createdAt: new Date().toISOString() }, user);
+    saveUser(next);
+    try { localStorage.setItem('zmt_store_code', next.code); } catch (e) {}
+    try { localStorage.setItem('zmt_store_type', next.storeType || 'main'); } catch (e) {}
+    if (next.parentCode) {
+      try { localStorage.setItem('zmt_parent_code', next.parentCode); } catch (e) {}
+    }
+    // Keep the localStorage mirror in step with the session — DB._getCompanyId()
+    // treats the two as interchangeable sources of truth.
+    if (next.companyId) {
+      try { localStorage.setItem('zmt_active_company', next.companyId); } catch (e) {}
+    } else {
+      try { localStorage.removeItem('zmt_active_company'); } catch (e) {}
+    }
+    resetBuyVisibility();
+    reportScope('local-session');
+    return next;
+  }
+
   function isLoggedIn() {
     return !!getCurrentUser();
   }
@@ -159,22 +204,62 @@ const Auth = (() => {
       email: store.email || '',
       storeType: 'main',
       parentCode: '',
+      role: 'admin',
       createdAt: store.createdAt,
     };
+    resetBuyVisibility();
     saveUser(user);
     localStorage.setItem('zmt_store_code', user.code);
     localStorage.setItem('zmt_store_type', 'main');
+    // The session above is brand new and carries NO companyId. Drop any stale
+    // active-company key right away: DB._getCompanyId() falls back to this key,
+    // so a leftover value from a previous identity would silently scope the new
+    // session to a foreign company (blank products / missing invoices). The
+    // re-bind below restores it only for the SAME store code.
+    try { localStorage.removeItem('zmt_active_company'); } catch (e) {}
+
+    // Restore the previously entered company for THIS store code. The app keeps
+    // the binding in zmt_remembered_company across restarts (see
+    // requirePasswordOnStart) so a manager no longer has to go to Settings →
+    // "تسجيل الدخول إلى الشركة" every morning to see and edit company data.
+    // Re-binds only when the exact same store code logs in — a different identity
+    // on the same device never inherits a foreign company's scope.
+    try {
+      const recalled = JSON.parse(localStorage.getItem('zmt_remembered_company') || 'null');
+      if (recalled && recalled.code === code && recalled.companyId) {
+        user.companyId = recalled.companyId;
+        user.role = user.role || 'admin';
+        user.enteredCompany = true;
+        saveUser(user);
+        try { localStorage.setItem('zmt_active_company', recalled.companyId); } catch {}
+      }
+    } catch (e) {}
+    reportScope('manager-login');
 
     return user;
   }
 
-  async function loginAsBranch(branchCode) {
+  // After a successful branch login/connection, pull the parent's company list in
+  // the background (without blocking sign-in) so the company picker and any
+  // company-scoped view can show exactly the companies this branch is bound to.
+  function _pullCompaniesInBackground(parentCode) {
+    if (!parentCode) return;
+    try {
+      if (typeof CloudService !== 'undefined') {
+        const fn = CloudService && CloudService.pullCompaniesFromMain;
+        if (typeof fn === 'function') { try { Promise.resolve(fn()).catch(() => {}); } catch (e) {} }
+      }
+    } catch (e) { /* never block login on a company-pull failure */ }
+  }
+
+  async function loginAsBranch(branchCode, companyId) {
     const { ok, data } = await _siteFetch('/api/push-trigger', { action: 'token', mode: 'lookup', code: branchCode });
     if (!ok || !data || !data.found || !data.store || data.store.type !== 'branch') {
       throw new Error('الرمز غير صحيح أو غير موجود');
     }
 
     const s = data.store;
+    const ids = Array.isArray(companyId) ? companyId : (companyId ? [companyId] : []);
     const user = {
       userId: s.code,
       code: s.code,
@@ -183,22 +268,35 @@ const Auth = (() => {
       parentCode: s.parentCode || '',
       branchName: s.storeName,
       createdAt: s.createdAt || new Date().toISOString(),
+      companyId: ids[0] || companyId || '',
+      companyIds: ids,
     };
+    resetBuyVisibility();
     saveUser(user);
     localStorage.setItem('zmt_store_code', user.code);
     localStorage.setItem('zmt_store_type', 'branch');
     localStorage.setItem('zmt_parent_code', user.parentCode);
+    if (user.companyId) {
+      try { localStorage.setItem('zmt_active_company', user.companyId); } catch {}
+    }
+
+    // After a successful branch login, make sure this device holds the parent's
+    // company list so the login/company picker can show only the companies this
+    // branch is bound to. Non-blocking: never delays login and never throws.
+    _pullCompaniesInBackground(user.parentCode);
+    reportScope('branch-login');
 
     return user;
   }
 
-  async function connectAsBranch(mainCode, password) {
+  async function connectAsBranch(mainCode, password, companyId) {
     const { ok, data } = await _siteFetch('/api/push-trigger', { action: 'token', mode: 'authBranch', code: mainCode, password });
     if (!ok || !data || !data.token || !data.store) throw new Error('كلمة المرور غير صحيحة');
 
     _storeCloudToken(data.token, data.expiresAt);
 
     const s = data.store;
+    const ids = Array.isArray(companyId) ? companyId : (companyId ? [companyId] : []);
     const user = {
       userId: s.code,
       code: s.code,
@@ -207,28 +305,67 @@ const Auth = (() => {
       parentCode: mainCode,
       branchName: s.storeName,
       createdAt: s.createdAt || new Date().toISOString(),
+      companyId: ids[0] || companyId || '',
+      companyIds: ids,
     };
+    resetBuyVisibility();
     saveUser(user);
     localStorage.setItem('zmt_store_code', user.code);
     localStorage.setItem('zmt_store_type', 'branch');
     localStorage.setItem('zmt_parent_code', mainCode);
     localStorage.setItem('zmt_store_password', password);
+    if (user.companyId) {
+      try { localStorage.setItem('zmt_active_company', user.companyId); } catch {}
+    }
+
+    _pullCompaniesInBackground(mainCode);
+    reportScope('branch-connect');
 
     return user;
   }
 
   // ===== SIGN OUT =====
   function signOut() {
+    resetBuyVisibility();
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem('zmt_store_code');
     localStorage.removeItem('zmt_store_type');
     localStorage.removeItem('zmt_parent_code');
     localStorage.removeItem('zmt_store_password');
+    // Leaving a company MUST clear the bound company too, otherwise a fresh login
+    // inherits the previous company's scope and can show its data elsewhere.
+    try { localStorage.removeItem('zmt_active_company'); } catch (e) {}
+    try { localStorage.removeItem('zmt_remembered_company'); } catch (e) {}
     try {
       if (typeof CloudService !== 'undefined' && typeof CloudService.clearAccessToken === 'function') {
         CloudService.clearAccessToken();
       }
     } catch (e) {}
+  }
+
+  // Force a fresh login on every app start: clears only the persisted session so
+  // isLoggedIn() returns false at boot and the password screen is always shown,
+  // while keeping store identity (code/type/parent) intact until real sign-in.
+  function requirePasswordOnStart() {
+    // Remember the active company for THIS store code BEFORE wiping the session,
+    // so the next successful login restores the exact data scope in one step.
+    // Otherwise every app start resets to the default/unbound view and edits
+    // saved under a company scope look "reverted" the next day. Re-authentication
+    // is still required: the session itself is cleared and the binding is only
+    // re-applied when the SAME store code logs back in.
+    try {
+      const prev = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+      const code = (prev && (prev.code || prev.userId)) || localStorage.getItem('zmt_store_code') || '';
+      const companyId = (prev && prev.companyId) || localStorage.getItem('zmt_active_company') || '';
+      if (code && companyId) {
+        try { localStorage.setItem('zmt_remembered_company', JSON.stringify({ code, companyId })); } catch (e) {}
+      }
+    } catch (e) {}
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+    // A boot starts with no entered company (session fully cleared). The remembered
+    // company id is re-validated and restored only after a successful login, so no
+    // stale company leaks into the data scope before re-authentication.
+    try { localStorage.removeItem('zmt_active_company'); } catch (e) {}
   }
 
   function isSupabaseConfigured() {
@@ -520,46 +657,62 @@ const Auth = (() => {
     'dashboard': { view: true, edit: false, del: false },
     'sales': { view: true, edit: true, del: false },
     'orders': { view: true, edit: true, del: true },
+    'local-orders': { view: true, edit: false, del: false },
     'invoices': { view: true, edit: true, del: true },
     'customers': { view: true, edit: true, del: true },
+    'employees': { view: true, edit: true, del: true },
     'suppliers': { view: true, edit: true, del: true },
     'brands': { view: true, edit: true, del: true },
     'inventory': { view: true, edit: true, del: true },
+    'expiry': { view: true, edit: true, del: false },
+    'quick-entry': { view: true, edit: true, del: false },
     'supplier-returns': { view: true, edit: true, del: true },
     'debts': { view: true, edit: true, del: true },
     'returns': { view: true, edit: true, del: false },
     'discounts': { view: true, edit: true, del: true },
     'reports': { view: true, edit: false, del: false },
+    'zakat': { view: true, edit: false, del: false },
     'net-account': { view: true, edit: false, del: false },
+    'expenses': { view: true, edit: true, del: false },
     'settings': { view: false, edit: false, del: false },
     'backup': { view: true, edit: true, del: false },
     'connection': { view: false, edit: false, del: false },
     'store-debts': { view: true, edit: true, del: true },
     'branches-monitor': { view: true, edit: false, del: false },
     'shared-inventory': { view: true, edit: false, del: false },
+    'product-details': { view: false, edit: false, del: false },
+    'price-display': { view: false, edit: false, del: false },
   };
 
   const PAGE_NAMES = {
     'dashboard': 'لوحة التحكم',
     'sales': 'المبيعات',
     'orders': 'الطلبات',
+    'local-orders': 'الطلبات المحلية',
     'invoices': 'الفواتير',
     'customers': 'العملاء',
+    'employees': 'الموظفين',
     'suppliers': 'الموردين',
     'brands': 'العلامات التجارية',
     'inventory': 'المخزون',
+    'expiry': 'انتهاء الصلاحية',
+    'quick-entry': 'الإدخال السريع',
     'supplier-returns': 'السلع الفاسدة',
     'debts': 'الديون',
     'returns': 'المرتجعات',
     'discounts': 'التخفيضات',
     'reports': 'التقارير',
+    'zakat': 'الزكاة',
     'net-account': 'صافي الحساب',
+    'expenses': 'المصاريف',
     'settings': 'الاعدادات',
     'backup': 'النسخ الاحتياطي',
     'connection': 'اعدادات الاتصال',
     'store-debts': 'ديون المحلات',
     'branches-monitor': 'مراقبة الفروع',
     'shared-inventory': 'المخزون المشترك',
+    'product-details': 'تفاصيل المنتج',
+    'price-display': 'شاشة عرض السعر',
   };
 
   function _getUsersKey() {
@@ -704,7 +857,22 @@ const Auth = (() => {
     return applied;
   }
 
-  function createUser(username, password, permissions) {
+  // Normalize company assignment. Accepts either a single id or an array and
+  // always returns a de-duplicated array of ids (the source of truth for
+  // "which companies may this employee log into"). Falls back to the current
+  // session's company, then to all companies permitted for this device.
+  function _normalizeUserCompanyIds(companyIds) {
+    let list = [];
+    if (Array.isArray(companyIds)) list = companyIds.slice();
+    else if (typeof companyIds === 'string' && companyIds) list = [companyIds];
+    else if (companyIds && typeof companyIds === 'object' && companyIds.id) list = [companyIds.id];
+    const selfCompany = getCompanyId();
+    if (selfCompany && list.indexOf(selfCompany) === -1) list.push(selfCompany);
+    const seen = {};
+    return list.filter(id => id && !seen[id] && (seen[id] = 1));
+  }
+
+  function createUser(username, password, permissions, companyId) {
     const code = getUserCode();
     if (!code) throw new Error('الرجاء تسجيل الدخول أولاً');
 
@@ -713,6 +881,7 @@ const Auth = (() => {
       throw new Error('اسم المستخدم موجود مسبقاً');
     }
 
+    const companyIds = _normalizeUserCompanyIds(companyId);
     const newUser = {
       id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
       username,
@@ -721,6 +890,8 @@ const Auth = (() => {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       storeCode: code,
+      companyId: companyIds[0] || companyId || getCompanyId(),
+      companyIds: companyIds,
     };
 
     users.push(newUser);
@@ -742,6 +913,15 @@ const Auth = (() => {
     const users = _loadLocalUsers();
     const idx = users.findIndex(u => u.id === userId);
     if (idx === -1) throw new Error('المستخدم غير موجود');
+
+    if (updates && ('companyIds' in updates || 'companyId' in updates)) {
+      const normalized = _normalizeUserCompanyIds(
+        Array.isArray(updates.companyIds) ? updates.companyIds
+          : ('companyId' in updates ? updates.companyId : undefined)
+      );
+      updates.companyIds = normalized;
+      if (!('companyId' in updates)) updates.companyId = normalized[0] || '';
+    }
 
     Object.assign(users[idx], updates, { updatedAt: Date.now() });
     _saveLocalUsers(users);
@@ -767,7 +947,7 @@ const Auth = (() => {
     return _loadLocalUsers();
   }
 
-  function loginAsUser(storeCode, username, password) {
+  function loginAsUser(storeCode, username, password, companyId) {
     if (!storeCode || storeCode.length !== 10) throw new Error('كود المحل غير صحيح');
 
     const usersKey = 'zmt_users_' + storeCode;
@@ -789,6 +969,14 @@ const Auth = (() => {
       if (meta.parentCode) parentCode = meta.parentCode;
     } catch {}
 
+    // Resolve the bound company: explicit selection wins, else the employee's
+    // first authorized company.
+    const allowed = _userAllowedCompanyIds(user, storeCode);
+    let boundCompany = companyId || (allowed.length ? allowed[0] : '');
+    if (allowed.length && boundCompany && allowed.indexOf(boundCompany) === -1) {
+      boundCompany = allowed[0];
+    }
+
     const authUser = {
       userId: user.id,
       code: storeCode,
@@ -798,13 +986,24 @@ const Auth = (() => {
       role: 'user',
       username: user.username,
       permissions: user.permissions,
+      companyId: boundCompany,
+      companyIds: allowed,
       createdAt: user.createdAt,
     };
+    resetBuyVisibility();
     saveUser(authUser);
 
     localStorage.setItem('zmt_store_code', storeCode);
     localStorage.setItem('zmt_store_type', storeType);
     if (parentCode) localStorage.setItem('zmt_parent_code', parentCode);
+    if (authUser.companyId) {
+      try { localStorage.setItem('zmt_active_company', authUser.companyId); } catch {}
+    } else {
+      // No company granted to this employee: clear the key so DB._getCompanyId()
+      // never falls back to a company left behind by a previous session.
+      try { localStorage.removeItem('zmt_active_company'); } catch {}
+    }
+    reportScope('user-login');
 
     return authUser;
   }
@@ -844,6 +1043,262 @@ const Auth = (() => {
   function isManager() {
     const user = getCurrentUser();
     return user && user.role !== 'user';
+  }
+
+  // ===== BUY PRICE VISIBILITY (owner/manager only) =====
+  // سعر الشراء يبدأ ظاهراً للمدير في بداية كل جلسة (الوصول الكامل)، ويمكنه
+  // إخفاءه/إظهاره متى شاء بـ Ctrl+X. الموظفون (role=user) محكومون بالصلاحيات
+  // ولا يتأثرون بهذا المفتاح إطلاقاً — السعر لا يظهر لهم أبداً.
+  let _buyVisible = true;
+
+  function resetBuyVisibility() {
+    _buyVisible = true;
+  }
+
+  function buyPriceVisible() {
+    return isManager() && _buyVisible;
+  }
+
+  function toggleBuyPrice() {
+    _buyVisible = !_buyVisible;
+    return _buyVisible;
+  }
+
+  function getRole() {
+    const user = getCurrentUser();
+    return user ? (user.role || (user.storeType === 'branch' ? 'manager' : 'admin')) : '';
+  }
+
+  // ===== MULTI-COMPANY =====
+  // The active company belongs to the current session. Users can belong to a
+  // company (companyId set) or be run-level admins managing multiple companies.
+  function getCompanyId() {
+    const user = getCurrentUser();
+    return user ? (user.companyId || '') : '';
+  }
+
+  // ===== SCOPE DIAGNOSTICS =====
+  // Writes a small ring-buffer record (localStorage zmt_scope_log / zmt_last_scope)
+  // of the active data scope whenever it changes (boot, login, company enter).
+  // Invisible to the user, zero cost — used only to diagnose "my edit reverted"
+  // reports: the stored row shows which company/store the session was scoped to.
+  function reportScope(tag) {
+    try {
+      const row = {
+        at: new Date().toISOString(),
+        tag: tag || '',
+        cid: getCompanyId(),
+        ls: localStorage.getItem('zmt_active_company') || '',
+        store: getUserCode(),
+        companies: 0,
+      };
+      try {
+        if (typeof DB !== 'undefined' && DB.getCompanies) {
+          row.companies = (DB.getCompanies() || []).length;
+        }
+      } catch (e) {}
+      try {
+        localStorage.setItem('zmt_last_scope', JSON.stringify(row));
+        const arr = JSON.parse(localStorage.getItem('zmt_scope_log') || '[]');
+        arr.push(row);
+        while (arr.length > 12) arr.shift();
+        localStorage.setItem('zmt_scope_log', JSON.stringify(arr));
+      } catch (e) {}
+      console.info('[Scope]', JSON.stringify(row));
+    } catch (e) {}
+  }
+
+  function getCompanyName() {
+    try {
+      if (typeof DB !== 'undefined' && DB.getCompany && getCompanyId()) {
+        const c = DB.getCompany(getCompanyId());
+        if (c && c.name) return c.name;
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  function getActiveCompany() {
+    const id = getCompanyId();
+    if (!id) return null;
+    try {
+      if (typeof DB !== 'undefined' && DB.getCompany) return DB.getCompany(id) || null;
+    } catch (e) {}
+    return { id };
+  }
+
+  // Switch the current session's active company (admin only). Non-admin users
+  // stay locked to their own companyId.
+  function setActiveCompany(companyId) {
+    const user = getCurrentUser();
+    if (!user) return false;
+    if (user.role && user.role !== 'user') {
+      user.companyId = companyId || '';
+      saveUser(user);
+      if (companyId) {
+        try { localStorage.setItem('zmt_active_company', companyId); } catch {}
+      } else {
+        try { localStorage.removeItem('zmt_active_company'); } catch {}
+      }
+      reportScope('set-active-company');
+      return true;
+    }
+    return false;
+  }
+
+  function getDeviceId() {
+    let deviceId = localStorage.getItem('zmt_device_id');
+    if (!deviceId) {
+      deviceId = generateCode() + '-' + Date.now().toString(36);
+      localStorage.setItem('zmt_device_id', deviceId);
+    }
+    return deviceId;
+  }
+
+  // Companies that are allowed for the current device (its store/branch code).
+  // Delegates to DB so the same filtering (incl. global companies) is shared.
+  function getCompaniesForThisDevice() {
+    const code = getUserCode();
+    try {
+      if (typeof DB !== 'undefined' && DB.getCompaniesForStore) {
+        return DB.getCompaniesForStore(code);
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  // Bind an arbitrary company to the current session (used at login time for
+  // cashiers/branches). Unlike setActiveCompany (admin-only), this works for any
+  // session so a logged-in employee is scoped to the selected company.
+  function _bindCompanyToSession(companyId) {
+    const user = getCurrentUser();
+    if (!user) return;
+    user.companyId = companyId || '';
+    saveUser(user);
+    if (companyId) {
+      try { localStorage.setItem('zmt_active_company', companyId); } catch {}
+    } else {
+      try { localStorage.removeItem('zmt_active_company'); } catch {}
+    }
+    reportScope('bind-company');
+  }
+
+  // The companies an employee may log into on THIS device/role/company context:
+  //  - explicit user.companyIds[] (the multi-company assignment made by the
+  //    owner), intersected with the companies authorized for the user's store
+  //    code (so a branch owner cannot expose companies not granted to the branch)
+  //  - fallback: all companies authorized for the user's store code.
+  function _userAllowedCompanyIds(user, storeCode) {
+    const code = storeCode || user.storeCode || getUserCode();
+    const storeCompanies = (typeof DB !== 'undefined' && DB.getCompaniesForStore)
+      ? (function(){ try { return DB.getCompaniesForStore(code); } catch (e) { return []; } })()
+      : [];
+    const storeIds = storeCompanies.map(function (c) { return c.id; });
+    const explicit = Array.isArray(user.companyIds) ? user.companyIds.slice()
+      : (user.companyId ? [user.companyId] : []);
+    if (explicit.length) {
+      return explicit.filter(function (id) { return storeIds.indexOf(id) !== -1; }) || [];
+    }
+    return storeIds;
+  }
+
+  // Public helper for the login screen: full list of companies available to a
+  // given login context, merged with full company objects (for the dropdown).
+  //   - role='owner' / manager: all companies saved on this device
+  //   - role='user': the user's companyIds ∩ store-authorized
+  //   - role='branch'/code: companies authorized for that branch code
+  function getLoginCompaniesForUser(userOrRole, code) {
+    var companies = [];
+    try { companies = (typeof DB !== 'undefined' && DB.getCompanies) ? DB.getCompanies() : []; }
+    catch (e) { companies = []; }
+    if (!companies.length) return [];
+
+    var role = (typeof userOrRole === 'string') ? userOrRole : (userOrRole && userOrRole.role);
+    var srcCode = code || (userOrRole && (userOrRole.storeCode || userOrRole.code)) || getUserCode();
+
+    if (!role || role === 'owner' || role === 'manager' || role === 'admin') {
+      return companies;
+    }
+    if (role === 'branch' || role === 'sub') {
+      return (typeof DB !== 'undefined' && DB.getCompaniesForStore)
+        ? (function(){ try { return DB.getCompaniesForStore(srcCode); } catch (e) { return []; } })()
+        : [];
+    }
+    // employee / cashier
+    var storeCompanies = (typeof DB !== 'undefined' && DB.getCompaniesForStore)
+      ? (function(){ try { return DB.getCompaniesForStore(srcCode); } catch (e) { return []; } })()
+      : [];
+    var storeIds = storeCompanies.map(function (c) { return c.id; });
+    var explicit = Array.isArray(userOrRole.companyIds) ? userOrRole.companyIds.slice()
+      : (userOrRole.companyId ? [userOrRole.companyId] : []);
+    if (explicit.length) {
+      return companies.filter(function (c) { return explicit.indexOf(c.id) !== -1 && storeIds.indexOf(c.id) !== -1; });
+    }
+    return storeCompanies;
+  }
+
+  // ===== COMPANY MANAGER LOGIN =====
+  // Login as the manager of a specific company. Verifies the company's password
+  // (configured in the DB.companies record) then opens a session bound to that
+  // companyId. Requires an existing company password chain.
+  async function _getCompanyPassData(companyId) {
+    try {
+      if (typeof DB !== 'undefined' && DB.getCompany) {
+        const c = DB.getCompany(companyId);
+        if (c && c.passwordHash && c.passwordSalt) {
+          return { hash: c.passwordHash, salt: c.passwordSalt, company: c };
+        }
+        if (c) return { company: c, plain: c.password || '' };
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  async function verifyCompanyPassword(companyId, password) {
+    const data = await _getCompanyPassData(companyId);
+    if (!data) return false;
+    if (data.hash && data.salt) {
+      return await verifyPasswordHash(password, data.hash, data.salt);
+    }
+    return !!data.plain && data.plain === password;
+  }
+
+  // Admin/manager enters a company by code. `password` is the company password
+  // when one is set; otherwise the caller (e.g. an admin) is already authorized.
+  async function enterCompany(companyId, password) {
+    const cid = companyId || '';
+    if (!cid) throw new Error('معرف الشركة غير صحيح');
+    if (password) {
+      const ok = await verifyCompanyPassword(cid, password);
+      if (!ok) throw new Error('كلمة مرور الشركة غير صحيحة');
+    }
+    // Refuse to bind on an empty/foreign session: the previous code did
+    // `getCurrentUser() || {}` and then saved the result, producing a session
+    // record with no userId/code at all (a corrupted identity that then scopes
+    // data through DB._getCompanyId()). Re-authentication is mandatory.
+    const current = getCurrentUser();
+    if (!current || !(current.code || current.userId)) {
+      throw new Error('يجب تسجيل الدخول أولاً قبل اختيار الشركة');
+    }
+    const user = Object.assign({}, current, {
+      companyId: cid,
+      // Preserve the real role. Falling back to 'admin' only when the session
+      // carries no role at all (legacy record) keeps an employee's 'user' role
+      // intact instead of silently widening it.
+      role: current.role || 'admin',
+      enteredCompany: true,
+    });
+    saveUser(user);
+    try { localStorage.setItem('zmt_active_company', cid); } catch {}
+    // Remember the binding for the next boot's loginWithCode (same store code).
+    try {
+      const code = getUserCode();
+      if (code) {
+        localStorage.setItem('zmt_remembered_company', JSON.stringify({ code, companyId: cid }));
+      }
+    } catch (e) {}
+    reportScope('enter-company');
+    return user;
   }
 
   // ===== MIGRATION FROM STORAGE TO DB =====
@@ -976,7 +1431,11 @@ const Auth = (() => {
   // ===== EXPORTS =====
   return {
     getCurrentUser,
+    saveUser,
+    updateSession,
+    startLocalSession,
     isLoggedIn,
+    requirePasswordOnStart,
     getUserId,
     getUserCode,
     getUserEmail,
@@ -1012,6 +1471,20 @@ const Auth = (() => {
     canDelete,
     firstViewablePage,
     isManager,
+    getRole,
+    buyPriceVisible,
+    toggleBuyPrice,
+    resetBuyVisibility,
+    getCompanyId,
+    getCompanyName,
+    getActiveCompany,
+    setActiveCompany,
+    getCompaniesForThisDevice,
+    getLoginCompaniesForUser,
+    getDeviceId,
+    verifyCompanyPassword,
+    enterCompany,
+    reportScope,
     DEFAULT_PAGES,
     PAGE_NAMES,
     hashPassword,

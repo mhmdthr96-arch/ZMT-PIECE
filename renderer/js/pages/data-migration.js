@@ -1088,7 +1088,7 @@ async function importInvoices(role) {
   const articleMap = {};
   for (const r of articleRows) {
     const ref = txt(r['REFERENCE']);
-    if (ref) articleMap[ref] = { name: txt(r['DESIGNATION']), buyPrice: num(r['PRIX_ACHAT']), sellPrice: num(r['PRIX1']) };
+    if (ref) articleMap[ref] = { name: txt(r['DESIGNATION']), buyPrice: num(r['PRIX_ACHAT']), sellPrice: num(r['PRIX1']), mark: txt(r['MARQUE']) };
   }
 
   if (detailRows === null) detailRows = await migrationLoadTableFull(standardDetail);
@@ -1143,6 +1143,7 @@ async function importInvoices(role) {
           name: (a && a.name) || it.barcode,
           barcode: it.barcode,
           brandId: '',
+          mark: (a && a.mark) || '',
           category: '',
           buyPrice: (a && a.buyPrice) || it.price,
           sellPrice: (a && a.sellPrice) || it.price,
@@ -1398,10 +1399,14 @@ async function migrationDoImport() {
         newCustomers[rawCust] = { name: rawCust, phone: '', address: '', discount: 0, photo: '' };
       }
 
+      const rawBrand = rv(row, 'brand');
+      const resolvedBrandId = resolveBrand(rawBrand);
+
       prodMap.set(key, {
         name,
         barcode,
-        brandId: resolveBrand(rv(row, 'brand')),
+        brandId: resolvedBrandId,
+        mark: rv(row, 'mark') || rawBrand,
         category: rv(row, 'category'),
         buyPrice: invoiceMode ? 0 : (rn(row, 'buyPrice') || rn(row, 'unitPrice') || 0),
         sellPrice: invoiceMode ? 0 : (rn(row, 'sellPrice') || rn(row, 'unitPrice') || 0),
@@ -1423,6 +1428,19 @@ async function migrationDoImport() {
       setImportStatus(`المنتجات: ${prodsImported}/${allProds.length}`);
       await new Promise(r => setTimeout(r, 0));
     }
+
+    // Existing products are skipped above — backfill an empty mark from the
+    // source rows so a re-run repairs products imported before mark support.
+    const backfill = [];
+    for (let i = 0; i < total; i++) {
+      const row = rows[i];
+      const srcMark = rv(row, 'mark') || rv(row, 'brand');
+      if (!srcMark) continue;
+      const existing = DB.getProductByBarcode(rv(row, 'barcode') || ('IMP' + String(i + 1).padStart(8, '0')));
+      if (!existing || String(existing.mark || '').trim()) continue;
+      backfill.push({ id: existing.id, changes: { mark: srcMark } });
+    }
+    if (backfill.length) DB.updateProductsBatch(backfill);
 
     // Save new suppliers
     const suppKeys = Object.keys(newSuppliers);
@@ -1725,7 +1743,7 @@ async function createPreImportBackup() {
       if (v === undefined) return null;
       return v;
     }));
-    await window.electronAPI.writeFileBinary(filePath, window._zmtGzipToBase64(clean));
+    await window.electronAPI.writeFileBinary(filePath, window._zmtGzipToBase64Async ? await window._zmtGzipToBase64Async(clean) : window._zmtGzipToBase64(clean));
     return filePath;
   } catch (err) {
     console.warn('[Migration] Pre-import backup failed:', err);
@@ -1771,7 +1789,7 @@ async function importGestionStockInvoices(ctx) {
     const ref = txt(r['REFERENCE_ARTICLE']);
     if (!n || !ref) continue;
     if (!purItems.has(n)) purItems.set(n, []);
-    purItems.get(n).push({ ref, qty: num(r['QUANTITE']) || 1, price: num(r['PRIX_ACHAT']) || num(r['PRIX1']) });
+    purItems.get(n).push({ ref, qty: num(r['QUANTITE']) || 0, price: num(r['PRIX_ACHAT']) || num(r['PRIX1']) });
   }
 
   for (const [n, items] of purItems) {
@@ -1790,10 +1808,10 @@ async function importGestionStockInvoices(ctx) {
     const invData = { type: 'supplier', date: hdr ? hdr.date : Date.now(), items: invItems, totalAmount, extraDiscount: 0, supplierId, note: (t('migration.oldInvoiceNote') || 'فاتورة مستوردة') + ' — ' + n };
     const inv = DB.addInvoice(invData);
     if (hdr && hdr.paid > 0) applyPayment({ amount: hdr.paid, invoiceId: inv.id, supplierId, note: t('migration.oldPaymentNote') || 'مدفوعات مستوردة' });
-    for (const it of invItems) {
-      const p = DB.getProductByBarcode(it.barcode);
-      if (p) DB.updateProduct(p.id, { quantity: (p.quantity || 0) + it.qty });
-    }
+    // Stock is intentionally NOT touched here: the legacy program already keeps
+    // ARTICLES.QUANTITE as a running balance that INCLUDES this invoice, so
+    // replaying it on top double-counted every product (5 -> 10, 2 -> 4, ...).
+    // Invoices are imported for reports/history only.
     if (supplierId) {
       const list = DB.getSuppliers();
       const si = list.findIndex(s => s.id === supplierId);
@@ -1828,7 +1846,7 @@ async function importGestionStockInvoices(ctx) {
     const ref = txt(r['REFERENCE_ARTICLE']);
     if (!n || !ref) continue;
     if (!cliItems.has(n)) cliItems.set(n, []);
-    cliItems.get(n).push({ ref, qty: num(r['QUANTITE']) || 1, price: num(r['PUV']) });
+    cliItems.get(n).push({ ref, qty: num(r['QUANTITE']) || 0, price: num(r['PUV']) });
   }
 
   for (const [n, items] of cliItems) {
@@ -1858,10 +1876,9 @@ async function importGestionStockInvoices(ctx) {
     }, 0);
     const inv = DB.addInvoice(invData);
     if (paid > 0) applyPayment({ amount: paid, invoiceId: inv.id, customerId: customerId || undefined, note: t('migration.oldPaymentNote') || 'مدفوعات مستوردة' });
-    for (const it of invItems) {
-      const p = DB.getProductByBarcode(it.barcode);
-      if (p) DB.updateProduct(p.id, { quantity: Math.max(0, (p.quantity || 0) - it.qty) });
-    }
+    // Stock untouched — see the purchase-invoice note above. This also removes
+    // the old Math.max(0, ...) clamp that zeroed 615 products with positive
+    // legacy stock.
     if (customerId) {
       const list = DB.getCustomers();
       const ci = list.findIndex(c => c.id === customerId);
@@ -1894,7 +1911,7 @@ async function importGestionStockInvoices(ctx) {
     const ref = txt(r['REFERENCE_ARTICLE']);
     if (!n || !ref) continue;
     if (!avoirItems.has(n)) avoirItems.set(n, []);
-    avoirItems.get(n).push({ ref, qty: num(r['QUANTITE']) || num(r['NBR']) || 1, price: num(r['PUV']) });
+    avoirItems.get(n).push({ ref, qty: num(r['QUANTITE']) || num(r['NBR']) || 0, price: num(r['PUV']) });
   }
 
   const returnsList = DB.getReturns();
@@ -1917,7 +1934,7 @@ async function importGestionStockInvoices(ctx) {
         reason: (t('migration.avoirReason') || 'مرتجع (Avoir)') + ' — ' + n,
         totalAmount: it.qty * it.price,
       });
-      DB.updateProduct(p.id, { quantity: (p.quantity || 0) + it.qty });
+      // Stock untouched — ARTICLES.QUANTITE already nets these returns.
       results.returns++;
     }
     if (customerId && hdr && hdr.total > 0) {
@@ -2042,14 +2059,16 @@ async function importGestionStockFull(selectedBrands) {
   const clientRows = await load('CLIENT');
   const existingCust = new Set(DB.getCustomers().map(c => norm(c.name)));
   const custCodeToId = {};
-  const importedCustMaster = new Map();
+  const creditByCustCode = {};
   for (const r of clientRows) {
     const name = txt(r['NOM_CLIENT']);
     if (!name || /vente\s*a\s*comptoir|a\s*comptoir/i.test(name)) continue;
     const key = norm(name);
+    const code = txt(r['CODE_CLIENT']);
+    creditByCustCode[code] = num(r['CREDIT_CLIENT']);
     if (existingCust.has(key)) {
       const ex = DB.getCustomers().find(c => norm(c.name) === key);
-      if (ex) custCodeToId[txt(r['CODE_CLIENT'])] = ex.id;
+      if (ex) custCodeToId[code] = ex.id;
       continue;
     }
     const c = DB.addCustomer({
@@ -2059,9 +2078,12 @@ async function importGestionStockFull(selectedBrands) {
       discount: 0,
     });
     c.balance = num(r['CREDIT_INITIAL']) || 0;
-    importedCustMaster.set(c.id, num(r['CREDIT_CLIENT']));
-    custCodeToId[txt(r['CODE_CLIENT'])] = c.id;
+    custCodeToId[code] = c.id;
     results.customers++;
+  }
+  if (results.customers > 0) {
+    // Persist balances of newly imported customers even when they have no invoices.
+    DB.saveCustomers(DB.getCustomers());
   }
   migrationUpdateStatus((t('migration.roleCustomers') || 'العملاء') + ': ' + results.customers, 'info');
   await new Promise(r => setTimeout(r, 0));
@@ -2071,13 +2093,19 @@ async function importGestionStockFull(selectedBrands) {
   const fourRows = await load('FOURNISSEUR');
   const existingSup = new Set(DB.getSuppliers().map(s => norm(s.name)));
   const supCodeToId = {};
+  const creditBySupCode = {};
   const newSuppliers = [];
-  const importedSupMaster = new Map();
   for (const r of fourRows) {
     const name = txt(r['NOM_FOURNISSEUR']);
     if (!name) continue;
     const key = norm(name);
-    if (existingSup.has(key)) continue;
+    const code = txt(r['CODE_FOURNISSEUR']);
+    creditBySupCode[code] = num(r['CREDIT_FOURNISSEUR']);
+    if (existingSup.has(key)) {
+      const ex = DB.getSuppliers().find(s => norm(s.name) === key);
+      if (ex) supCodeToId[code] = ex.id;
+      continue;
+    }
     const s = {
       id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
       name: name.trim(),
@@ -2085,9 +2113,8 @@ async function importGestionStockFull(selectedBrands) {
       address: txt(r['ADRESSE']) || txt(r['VILLE']),
       balance: num(r['CREDIT_INITIAL']) || 0,
     };
-    importedSupMaster.set(s.id, num(r['CREDIT_FOURNISSEUR']));
     newSuppliers.push(s);
-    supCodeToId[txt(r['CODE_FOURNISSEUR'])] = s.id;
+    supCodeToId[code] = s.id;
   }
   if (newSuppliers.length) {
     const all = DB.getSuppliers();
@@ -2117,6 +2144,8 @@ async function importGestionStockFull(selectedBrands) {
       name: designation,
       barcode,
       brandId: resolveBrand(marque),
+      mark: marque,
+      reference: ref,
       category: '',
       buyPrice: num(r['PRIX_ACHAT']),
       sellPrice: num(r[sellCol]) || num(r['PRIX2']),
@@ -2140,9 +2169,33 @@ async function importGestionStockFull(selectedBrands) {
     migrationUpdateStatus((t('migration.productsNone') || 'لم يتم استيراد أي منتج (تأكد من تحديد العلامات)'), 'warning');
   }
 
+  // Backfill: products imported before the `mark` field existed are kept
+  // (the loop above skips duplicates), so fill their empty mark/reference.
+  const markBackfill = [];
+  for (const r of articleRows) {
+    const marque = txt(r['MARQUE']);
+    if (!marque) continue;
+    if (keepMarques && !keepMarques.has(marque)) continue;
+    const ref = txt(r['REFERENCE']);
+    const bar = txt(r['CODE_BAR']) || ref;
+    if (!ref && !bar) continue;
+    const existing = DB.getProductByBarcode(bar || ('REF-' + ref));
+    if (!existing) continue;
+    const changes = {};
+    if (!String(existing.mark || '').trim()) changes.mark = marque;
+    if (!String(existing.reference || '').trim() && ref) changes.reference = ref;
+    if (Object.keys(changes).length) markBackfill.push({ id: existing.id, changes });
+  }
+  if (markBackfill.length) {
+    DB.updateProductsBatch(markBackfill);
+    migrationUpdateStatus((t('migration.roleProducts') || 'المنتجات') + ': ' + (t('migration.markBackfilled') || 'تم استرجاع المارك') + ' — ' + markBackfill.length, 'info');
+    await new Promise(r => setTimeout(r, 0));
+  }
+
   // Maps for invoice import
   const prodByRef = {};
   const prodByBar = {};
+  const marqueByRef = {};
   for (const p of productsCreated) {
     if (p.barcode) prodByBar[p.barcode] = p;
   }
@@ -2151,6 +2204,7 @@ async function importGestionStockFull(selectedBrands) {
     if (keepMarques && marque && !keepMarques.has(marque)) continue;
     const ref = txt(r['REFERENCE']);
     const bar = txt(r['CODE_BAR']) || ref;
+    if (ref && marque && !marqueByRef[ref]) marqueByRef[ref] = marque;
     const found = prodByBar[bar || ('REF-' + ref)];
     if (found && ref) prodByRef[ref] = found;
   }
@@ -2162,17 +2216,19 @@ async function importGestionStockFull(selectedBrands) {
     if (existing) return existing;
     if (prodByBar[bc]) return prodByBar[bc];
     if (ref && prodByRef[ref]) return prodByRef[ref];
+    const fallbackMarque = (ref && marqueByRef[ref]) || '';
     const created = await DB.addProductsBatch([{
       name: name || ref || bc,
       barcode: bc,
       brandId: '',
+      mark: fallbackMarque,
       category: '',
       buyPrice: 0,
       sellPrice: price || 0,
       wholesalePrice: 0,
       quantity: 0,
       supplierId: '',
-      notes: 'Sable',
+      notes: fallbackMarque ? 'Sable: ' + fallbackMarque : 'Sable',
     }]);
     const p = created[0];
     if (p) { prodByBar[bc] = p; if (ref) prodByRef[ref] = p; }
@@ -2181,22 +2237,81 @@ async function importGestionStockFull(selectedBrands) {
 
   try {
     await importGestionStockInvoices({ dbPath, options, load, num, txt, parseDate, custCodeToId, supCodeToId, prodByRef, prodByBar, ensureProduct, results, migrationUpdateStatus, setImportStatus, t });
-    // Enforce the legacy master credit (CREDIT_CLIENT / CREDIT_FOURNISSEUR) as the
-    // authoritative final balance for every newly imported party, including zero
-    // balances, so transaction-derived residuals never inflate the debts.
+    // Enforce the legacy master credit (CREDIT_CLIENT / CREDIT_FOURNISSEUR) as
+    // the authoritative final balance for every party listed in the legacy
+    // database — including already-existing parties and zero balances — so
+    // transaction-derived residuals never inflate the debts. Hybrid parties
+    // (the same economic person recorded BOTH as a client and as a supplier,
+    // e.g. TAYEB NISSAN or BEN AMAR CHAKER/BEN AMAR ACHRAF) are then corrected
+    // to their TRUE NET balance so a single party never carries two phantom
+    // mirror amounts: client record = NET, supplier record = −NET.
     const custs = DB.getCustomers();
     let custChanged = false;
     for (const c of custs) {
-      const mc = importedCustMaster.get(c.id);
-      if (mc !== undefined) { c.balance = mc; custChanged = true; }
+      const mc = creditByCustCode[Object.keys(custCodeToId).find(k => custCodeToId[k] === c.id)];
+      if (mc !== undefined) { c.balance = mc === null || isNaN(mc) ? (parseFloat(c.balance) || 0) : mc; custChanged = true; }
     }
-    if (custChanged) DB.saveCustomers(custs);
     const sups = DB.getSuppliers();
     let supChanged = false;
     for (const s of sups) {
-      const mc = importedSupMaster.get(s.id);
-      if (mc !== undefined) { s.balance = mc; supChanged = true; }
+      const mc = creditBySupCode[Object.keys(supCodeToId).find(k => supCodeToId[k] === s.id)];
+      if (mc !== undefined) { s.balance = mc === null || isNaN(mc) ? (parseFloat(s.balance) || 0) : mc; supChanged = true; }
     }
+    // True "double-role" parties: the SAME person recorded once as a client and
+    // once as a supplier (identical normalized name) with REAL activity on both
+    // sides (sales/purchases/payments). The legacy program classified such a
+    // person as a SUPPLIER trading both ways, so its two stored records carry the
+    // same business and the correct balance is the NET (client credit − supplier
+    // credit): client record = NET, supplier record = −NET. All other parties keep
+    // their OWN stored legacy figure from the step above.
+    const fcRows = await load('FACTURE_CLIENT');
+    const vcRows = await load('VERSEMENT_CLIENT');
+    const ffRows = await load('FACTURE_FOURNISSEUR');
+    const vfRows = await load('VERSEMENT_FOURNISSEUR');
+    const codeSetOf = (rows, key) => { const s = new Set(); for (const r of rows) s.add(txt(r[key])); return s; };
+    const fcSet = codeSetOf(fcRows, 'CODE_CLIENT');
+    const vcSet = codeSetOf(vcRows, 'CODE_CLIENT');
+    const ffSet = codeSetOf(ffRows, 'CODE_FOURNISSEUR');
+    const vfSet = codeSetOf(vfRows, 'CODE_FOURNISSEUR');
+    const netPairs = _detectTrueDoubles(clientRows, fourRows, fcSet, vcSet, ffSet, vfSet);
+    for (const pair of CONFIRMED_DOUBLE_CODES) {
+      const cRow = clientRows.find(r => txt(r['CODE_CLIENT']) === pair[0]);
+      const fRow = fourRows.find(r => txt(r['CODE_FOURNISSEUR']) === pair[1]);
+      if (!cRow || !fRow || netPairs.some(d => d.cCode === pair[0] && d.fCode === pair[1])) continue;
+      netPairs.push({
+        cCode: pair[0], fCode: pair[1],
+        cName: txt(cRow['NOM_CLIENT']), fName: txt(fRow['NOM_FOURNISSEUR']),
+        basis: 'confirmed',
+        creditClient: num(cRow['CREDIT_CLIENT']),
+        creditFournisseur: num(fRow['CREDIT_FOURNISSEUR']),
+        net: num(cRow['CREDIT_CLIENT']) - num(fRow['CREDIT_FOURNISSEUR']),
+      });
+    }
+    for (const d of netPairs) {
+      const cId = custCodeToId[d.cCode];
+      const sId = supCodeToId[d.fCode];
+      if (cId) {
+        const c = custs.find(x => x.id === cId);
+        if (c) { c.balance = d.net; custChanged = true; }
+      }
+      if (sId) {
+        const s = sups.find(x => x.id === sId);
+        if (s) { s.balance = -d.net; supChanged = true; }
+      }
+    }
+    // Confirmed manual corrections: legacy records whose stored figure does not
+    // reflect the real debt and carry NO backing transactions. BEN ABDALLAH
+    // OUSSAMA (supplier 11, initial-only 199,300 with zero purchases/payments):
+    // the person's real debt is 9,500 and lives on CLIENT 164, so the phantom
+    // supplier figure is cleared to zero.
+    const zeroSupCodes = ['11'];
+    for (const code of zeroSupCodes) {
+      const sId = supCodeToId[code];
+      if (!sId) continue;
+      const s = sups.find(x => x.id === sId);
+      if (s && Math.abs(parseFloat(s.balance) || 0) >= 0.005) { s.balance = 0; supChanged = true; }
+    }
+    if (custChanged) DB.saveCustomers(custs);
     if (supChanged) DB.saveSuppliers(sups);
   } finally {
     if (DB && DB.suppressAutoBackup) DB.suppressAutoBackup(false);
@@ -2208,4 +2323,740 @@ async function importGestionStockFull(selectedBrands) {
       `${results.suppliers} ${t('migration.roleSuppliers') || 'مورد'} • ${results.saleInvoices} ${t('migration.roleSalesInvoices') || 'فاتورة بيع'} • ` +
       `${results.buyInvoices} ${t('migration.rolePurchaseInvoices') || 'فاتورة شراء'} • ${results.returns} ${t('migration.returnsCount') || 'مرتجع'}`, 'success');
   }
+}
+
+/* ===== Balance Sync Tool: مزامنة أرصدة العملاء والموردين من STOCK.FDB ===== */
+
+const _syncNum = (v) => {
+  if (v === null || v === undefined || v === '') return 0;
+  const n = Number(v);
+  return isNaN(n) ? 0 : n;
+};
+
+const _syncLoadTableAll = async (dbPath, tbl, options) => {
+  const colsRes = await window.electronAPI.firebirdColumns(dbPath, tbl, options);
+  if (!colsRes.success || !colsRes.data || !colsRes.data.length) return null;
+  const cols = colsRes.data.map(c => c.name);
+  const cntRes = await window.electronAPI.firebirdCount(dbPath, tbl, options);
+  const total = cntRes.success ? (cntRes.data || 0) : -1;
+  if (total < 0) return null;
+  if (total === 0) return [];
+  const q = await window.electronAPI.firebirdQuery(dbPath, tbl, cols, 0, total, options);
+  return q.success ? (q.data || []) : null;
+};
+
+const _syncAmountOf = (row, preferred) => {
+  for (const p of preferred) {
+    if (row[p] !== undefined && row[p] !== null && row[p] !== '') return _syncNum(row[p]);
+  }
+  const keys = Object.keys(row || {});
+  const cand = keys.filter(k => /montant|versement|credit|paiement/i.test(k) && !/date|n_|_n\b|code|id$/i.test(k));
+  for (const k of cand) {
+    if (row[k] !== undefined && row[k] !== null && row[k] !== '') return _syncNum(row[k]);
+  }
+  return 0;
+};
+
+const _genPartyId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+
+// Build "hybrid" parties — economic parties recorded in BOTH legacy master
+// tables (CLIENT and FOURNISSEUR) because the business buys from them AND
+// sells to them AND settles cash both ways. Storing the CREDIT side of each
+// table separately leaves two mirror balances for one party (e.g. TAYEB NISSAN
+// shows 537,200 in both, so the TRUTH is 0). The real balance is the NET:
+//   NET = CLIENT.CREDIT_CLIENT − FOURNISSEUR.CREDIT_FOURNISSEUR
+//   client record balance = NET          (positive ⇒ he owes us)
+//   supplier record balance = −NET       (positive ⇒ we owe him)
+// Pairing precedence keeps every legacy code in exactly one pair:
+//   1) official linkage  : CLIENT_FOURNISSEUR table rows, then CODE_CF columns
+//      (a client row references its supplier counterpart and vice-versa),
+//   2) identical names   : same normalized name in both tables (e.g.
+//      BEN AMARA SADOK 93/15, MAJOURI BACHIR 6/3) that qualify as one party.
+// Ambiguous overlaps (official link vs same name on another code) stay in the
+// per-party table for manual review rather than being double-counted.
+function _buildHybridPairs(clientRows, fourRows, linkRows) {
+  const norm = s => String(s || '').trim().toLowerCase();
+  const skipComp = s => /vente\s*a\s*comptoir|a\s*comptoir/i.test(s || '');
+  const clByCode = {};
+  const frByCode = {};
+  for (const r of (clientRows || [])) clByCode[String(r.CODE_CLIENT || '').trim()] = r;
+  for (const r of (fourRows || [])) frByCode[String(r.CODE_FOURNISSEUR || '').trim()] = r;
+  const usedC = new Set();
+  const usedF = new Set();
+  const pairs = [];
+  const addPair = (cRow, fRow, basis) => {
+    if (!cRow || !fRow) return;
+    const cc = String(cRow.CODE_CLIENT || '').trim();
+    const fc = String(fRow.CODE_FOURNISSEUR || '').trim();
+    if (!cc || !fc || usedC.has(cc) || usedF.has(fc)) return;
+    const cName = String(cRow.NOM_CLIENT || '').trim();
+    const fName = String(fRow.NOM_FOURNISSEUR || '').trim();
+    if (!cName || !fName || skipComp(cName) || skipComp(fName)) return;
+    const creditClient = _syncNum(cRow.CREDIT_CLIENT);
+    const creditFournisseur = _syncNum(fRow.CREDIT_FOURNISSEUR);
+    pairs.push({
+      cCode: cc, fCode: fc, cName, fName, basis,
+      creditClient, creditFournisseur,
+      net: creditClient - creditFournisseur,
+    });
+    usedC.add(cc);
+    usedF.add(fc);
+  };
+  // 1a) official linkage from the CLIENT_FOURNISSEUR join table
+  for (const r of (linkRows || [])) {
+    const cc = String(r.CODE_CLIENT || '').trim();
+    const fc = String(r.CODE_FOURNISSEUR || '').trim();
+    if (cc && fc) addPair(clByCode[cc], frByCode[fc], 'cf');
+  }
+  // 1b) CODE_CF columns (covers pairs newer than the join table)
+  for (const r of (clientRows || [])) {
+    const fc = String(r.CODE_CF || '').trim();
+    if (fc && fc !== '-1') addPair(r, frByCode[fc], 'cf');
+  }
+  for (const r of (fourRows || [])) {
+    const cc = String(r.CODE_CF || '').trim();
+    if (cc && cc !== '-1') addPair(clByCode[cc], r, 'cf');
+  }
+  // 2) same normalized name in both tables
+  const clByName = {};
+  for (const r of (clientRows || [])) {
+    const key = norm(r.NOM_CLIENT);
+    if (key && !clByName[key]) clByName[key] = r;
+  }
+  for (const r of (fourRows || [])) {
+    const key = norm(r.NOM_FOURNISSEUR);
+    if (key && clByName[key]) addPair(clByName[key], r, 'name');
+  }
+  return pairs;
+}
+
+// Pairs the user has explicitly confirmed as ONE and the same person recorded
+// twice (even though the given names differ slightly, e.g. CHAKER / ACHRAF).
+const CONFIRMED_DOUBLE_CODES = [
+  ['31', '61'], // BEN AMAR CHAKER (client) ⇄ BEN AMAR ACHRAF (supplier)
+];
+
+// True double-role parties: the SAME normalized name appears in BOTH the CLIENT
+// and FOURNISSEUR tables AND both records have real activity (a sale invoice or
+// receipt on the client side; a purchase invoice or payment on the supplier
+// side). The legacy program classified such a person as a SUPPLIER trading both
+// ways, so the two stored records carry the same business and must NET together:
+// client record = NET, supplier record = −NET. Every other party is independent.
+function _detectTrueDoubles(clientRows, fourRows, fcCodes, vcCodes, ffCodes, vfCodes) {
+  const norm = s => String(s || '').trim().toLowerCase();
+  const clByName = {};
+  for (const r of (clientRows || [])) {
+    const key = norm(r.NOM_CLIENT);
+    if (key && !clByName[key]) clByName[key] = r;
+  }
+  const usedF = new Set();
+  const pairs = [];
+  for (const r of (fourRows || [])) {
+    const fCode = String(r.CODE_FOURNISSEUR || '').trim();
+    if (!fCode || usedF.has(fCode)) continue;
+    const cRow = clByName[norm(r.NOM_FOURNISSEUR)];
+    if (!cRow) continue;
+    const cCode = String(cRow.CODE_CLIENT || '').trim();
+    if (!cCode) continue;
+    const actC = (fcCodes && fcCodes.has(cCode)) || (vcCodes && vcCodes.has(cCode));
+    const actF = (ffCodes && ffCodes.has(fCode)) || (vfCodes && vfCodes.has(fCode));
+    if (!actC || !actF) continue;
+    const creditClient = _syncNum(cRow.CREDIT_CLIENT);
+    const creditFournisseur = _syncNum(r.CREDIT_FOURNISSEUR);
+    pairs.push({
+      cCode, fCode,
+      cName: String(cRow.NOM_CLIENT || '').trim(),
+      fName: String(r.NOM_FOURNISSEUR || '').trim(),
+      basis: 'double',
+      creditClient, creditFournisseur,
+      net: creditClient - creditFournisseur,
+    });
+    usedF.add(fCode);
+  }
+  return pairs;
+}
+
+const _getSyncFirebirdDb = async () => {
+  const st = _migrationState || {};
+  if (st.firebird && st.firebird.dbPath) {
+    return { dbPath: st.firebird.dbPath, options: (st.firebird.options || { charset: 'WIN1252' }) };
+  }
+  const result = await window.electronAPI.openFile({
+    filters: [{ name: 'Firebird', extensions: ['fdb', 'fbk'] }],
+    properties: ['openFile'],
+  });
+  if (result.canceled || !result.filePaths || !result.filePaths.length) return null;
+  const src = result.filePaths[0];
+  const opts = { charset: 'WIN1252' };
+  try {
+    const ext = String(src).split('.').pop().toLowerCase();
+    let openPath = src;
+    if (ext === 'fbk') {
+      const res = await window.electronAPI.firebirdRestore(src, opts);
+      if (!res.success) throw new Error(res.error);
+      openPath = res.data.path;
+    }
+    const det = await window.electronAPI.firebirdDetect(openPath, opts);
+    if (!det.success) throw new Error(det.error);
+    await window.electronAPI.firebirdTables(openPath, opts);
+    _migrationState.firebird = { dbPath: openPath, sourcePath: src, isBackup: ext === 'fbk', options: opts, ods: det.data.odsVersion + '.' + det.data.odsMinor };
+    return { dbPath: openPath, options: opts };
+  } catch (err) {
+    alert((t('balanceTools.parseErr') || 'تعذر قراءة قاعدة البيانات القديمة') + ': ' + err.message);
+    return null;
+  }
+};
+
+window.startBalanceSyncFromGestion = async function () {
+  if (!window._zmtCanEditBalance('debts')) {
+    alert(t('balanceTools.cantEdit') || 'لا تملك صلاحية تعديل العملاء/الموردين');
+    return;
+  }
+  const fb = await _getSyncFirebirdDb();
+  if (!fb) return;
+  const { dbPath, options } = fb;
+  const norm = s => String(s || '').trim().toLowerCase();
+  const skipName = s => /vente\s*a\s*comptoir|a\s*comptoir/i.test(s || '');
+  const customers = DB.getCustomers();
+  const suppliers = DB.getSuppliers();
+
+  try {
+    migrationUpdateStatus((t('balanceTools.syncTitle') || 'قراءة الأرشيف...') + '...', 'info');
+
+    const cAgg = {};
+    const fAgg = {};
+    const fc = await _syncLoadTableAll(dbPath, 'FACTURE_CLIENT', options);
+    if (fc) for (const r of fc) {
+      const code = String(r['CODE_CLIENT'] || '').trim();
+      if (!code) continue;
+      const a = cAgg[code] || (cAgg[code] = { pay: 0, tot: 0 });
+      a.tot += _syncNum(r['MONTANT_TTC']) - _syncNum(r['REMISE']);
+      a.pay += _syncNum(r['VERSEMENT']);
+    }
+    const vc = await _syncLoadTableAll(dbPath, 'VERSEMENT_CLIENT', options);
+    if (vc) for (const r of vc) {
+      const code = String(r['CODE_CLIENT'] || '').trim();
+      if (!code) continue;
+      const a = cAgg[code] || (cAgg[code] = { pay: 0, tot: 0 });
+      a.pay += _syncAmountOf(r, ['MONTANT', 'MONTANT_VERSEMENT', 'VERSEMENT']);
+    }
+    const ff = await _syncLoadTableAll(dbPath, 'FACTURE_FOURNISSEUR', options);
+    if (ff) for (const r of ff) {
+      const code = String(r['CODE_FOURNISSEUR'] || '').trim();
+      if (!code) continue;
+      const a = fAgg[code] || (fAgg[code] = { pay: 0, tot: 0 });
+      a.tot += _syncNum(r['MONTANT_TTC']) - _syncNum(r['REMISE']);
+      a.pay += _syncNum(r['VERSEMENT']);
+    }
+    const vf = await _syncLoadTableAll(dbPath, 'VERSEMENT_FOURNISSEUR', options);
+    if (vf) for (const r of vf) {
+      const code = String(r['CODE_FOURNISSEUR'] || '').trim();
+      if (!code) continue;
+      const a = fAgg[code] || (fAgg[code] = { pay: 0, tot: 0 });
+      a.pay += _syncAmountOf(r, ['MONTANT', 'MONTANT_VERSEMENT', 'VERSEMENT']);
+    }
+
+    const rows = [];
+    const clientRows = await _syncLoadTableAll(dbPath, 'CLIENT', options);
+    if (clientRows) for (const r of clientRows) {
+      const name = String(r['NOM_CLIENT'] || '').trim();
+      if (!name || skipName(name)) continue;
+      const code = String(r['CODE_CLIENT'] || '').trim();
+      const rawStored = r['CREDIT_CLIENT'];
+      const stored = (rawStored !== undefined && rawStored !== null && rawStored !== '') ? _syncNum(rawStored) : null;
+      const agg = cAgg[code] || { pay: 0, tot: 0 };
+      const computed = _syncNum(r['CREDIT_INITIAL']) + agg.tot - agg.pay;
+      const cust = customers.find(c => norm(c.name) === norm(name));
+      rows.push({ type: 'customer', name, code, id: cust ? cust.id : null, found: !!cust, current: cust ? (parseFloat(cust.balance) || 0) : null, stored, computed, checked: true });
+    }
+    const supRows = await _syncLoadTableAll(dbPath, 'FOURNISSEUR', options);
+    if (supRows) for (const r of supRows) {
+      const name = String(r['NOM_FOURNISSEUR'] || '').trim();
+      if (!name) continue;
+      const code = String(r['CODE_FOURNISSEUR'] || '').trim();
+      const rawStored = r['CREDIT_FOURNISSEUR'];
+      const stored = (rawStored !== undefined && rawStored !== null && rawStored !== '') ? _syncNum(rawStored) : null;
+      const agg = fAgg[code] || { pay: 0, tot: 0 };
+      const computed = _syncNum(r['CREDIT_INITIAL']) + agg.tot - agg.pay;
+      const sup = suppliers.find(s => norm(s.name) === norm(name));
+      rows.push({ type: 'supplier', name, code, id: sup ? sup.id : null, found: !!sup, current: sup ? (parseFloat(sup.balance) || 0) : null, stored, computed, checked: true });
+    }
+
+    // Hybrid parties (client ⇄ supplier) recorded on BOTH sides of the legacy
+    // program: the true balance is the NET of the two ledgers, and each side of
+    // the pair is written with the sign that matches its own role in the app.
+    const linkRows = await _syncLoadTableAll(dbPath, 'CLIENT_FOURNISSEUR', options);
+    const rawPairs = _buildHybridPairs(clientRows || [], supRows || [], linkRows);
+    const codeSetOf = (rows, key) => { const s = new Set(); for (const r of rows) s.add(String(r[key] || '').trim()); return s; };
+    const fcSet = codeSetOf(fc || [], 'CODE_CLIENT');
+    const vcSet = codeSetOf(vc || [], 'CODE_CLIENT');
+    const ffSet = codeSetOf(ff || [], 'CODE_FOURNISSEUR');
+    const vfSet = codeSetOf(vf || [], 'CODE_FOURNISSEUR');
+    const trueKeys = new Set();
+    for (const d of _detectTrueDoubles(clientRows || [], supRows || [], fcSet, vcSet, ffSet, vfSet)) trueKeys.add(d.cCode + '|' + d.fCode);
+    for (const pair of CONFIRMED_DOUBLE_CODES) trueKeys.add(pair[0] + '|' + pair[1]);
+    const hybrid = rawPairs.map(p => {
+      const cust = customers.find(c => norm(c.name) === norm(p.cName));
+      const sup = suppliers.find(s => norm(s.name) === norm(p.fName));
+      return {
+        ...p,
+        custId: cust ? cust.id : null,
+        custFound: !!cust,
+        custCur: cust ? (parseFloat(cust.balance) || 0) : null,
+        supId: sup ? sup.id : null,
+        supFound: !!sup,
+        supCur: sup ? (parseFloat(sup.balance) || 0) : null,
+        double: trueKeys.has(p.cCode + '|' + p.fCode),
+        checked: true,
+      };
+    });
+
+    migrationUpdateStatus('', '');
+    _renderSyncModal(rows, hybrid);
+
+  } catch (err) {
+    console.error('[SyncBalances]', err);
+    migrationUpdateStatus('', '');
+    alert((t('balanceTools.parseErr') || 'تعذر قراءة قاعدة البيانات القديمة') + ': ' + err.message);
+  }
+};
+
+function _renderSyncModal(rows, hybrid) {
+  const old = document.getElementById('zmtSyncModal');
+  if (old) old.remove();
+  rows = rows || [];
+  hybrid = hybrid || [];
+  const normR = s => String(s || '').trim().toLowerCase();
+  const money = (v) => { const n = Number(v) || 0; return fmtMoney(Math.abs(n)) + (n < 0 ? ' −' : n > 0 ? ' +' : ''); };
+  const amountColor = (v) => v < 0 ? '#28a745' : v > 0 ? '#e65100' : 'var(--silver-500,#999)';
+  const grayText = 'var(--silver-500,#999)';
+
+  // Parties that belong to a hybrid (double-role) pair are governed by the NET
+  // section below, so hide their individual rows from the stored/computed table.
+  const hc = new Set(hybrid.map(p => p.cCode));
+  const hf = new Set(hybrid.map(p => p.fCode));
+  const single = rows.filter(r => !r.code || !((r.type === 'customer' && hc.has(r.code)) || (r.type === 'supplier' && hf.has(r.code))));
+  const total = single.length;
+  const changed = single.filter(r => r.found && r.stored !== null && Math.abs(r.stored - r.current) > 0.005).length;
+  const confirmedCount = hybrid.filter(p => p.double).length;
+
+  const rowHtml = single.map((r, i) => {
+    const showStored = r.stored !== null ? money(r.stored) : '--';
+    const showComp = money(r.computed);
+    const showCur = r.found ? money(r.current) : '--';
+    const match = r.found
+      ? '<label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" class="zmt-sync-row" data-idx="' + i + '" checked> <span>' + (t('balanceTools.applyLabel') || 'تطبيق') + '</span></label>'
+      : '<span style="font-size:10px;color:#e65100">' + (t('balanceTools.notMatched') || 'لم تُطابق') + '</span>';
+    return '<tr style="' + (r.found ? '' : 'opacity:.45') + '">' +
+      '<td style="font-size:11px;white-space:nowrap;color:' + grayText + '">' + (r.type === 'customer' ? (t('tab.customers') || 'عميل') : (t('tab.suppliers') || 'مورد')) + '</td>' +
+      '<td style="font-weight:700">' + escHtml(r.name) + (r.code ? '<span style="font-size:10px;color:' + grayText + '"> #' + escHtml(r.code) + '</span>' : '') + '</td>' +
+      '<td style="text-align:right;color:' + (r.found ? amountColor(r.current) : grayText) + '">' + showCur + '</td>' +
+      '<td style="text-align:right">' + showStored + '</td>' +
+      '<td style="text-align:right;color:var(--silver-600,#666)">' + showComp + '</td>' +
+      '<td style="text-align:center">' + match + '</td>' +
+    '</tr>';
+  }).join('');
+
+  const partyCell = (name, found, cur) => found
+    ? '<div style="font-weight:700">' + escHtml(name) + '</div>' +
+      '<div style="font-size:10px;color:' + amountColor(cur) + '">' + money(cur) + '</div>'
+    : '<div style="font-weight:700">' + escHtml(name) + '</div>' +
+      '<div style="font-size:10px;color:#e65100">' + (t('balanceTools.hybridCreate') || 'يُستحدث') + '</div>';
+
+  const hyHtml = hybrid.map((r, i) => {
+    const already = r.custFound && Math.abs((r.custCur || 0) - r.net) < 0.005 &&
+      r.supFound && Math.abs((r.supCur || 0) - (-r.net)) < 0.005;
+    const basis = r.basis === 'double' ? (t('balanceTools.basisDouble') || 'مورد ثنائي')
+      : r.basis === 'confirmed' ? (t('balanceTools.basisConfirmed') || 'تأكيد يدوي')
+      : r.basis === 'cf' ? (t('balanceTools.basisCf') || 'Code CF')
+      : r.basis === 'both' ? (t('balanceTools.basisBoth') || 'CF + اسم')
+      : (t('balanceTools.basisName') || 'الاسم');
+    const status = r.double
+      ? '<span style="display:inline-block;background:#e7f5e9;color:#1e7e34;border:1px solid #bfe7c8;border-radius:10px;padding:1px 9px;font-size:10px;font-weight:700">' + (t('balanceTools.hybridConfirmed') || 'مؤكد') + '</span>'
+      : '<span style="display:inline-block;background:#fff7e6;color:#9a6700;border:1px solid #ffe2a8;border-radius:10px;padding:1px 9px;font-size:10px;font-weight:700">' + (t('balanceTools.hybridSuspect') || 'مراجعة') + '</span>';
+    return '<tr style="' + (r.double ? '' : 'opacity:.85') + '">' +
+      '<td style="vertical-align:top;padding:7px 8px">' + partyCell(r.cName, r.custFound, r.custCur) + (r.cCode ? '<div style="font-size:10px;color:' + grayText + '">#' + escHtml(r.cCode) + '</div>' : '') + '</td>' +
+      '<td style="vertical-align:top;padding:7px 8px">' + partyCell(r.fName, r.supFound, r.supCur) + (r.fCode ? '<div style="font-size:10px;color:' + grayText + '">#' + escHtml(r.fCode) + '</div>' : '') + '</td>' +
+      '<td style="vertical-align:top;padding:7px 8px;font-size:11px;color:' + grayText + '">' + basis + '<div style="margin-top:4px">' + status + '</div></td>' +
+      '<td style="vertical-align:top;padding:7px 8px;text-align:right">' + money(r.creditClient) + '</td>' +
+      '<td style="vertical-align:top;padding:7px 8px;text-align:right">' + money(r.creditFournisseur) + '</td>' +
+      '<td style="vertical-align:top;padding:7px 8px;text-align:right;font-weight:800;color:' + amountColor(r.net) + '">' + money(r.net) + '</td>' +
+      '<td style="vertical-align:top;padding:7px 8px;text-align:center"><label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" class="zmt-hybrid-row" data-idx="' + i + '"' + (already || !r.double ? '' : ' checked') + '> <span>' + (t('balanceTools.applyLabel') || 'تطبيق') + '</span></label></td>' +
+    '</tr>';
+  }).join('');
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'zmtSyncModal';
+  modal.style.display = 'flex';
+  modal.innerHTML =
+    '<div class="modal" style="max-width:980px;width:96vw">' +
+      '<div class="modal-header">' +
+        '<h3><i class="fas fa-exchange-alt"></i> ' + (t('balanceTools.syncTitle') || 'مزامنة الأرصدة من البرنامج القديم') + '</h3>' +
+        '<button class="modal-close" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button>' +
+      '</div>' +
+      '<div class="modal-body">' +
+        '<div style="font-size:11px;color:var(--silver-500,#666);background:var(--silver-50,#f7f7f7);border:1px solid var(--silver-200,#e0e0e0);border-radius:8px;padding:8px 10px;margin-bottom:10px">' +
+          (t('balanceTools.syncHint') || 'القيم أدناه مأخوذة من قاعدة البرنامج القديم: المخزّن = CREDIT_CLIENT/CREDIT_FOURNISSEUR، والمحسوب من مجاميع فواتير البيع/الشراء والدفعات.') +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:800;margin:6px 0 4px">' +
+          '<i class="fas fa-user"></i> ' + (t('balanceTools.sectionSingles') || 'أطراف مفردة') +
+          ' <span style="font-size:11px;font-weight:600;color:var(--silver-500,#999)">(' + total + ')</span>' +
+        '</div>' +
+        '<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+          '<label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600"><input type="radio" name="zmtSyncMode" value="stored" checked> ' + (t('balanceTools.modeStored') || 'استخدام الرصيد المخزّن (CREDIT)') + '</label>' +
+          '<label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600"><input type="radio" name="zmtSyncMode" value="computed"> ' + (t('balanceTools.modeComputed') || 'استخدام الرصيد المحسوب من الأرشيف') + '</label>' +
+          '<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-left:auto"><input type="checkbox" id="zmtSyncAll" checked> ' + (t('balanceTools.selectAll') || 'تحديد الكل') + '</label>' +
+        '</div>' +
+        '<div style="max-height:32vh;overflow:auto;border:1px solid var(--silver-200,#e0e0e0);border-radius:8px">' +
+          '<table style="width:100%;border-collapse:collapse;font-size:12px;min-width:660px">' +
+            '<thead><tr style="background:var(--silver-50,#f7f7f7)">' +
+              '<th style="padding:7px 8px;text-align:right">' + (t('common.type') || 'النوع') + '</th>' +
+              '<th style="padding:7px 8px;text-align:right">' + (t('common.party') || 'الطرف') + '</th>' +
+              '<th style="padding:7px 8px;text-align:right">' + (t('balanceTools.current') || 'الرصيد الحالي') + '</th>' +
+              '<th style="padding:7px 8px;text-align:right">' + (t('balanceTools.storedLabel') || 'المخزّن') + '</th>' +
+              '<th style="padding:7px 8px;text-align:right">' + (t('balanceTools.computedLabel') || 'المحسوب') + '</th>' +
+              '<th style="padding:7px 8px;text-align:center">✔</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rowHtml + '</tbody>' +
+          '</table>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;margin:14px 0 6px">' +
+          '<span style="font-size:13px;font-weight:800;display:inline-flex;align-items:center;gap:8px"><i class="fas fa-retweet"></i> ' + (t('balanceTools.sectionHybrid') || 'الأطراف المزدوجة') +
+          ' <span style="font-size:11px;font-weight:600;color:var(--silver-500,#999)">(' + hybrid.length + ' ' + (t('balanceTools.hybridPairCount') || 'زوج') + ')</span></span>' +
+          '<span style="display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:700;margin-left:auto">' +
+            '<span style="display:inline-block;background:#e7f5e9;color:#1e7e34;border:1px solid #bfe7c8;border-radius:10px;padding:1px 9px">' + (t('balanceTools.hybridConfirmed') || 'مؤكد') +
+              ' ' + confirmedCount + '</span>' +
+            '<span style="display:inline-block;background:#fff7e6;color:#9a6700;border:1px solid #ffe2a8;border-radius:10px;padding:1px 9px">' + (t('balanceTools.hybridSuspect') || 'مراجعة') +
+              ' ' + (hybrid.length - confirmedCount) + '</span>' +
+          '</span>' +
+          '<label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" id="zmtHybridAll"> ' + (t('balanceTools.selectAll') || 'تحديد الكل') + '</label>' +
+        '</div>' +
+        '<div style="font-size:11px;color:#7a5c00;background:#fff7e6;border:1px solid #ffe2a8;border-radius:8px;padding:8px 10px;margin-bottom:8px">' +
+          (t('balanceTools.hybridHint') || '') +
+          '<div style="margin-top:4px"><b>' + (t('balanceTools.hybridSignNote') || '') + '</b></div>' +
+        '</div>' +
+        (hybrid.length
+          ? '<div style="max-height:30vh;overflow:auto;border:1px solid var(--silver-200,#e0e0e0);border-radius:8px">' +
+              '<table style="width:100%;border-collapse:collapse;font-size:12px;min-width:780px">' +
+                '<thead><tr style="background:#fff3d0">' +
+                  '<th style="padding:7px 8px;text-align:right">' + (t('balanceTools.hybridCustCol') || 'العميل') + ' ⇄</th>' +
+                  '<th style="padding:7px 8px;text-align:right">' + (t('balanceTools.hybridSupCol') || 'المورد') + '</th>' +
+                  '<th style="padding:7px 8px;text-align:right">' + (t('balanceTools.hybridLinkCol') || 'الربط') + '</th>' +
+                  '<th style="padding:7px 8px;text-align:right">' + (t('balanceTools.hybridCreditC') || 'رصيد العميل') + '</th>' +
+                  '<th style="padding:7px 8px;text-align:right">' + (t('balanceTools.hybridCreditF') || 'رصيد المورد') + '</th>' +
+                  '<th style="padding:7px 8px;text-align:right">' + (t('balanceTools.hybridNetCol') || 'NET الحقيقي') + '</th>' +
+                  '<th style="padding:7px 8px;text-align:center">✔</th>' +
+                '</tr></thead>' +
+                '<tbody>' + hyHtml + '</tbody>' +
+              '</table>' +
+            '</div>'
+          : '<div style="font-size:12px;color:var(--silver-500,#666);padding:6px 0">' + (t('balanceTools.noHybrids') || 'لا توجد أطراف مزدوجة') + '</div>') +
+        '<div style="font-size:11px;color:var(--silver-500,#666);margin-top:10px">' +
+          (t('balanceTools.matchedFor') || 'عدد الأطراف في القاعدة القديمة:') + ' ' + (total + hybrid.length * 2) + ' ' + (t('balanceTools.parties') || 'طرف') +
+          ' • ' + changed + ' ' + (t('balanceTools.diffCount') || 'اختلاف عن الحالي') +
+        '</div>' +
+      '</div>' +
+      '<div class="modal-footer">' +
+        '<button class="btn" onclick="this.closest(\'.modal-overlay\').remove()">' + (t('common.cancel') || 'إلغاء') + '</button>' +
+        '<button class="btn btn-success" id="zmtSyncApply"><i class="fas fa-check"></i> ' + (t('balanceTools.applyLabel') || 'تطبيق') + '</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(modal);
+
+  document.getElementById('zmtSyncAll').addEventListener('change', function (e) {
+    document.querySelectorAll('.zmt-sync-row').forEach(cb => { cb.checked = e.target.checked; });
+  });
+  const hyAll = document.getElementById('zmtHybridAll');
+  if (hyAll) hyAll.addEventListener('change', function (e) {
+    document.querySelectorAll('.zmt-hybrid-row').forEach(cb => { cb.checked = e.target.checked; });
+  });
+
+  document.getElementById('zmtSyncApply').addEventListener('click', async function () {
+    const mode = document.querySelector('input[name="zmtSyncMode"]:checked').value;
+    const apply = [];
+    document.querySelectorAll('.zmt-sync-row').forEach(cb => {
+      if (!cb.checked) return;
+      const row = single[Number(cb.dataset.idx)];
+      if (!row || !row.found || row.id == null) return;
+      const val = mode === 'stored' ? row.stored : row.computed;
+      if (val === null || val === undefined || isNaN(val)) return;
+      if (Math.abs(val - row.current) < 0.005) return;
+      apply.push({ type: row.type, id: row.id, name: row.name, old: row.current, next: val });
+    });
+    const hyApply = [];
+    document.querySelectorAll('.zmt-hybrid-row').forEach(cb => {
+      if (!cb.checked) return;
+      const h = hybrid[Number(cb.dataset.idx)];
+      if (!h) return;
+      if (!(h.custFound && Math.abs((h.custCur || 0) - h.net) >= 0.005) &&
+          !(h.supFound && Math.abs((h.supCur || 0) - (-h.net)) >= 0.005)) return;
+      hyApply.push(h);
+    });
+    if (!apply.length && !hyApply.length) { alert(t('balanceTools.noChanges') || 'لا توجد تغييرات للتطبيق'); return; }
+    if (typeof createPreImportBackup === 'function') { try { createPreImportBackup(); } catch (e) {} }
+    const custList = DB.getCustomers();
+    const supList = DB.getSuppliers();
+    const audits = [];
+    let custChanged = false, supChanged = false;
+
+    for (const a of apply) {
+      if (a.type === 'customer') {
+        const rec = custList.find(c => c.id === a.id);
+        if (!rec) continue;
+        rec.balance = a.next; custChanged = true;
+      } else {
+        const rec = supList.find(s => s.id === a.id);
+        if (!rec) continue;
+        rec.balance = a.next; supChanged = true;
+      }
+      audits.push({ action: 'balance-sync', entity: a.type, entityId: a.id, detail: a.name + ' | ' + (Number(a.old) || 0).toFixed(2) + ' -> ' + (Number(a.next) || 0).toFixed(2) + ' (' + mode + ')' });
+    }
+
+    // Hybrid pairs: the twin of a party recorded on BOTH legacy ledgers. The
+    // client record takes NET, the supplier record takes −NET, so neither side
+    // carries a phantom mirror balance. A missing counterpart record is created
+    // so every hybrid party is fully represented in both ledgers.
+    for (const h of hyApply) {
+      const cKey = normR(h.cName);
+      const sKey = normR(h.fName);
+      let cust = custList.find(c => normR(c.name) === cKey);
+      const createdC = !cust;
+      if (createdC) {
+        cust = { id: _genPartyId(), name: h.cName.trim(), phone: '', address: '', discount: 0, balance: 0, totalPurchases: 0, createdAt: Date.now() };
+        custList.push(cust);
+      }
+      const cOld = parseFloat(cust.balance) || 0;
+      if (createdC || Math.abs(cOld - h.net) >= 0.005) {
+        cust.balance = h.net; custChanged = true;
+        audits.push({ action: 'balance-net', entity: 'customer', entityId: cust.id, detail: h.cName + ' (double ' + h.cCode + '⇄' + h.fCode + ') | ' + cOld.toFixed(2) + ' -> ' + h.net.toFixed(2) + (createdC ? ' [new]' : '') });
+      }
+      let sup = supList.find(s => normR(s.name) === sKey);
+      const createdS = !sup;
+      if (createdS) {
+        sup = { id: _genPartyId(), name: h.fName.trim(), phone: '', address: '', balance: 0, createdAt: Date.now() };
+        supList.push(sup);
+      }
+      const sOld = parseFloat(sup.balance) || 0;
+      const sNew = -h.net;
+      if (createdS || Math.abs(sOld - sNew) >= 0.005) {
+        sup.balance = sNew; supChanged = true;
+        audits.push({ action: 'balance-net', entity: 'supplier', entityId: sup.id, detail: h.fName + ' (double ' + h.cCode + '⇄' + h.fCode + ') | ' + sOld.toFixed(2) + ' -> ' + sNew.toFixed(2) + (createdS ? ' [new]' : '') });
+      }
+    }
+
+    if (custChanged) DB.saveCustomers(custList);
+    if (supChanged) DB.saveSuppliers(supList);
+    if (typeof DB.logAudit === 'function') { for (const a of audits) { try { DB.logAudit(a); } catch (e) {} } }
+    modal.remove();
+    alert((t('balanceTools.applied') || 'تم تحديث الأرصدة:') + ' ' + audits.length + ' ' + (t('balanceTools.changedCount') || 'تعديل'));
+    window.dispatchEvent(new CustomEvent('zmt:balances-updated'));
+    if (window._refreshBalanceUIs) window._refreshBalanceUIs();
+  });
+
+  modal.addEventListener('click', function (e) { if (e.target === modal) modal.remove(); });
+}
+
+/* ===== Stock Sync Tool: مزامنة المخزون من STOCK.FDB =====
+   Why this exists: the legacy program keeps ARTICLES.QUANTITE as a RUNNING
+   BALANCE that already includes every purchase, sale and return. The full
+   import seeded that value AND replayed the invoice history on top of it, so
+   every product whose balance equalled its net movement came out exactly
+   doubled (5 -> 10, 2 -> 4). Re-running the full import cannot repair it
+   (existing products are skipped at line ~2141 while invoices are re-created),
+   so stock has to be re-read from the master table on its own.
+   This tool is idempotent: it only writes ARTICLES.QUANTITE onto matching
+   products, touches no invoice, no balance and no price. */
+
+const _stockSyncNum = (v) => {
+  if (v === null || v === undefined || v === '') return 0;
+  const n = parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
+  return isNaN(n) ? 0 : n;
+};
+
+const _stockSyncTxt = (v) => String(v === null || v === undefined ? '' : v).trim();
+
+const _stockSyncKey = (v) => {
+  const s = _stockSyncTxt(v);
+  if (!s) return '';
+  if (typeof canonBarcode === 'function') {
+    try { const c = canonBarcode(s); if (c) return c; } catch (e) {}
+  }
+  return s.toLowerCase();
+};
+
+window.startStockSyncFromGestion = async function () {
+  if (typeof Auth !== 'undefined' && Auth.canEdit && !Auth.canEdit('inventory')) {
+    alert(t('stockTools.cantEdit') || 'لا تملك صلاحية تعديل المخزون');
+    return;
+  }
+  const fb = await _getSyncFirebirdDb();
+  if (!fb) return;
+  const { dbPath, options } = fb;
+
+  try {
+    migrationUpdateStatus((t('stockTools.syncTitle') || 'مزامنة المخزون من البرنامج القديم') + '...', 'info');
+
+    const articleRows = await _syncLoadTableAll(dbPath, 'ARTICLES', options);
+    if (!articleRows || !articleRows.length) {
+      migrationUpdateStatus('', '');
+      alert(t('stockTools.empty') || 'لا توجد أصناف في قاعدة البرنامج القديم');
+      return;
+    }
+
+    // Single pass over the local products, keyed by barcode AND by reference so
+    // legacy rows carrying only REFERENCE still match.
+    const byKey = new Map();
+    for (const p of DB.getProducts()) {
+      const kb = _stockSyncKey(p.barcode);
+      if (kb && !byKey.has('bc:' + kb)) byKey.set('bc:' + kb, p);
+      const kr = _stockSyncKey(p.reference);
+      if (kr && !byKey.has('ref:' + kr)) byKey.set('ref:' + kr, p);
+    }
+
+    const diff = [];
+    let matched = 0, unmatched = 0, same = 0, legacyTotal = 0, currentTotal = 0;
+    const seen = new Set();
+    for (const r of articleRows) {
+      const ref = _stockSyncTxt(r['REFERENCE']);
+      const bar = _stockSyncTxt(r['CODE_BAR']) || ref;
+      if (!bar && !ref) continue;
+      const legacy = _stockSyncNum(r['QUANTITE']);
+      const p = (bar && byKey.get('bc:' + _stockSyncKey(bar))) ||
+                (ref && byKey.get('ref:' + _stockSyncKey(ref))) || null;
+      if (!p) { unmatched++; continue; }
+      // Same legacy article can appear twice (REFERENCE + CODE_BAR rows).
+      if (seen.has(p.id)) continue;
+      seen.add(p.id);
+      matched++;
+      legacyTotal += legacy;
+      const current = Number(p.quantity) || 0;
+      currentTotal += current;
+      if (Math.abs(current - legacy) < 0.001) { same++; continue; }
+      diff.push({ id: p.id, name: p.name || bar, barcode: p.barcode || bar, current, legacy });
+    }
+
+    migrationUpdateStatus('', '');
+    if (!matched) {
+      alert((t('stockTools.notMatched') || 'غير مطابق') + ': 0 — ' + (t('stockTools.unmatchedCount') || 'غير مطابق') + ' ' + unmatched);
+      return;
+    }
+    _renderStockSyncModal(diff, { matched, same, unmatched, legacyTotal, currentTotal });
+  } catch (err) {
+    migrationUpdateStatus('', '');
+    alert((t('stockTools.readError') || 'تعذر قراءة جدول ARTICLES من قاعدة البرنامج القديم') + ': ' + (err && err.message ? err.message : err));
+  }
+};
+
+function _renderStockSyncModal(diff, stats) {
+  const old = document.getElementById('zmtStockSyncModal');
+  if (old) old.remove();
+  diff = diff || [];
+  const gray = 'var(--silver-500,#999)';
+  const qty = (v) => String(Math.round((Number(v) || 0) * 1000) / 1000);
+  const deltaColor = (v) => v > 0 ? '#1e7e34' : v < 0 ? '#c62828' : gray;
+
+  const rowHtml = diff.map((r, i) => {
+    const d = r.legacy - r.current;
+    return '<tr>' +
+      '<td style="font-weight:700">' + escHtml(r.name) + '</td>' +
+      '<td style="font-size:11px;color:' + gray + ';white-space:nowrap">' + escHtml(r.barcode) + '</td>' +
+      '<td style="text-align:right;color:' + deltaColor(-Math.abs(r.current)) + '">' + qty(r.current) + '</td>' +
+      '<td style="text-align:right;font-weight:700">' + qty(r.legacy) + '</td>' +
+      '<td style="text-align:right;font-weight:800;color:' + deltaColor(d) + '">' + (d > 0 ? '+' : '') + qty(d) + '</td>' +
+      '<td style="text-align:center"><label style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:12px"><input type="checkbox" class="zmt-stock-row" data-idx="' + i + '" checked></label></td>' +
+    '</tr>';
+  }).join('');
+
+  const emptyMsg = diff.length
+    ? ''
+    : '<div style="font-size:12px;color:var(--silver-600,#666);padding:14px;text-align:center">' + (t('stockTools.noChanges') || 'لا توجد فروقات — المخزون مطابق للبرنامج القديم') + '</div>';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'zmtStockSyncModal';
+  modal.style.display = 'flex';
+  modal.innerHTML =
+    '<div class="modal" style="max-width:900px;width:96vw">' +
+      '<div class="modal-header">' +
+        '<h3><i class="fas fa-cubes"></i> ' + (t('stockTools.syncTitle') || 'مزامنة المخزون من البرنامج القديم') + '</h3>' +
+        '<button class="modal-close" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button>' +
+      '</div>' +
+      '<div class="modal-body">' +
+        '<div style="font-size:11px;color:var(--silver-500,#666);background:var(--silver-50,#f7f7f7);border:1px solid var(--silver-200,#e0e0e0);border-radius:8px;padding:8px 10px;margin-bottom:10px">' +
+          (t('stockTools.syncHint') || 'تُقرأ كمية كل صنف من جدول ARTICLES وتُطبَّق على المنتج المطابق. لا تُستعمل الفواتير لأن المخزون القديم يشملها بالفعل.') +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:14px;font-size:12px;margin-bottom:8px;flex-wrap:wrap">' +
+          '<label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700"><input type="checkbox" id="zmtStockAll" checked> ' + (t('stockTools.selectAll') || 'تحديد الكل') + '</label>' +
+          '<span style="color:' + gray + '">' + (t('stockTools.matched') || 'مطابق') + ': <b>' + stats.matched + '</b></span>' +
+          '<span style="color:' + gray + '">' + (t('stockTools.changed') || 'به فرق') + ': <b style="color:#e65100">' + diff.length + '</b></span>' +
+          '<span style="color:' + gray + '">' + (t('stockTools.notMatched') || 'غير مطابق') + ': <b>' + stats.unmatched + '</b></span>' +
+          '<span style="color:' + gray + '">' + (t('stockTools.currentTotal') || 'إجمالي الحالي') + ': <b>' + qty(stats.currentTotal) + '</b></span>' +
+          '<span style="color:' + gray + '">' + (t('stockTools.legacyTotal') || 'إجمالي القديم') + ': <b>' + qty(stats.legacyTotal) + '</b></span>' +
+        '</div>' +
+        emptyMsg +
+        (diff.length ?
+        '<div style="max-height:52vh;overflow:auto;border:1px solid var(--silver-200,#e0e0e0);border-radius:8px">' +
+          '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+            '<thead><tr style="background:var(--silver-50,#f7f7f7);position:sticky;top:0">' +
+              '<th style="text-align:right;padding:7px 8px">' + (t('common.product') || 'المنتج') + '</th>' +
+              '<th style="text-align:right;padding:7px 8px">' + (t('common.barcode') || 'الباركود') + '</th>' +
+              '<th style="text-align:right;padding:7px 8px">' + (t('stockTools.current') || 'الكمية الحالية') + '</th>' +
+              '<th style="text-align:right;padding:7px 8px">' + (t('stockTools.legacy') || 'كمية البرنامج القديم') + '</th>' +
+              '<th style="text-align:right;padding:7px 8px">' + (t('stockTools.difference') || 'الفرق') + '</th>' +
+              '<th style="text-align:center;padding:7px 8px">' + (t('stockTools.applyLabel') || 'تطبيق') + '</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rowHtml + '</tbody>' +
+          '</table>' +
+        '</div>' : '') +
+      '</div>' +
+      '<div class="modal-footer">' +
+        '<button class="btn" onclick="this.closest(\'.modal-overlay\').remove()">' + (t('common.cancel') || 'إلغاء') + '</button>' +
+        '<button class="btn btn-success" id="zmtStockSyncApply"' + (diff.length ? '' : ' disabled') + '><i class="fas fa-check"></i> ' + (t('stockTools.applyLabel') || 'تطبيق') + '</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(modal);
+
+  const all = document.getElementById('zmtStockAll');
+  if (all) all.addEventListener('change', function (e) {
+    document.querySelectorAll('.zmt-stock-row').forEach(cb => { cb.checked = e.target.checked; });
+  });
+
+  document.getElementById('zmtStockSyncApply').addEventListener('click', async function () {
+    const apply = [];
+    document.querySelectorAll('.zmt-stock-row').forEach(cb => {
+      if (!cb.checked) return;
+      const row = diff[Number(cb.dataset.idx)];
+      if (!row || !row.id) return;
+      if (Math.abs((Number(row.legacy) || 0) - (Number(row.current) || 0)) < 0.001) return;
+      apply.push(row);
+    });
+    if (!apply.length) { alert(t('stockTools.noChanges') || 'لا توجد فروقات للتطبيق'); return; }
+
+    let backedUp = false;
+    if (typeof createPreImportBackup === 'function') {
+      try { backedUp = !!(await createPreImportBackup()); } catch (e) {}
+    }
+
+    DB.updateProductsBatch(apply.map(r => ({ id: r.id, changes: { quantity: r.legacy } })));
+
+    if (typeof DB.logAudit === 'function') {
+      for (const r of apply) {
+        try {
+          DB.logAudit({ action: 'stock-sync', entity: 'product', entityId: r.id, detail: (r.name || r.barcode) + ' | ' + (Number(r.current) || 0) + ' -> ' + (Number(r.legacy) || 0) });
+        } catch (e) {}
+      }
+    }
+
+    modal.remove();
+    alert((t('stockTools.applied') || 'تمت مزامنة المخزون لـ') + ' ' + apply.length + ' ' + (t('stockTools.changedCount') || 'منتج') +
+      (backedUp ? '\n' + (t('stockTools.backupNote') || 'تم حفظ نسخة احتياطية قبل التطبيق.') : ''));
+
+    window.dispatchEvent(new CustomEvent('zmt:stock-updated'));
+    if (window._currentPageId === 'inventory' && typeof window.refreshCurrentPageApp === 'function') {
+      try { window.refreshCurrentPageApp('inventory'); } catch (e) {}
+    }
+  });
+
+  modal.addEventListener('click', function (e) { if (e.target === modal) modal.remove(); });
 }

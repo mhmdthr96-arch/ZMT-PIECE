@@ -49,13 +49,16 @@ function renderSupPage(slice, info) {
       <div class="sup-card-stats">
         <div class="sup-stat">
           <span class="sup-stat-label">الرصيد</span>
-          <span class="sup-stat-value ${balance > 0 ? 'text-danger' : 'text-success'}">DA${balance.toFixed(2)}</span>
+          <span class="sup-stat-value ${balance > 0 ? 'text-danger' : 'text-success'}">DA${fmtMoney(balance)}</span>
         </div>
         <div class="sup-stat">
           <span class="sup-stat-label">المدفوع</span>
-          <span class="sup-stat-value" style="color:#28a745">DA${paid.toFixed(2)}</span>
+          <span class="sup-stat-value" style="color:#28a745">DA${fmtMoney(paid)}</span>
         </div>
       </div>
+      <button class="rec-card-btn" onclick="event.stopPropagation();openSupRecords('${s.id}')" title="سجلات المورد">
+        <i class="fas fa-clipboard-list"></i><span>السجل</span>
+      </button>
       <div class="sup-card-action">
         <i class="fas fa-chevron-left"></i>
       </div>
@@ -83,7 +86,7 @@ function setupSupSearch() {
   if (!input) return;
   const newInput = input.cloneNode(true);
   input.parentNode.replaceChild(newInput, input);
-  newInput.addEventListener('input', applySupFilter);
+  newInput.addEventListener('input', (typeof debounce === 'function') ? debounce(applySupFilter, 180) : applySupFilter);
 }
 
 function showAddSupplierForm() {
@@ -106,6 +109,7 @@ function confirmAddSupplier() {
     name,
     phone: document.getElementById('supPhone').value.trim(),
     address: document.getElementById('supAddress').value.trim(),
+    email: document.getElementById('supEmail').value.trim(),
     balance: 0,
   });
   DB.saveSuppliers(suppliers);
@@ -127,6 +131,7 @@ function showEditSupplierForm(id) {
   document.getElementById('editSupName').value = s.name;
   document.getElementById('editSupPhone').value = s.phone || '';
   document.getElementById('editSupAddress').value = s.address || '';
+  document.getElementById('editSupEmail').value = s.email || '';
   document.getElementById('editSupplierModal').style.display = 'flex';
 }
 
@@ -144,6 +149,7 @@ function confirmEditSupplier() {
   suppliers[idx].name = name;
   suppliers[idx].phone = document.getElementById('editSupPhone').value.trim();
   suppliers[idx].address = document.getElementById('editSupAddress').value.trim();
+  suppliers[idx].email = document.getElementById('editSupEmail').value.trim();
   DB.saveSuppliers(suppliers);
   DB.logAudit({ action: 'update', entity: 'supplier', entityId: id, detail: name });
   closeEditSupplier();
@@ -162,8 +168,100 @@ function deleteSupplier2(id) {
   navigateTo('suppliers');
 }
 
+// ===== SUPPLIER RECORDS (سجلات المورد) =====
+
+function _supRecStatusLabel(status) {
+  switch (status) {
+    case 'returned': return 'تم الاسترجاع';
+    case 'not_returned': return 'لم تسترجع';
+    default: return 'جاري الاسترجاع';
+  }
+}
+
+function _supRecStatusBadge(status) {
+  const cls = status === 'returned' ? 'badge-success' : (status === 'not_returned' ? 'badge-info' : 'badge-warning');
+  return `<span class="badge ${cls}">${_supRecStatusLabel(status)}</span>`;
+}
+
+function _supRecordsData(supplierId) {
+  const invoices = DB.getInvoicesBySupplier(supplierId);
+  const purchases = invoices.filter(inv => inv.type === 'supplier' || inv.type === 'purchase');
+  const sales = invoices.filter(inv => inv.type === 'sup_sale');
+  const returns = (DB.getSupplierReturns ? DB.getSupplierReturns() : [])
+    .filter(r => r.supplierId === supplierId)
+    .slice()
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const purchaseAmount = purchases.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
+  const saleAmount = sales.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
+  const returnAmount = returns.reduce((s, r) => s + (r.amount || 0), 0);
+  return { purchases, purchaseAmount, sales, saleAmount, returns, returnAmount };
+}
+
+function openSupRecords(id) {
+  const s = DB.getSuppliers().find(x => x.id === id);
+  if (!s) return;
+  const rec = _supRecordsData(id);
+
+  document.getElementById('supRecordsName').textContent = s.name;
+
+  document.getElementById('supRecStats').innerHTML = `
+    <div class="rec-chip">
+      <span class="rec-chip-icon" style="background:#e3f2fd;color:#1565c0"><i class="fas fa-cart-arrow-down"></i></span>
+      <div>
+        <div class="rec-chip-label">عمليات الشراء من المورد</div>
+        <div class="rec-chip-val">${rec.purchases.length} <small>فاتورة</small> · DA${fmtMoney(rec.purchaseAmount)}</div>
+      </div>
+    </div>
+    <div class="rec-chip">
+      <span class="rec-chip-icon" style="background:#f3e5f5;color:#8e24aa"><i class="fas fa-handshake"></i></span>
+      <div>
+        <div class="rec-chip-label">عمليات البيع له</div>
+        <div class="rec-chip-val">${rec.sales.length} <small>عملية</small> · DA${fmtMoney(rec.saleAmount)}</div>
+      </div>
+    </div>
+    <div class="rec-chip">
+      <span class="rec-chip-icon" style="background:#fff3e0;color:#e65100"><i class="fas fa-box-open"></i></span>
+      <div>
+        <div class="rec-chip-label">السلع الفاسدة المرجعة</div>
+        <div class="rec-chip-val">${rec.returns.length} <small>مرتجع</small> · DA${fmtMoney(rec.returnAmount)}</div>
+      </div>
+    </div>`;
+
+  const listBox = document.getElementById('supRecList');
+  if (rec.returns.length === 0) {
+    listBox.innerHTML = `<div class="rec-empty"><i class="fas fa-box-open"></i><p>لا توجد سلع فاسدة مرجعة لهذا المورد</p></div>`;
+  } else {
+    listBox.innerHTML = rec.returns.map(r => {
+      const d = new Date(r.createdAt || Date.now());
+      const dateStr = d.toLocaleDateString('ar-EG-u-nu-latn');
+      const timeStr = d.toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' });
+      return `<div class="rec-row">
+        <div class="rec-row-main">
+          <div class="rec-row-name">${escHtml(r.productName || 'منتج')}</div>
+          <div class="rec-row-meta">
+            <span><strong>${r.qty ?? 0}</strong> قطعة</span>
+            <span class="rec-date"><i class="far fa-calendar-alt"></i> ${dateStr} ${timeStr}</span>
+            <span class="rec-id"><i class="fas fa-file-invoice"></i> ${escHtml(r.invoiceNumber || r.invoiceId || '—')}</span>
+            ${r.note ? `<span class="rec-note"><i class="fas fa-sticky-note"></i> ${escHtml(r.note)}</span>` : ''}
+          </div>
+        </div>
+        <div class="rec-row-side">
+          <span class="rec-value">DA${fmtMoney((r.amount || 0))}</span>
+          ${_supRecStatusBadge(r.status)}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  document.getElementById('supRecordsModal').style.display = 'flex';
+}
+
+function closeSupRecords() {
+  document.getElementById('supRecordsModal').style.display = 'none';
+}
+
 function _supModalHandler(e) {
-  ['addSupplierModal', 'editSupplierModal'].forEach(id => {
+  ['addSupplierModal', 'editSupplierModal', 'supRecordsModal'].forEach(id => {
     const el = document.getElementById(id);
     if (e.target === el) el.style.display = 'none';
   });
@@ -171,3 +269,19 @@ function _supModalHandler(e) {
 document.removeEventListener('click', _supModalHandler);
 document.addEventListener('click', _supModalHandler);
 if (window._pageListeners) window._pageListeners.push({ type: 'click', fn: _supModalHandler });
+
+// ===== LAN SYNC HANDLER =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['suppliers'] = function suppliersSyncData() {
+  window.syncPreserveRefresh({
+    search: ['supSearch'],
+    render: () => {
+      _supAll = DB.getSuppliers();
+      const q = normSearch(document.getElementById('supSearch')?.value || '').toLowerCase();
+      _supFiltered = q
+        ? _supAll.filter(s => s.name.toLowerCase().includes(q) || (s.phone && s.phone.includes(q)))
+        : [..._supAll];
+      _supPager.updateDataKeepPage(_supFiltered);
+    },
+  });
+};

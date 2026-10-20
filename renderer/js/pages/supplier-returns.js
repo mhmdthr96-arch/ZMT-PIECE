@@ -158,12 +158,12 @@ function _srFiltered() {
 }
 
 function renderSupplierReturns() {
-  const container = document.getElementById('srBody');
+  const container = document.getElementById('srGrid');
   if (!container) return;
   const list = _srFiltered();
 
   if (list.length === 0) {
-    container.innerHTML = `<tr><td colspan="10" class="empty-row"><i class="fas fa-box-open"></i> ${t('supplierReturns.empty')}</td></tr>`;
+    container.innerHTML = `<div class="placeholder-box" style="grid-column:1/-1;padding:48px"><i class="fas fa-box-open" style="font-size:48px;color:#555"></i><p>${t('supplierReturns.empty')}</p></div>`;
     return;
   }
 
@@ -186,18 +186,23 @@ function renderSupplierReturns() {
     } else {
       actions = '<span class="text-muted">-</span>';
     }
-    return `<tr>
-      <td>${i + 1}</td>
-      <td>${_srEsc(r.storeName || r.storeId || '-')}</td>
-      <td><strong>${_srEsc(r.productName)}</strong></td>
-      <td>${r.qty}</td>
-      <td>DA${Number(r.amount || 0).toFixed(2)}</td>
-      <td>${_srEsc(r.supplierName || '-')}</td>
-      <td dir="ltr">${_srEsc(r.invoiceNumber || (r.invoiceId || '').slice(0, 8))}</td>
-      <td>${dateStr} ${timeStr}</td>
-      <td>${_srStatusBadge(r.status)}</td>
-      <td style="white-space:nowrap">${actions}</td>
-    </tr>`;
+    return `<div class="prod-card">
+      <div class="prod-card-head">
+        <div>
+          <div class="prod-card-title">${_srEsc(r.productName)}</div>
+          <div class="prod-card-sub">${_srEsc(r.storeName || r.storeId || '-')}</div>
+        </div>
+        ${_srStatusBadge(r.status)}
+      </div>
+      <div class="prod-card-fields">
+        <div class="prod-field"><span class="prod-field-label">${t('supplierReturns.colSupplier')}</span><span class="prod-field-value">${_srEsc(r.supplierName || '-')}</span></div>
+        <div class="prod-field"><span class="prod-field-label">${t('supplierReturns.colQty')}</span><span class="prod-field-value">${r.qty}</span></div>
+        <div class="prod-field"><span class="prod-field-label">${t('supplierReturns.colAmount')}</span><span class="prod-field-value">DA${fmtMoney(Number(r.amount || 0))}</span></div>
+        <div class="prod-field"><span class="prod-field-label">${t('supplierReturns.colInvoice')}</span><span class="prod-field-value mono">${_srEsc(r.invoiceNumber || (r.invoiceId || '').slice(0, 8))}</span></div>
+        <div class="prod-field full"><span class="prod-field-label">${t('supplierReturns.colDate')}</span><span class="prod-field-value">${dateStr} ${timeStr}</span></div>
+      </div>
+      <div class="prod-card-actions">${actions}</div>
+    </div>`;
   }).join('');
 }
 
@@ -252,7 +257,7 @@ function openSupplierReturnModal(productId) {
         </div>
       </div>
       <label style="font-size:12px;color:var(--silver-600)">${t('supplierReturns.qty')}
-        <input type="number" id="srQty" min="1" max="${prod.quantity}" value="1" class="form-input" style="width:100%;margin-top:6px">
+        <input type="text" inputmode="numeric" id="srQty" min="1" max="${prod.quantity}" value="1" class="form-input num-input" style="width:100%;margin-top:6px">
       </label>
       <label style="font-size:12px;color:var(--silver-600)">${t('supplierReturns.invoice')}
         <select id="srInvoice" class="form-input" style="width:100%;margin-top:6px">${opts}</select>
@@ -497,6 +502,7 @@ function exportSupplierReturns() {
 
   const ws = XLSX.utils.json_to_sheet(rows);
   ws['!cols'] = [{ wch: 5 }, { wch: 24 }, { wch: 30 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 24 }, { wch: 20 }, { wch: 12 }, { wch: 18 }];
+  _styleSheet(ws);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, t('supplierReturns.title'));
   const fileName = `ZMT_PIECE_SupplierReturns_${new Date().toISOString().slice(0, 10)}.xlsx`;
@@ -507,10 +513,8 @@ function exportSupplierReturns() {
       filters: [{ name: 'Excel Files', extensions: ['xlsx'] }],
     }).then(result => {
       if (!result.canceled && result.filePath) {
-        const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-        let binary = '';
-        for (let i = 0; i < wbout.length; i++) binary += String.fromCharCode(wbout[i]);
-        window.electronAPI.writeFileBinary(result.filePath, btoa(binary)).then(res => {
+        const base64 = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
+        window.electronAPI.writeFileBinary(result.filePath, base64).then(res => {
           if (res.success) alert(t('supplierReturns.exportSuccess'));
           else alert(t('supplierReturns.exportError') + res.error);
         });
@@ -521,8 +525,46 @@ function exportSupplierReturns() {
   }
 }
 
+// FACULITE-style formatting: blue bold header + thin borders on every cell.
+function _styleSheet(ws, opts) {
+  opts = opts || {};
+  const range = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : null;
+  if (!range) return;
+  const THIN = { style: 'thin', color: { rgb: 'B0C4DE' } };
+  const BORDER = { top: THIN, bottom: THIN, left: THIN, right: THIN };
+  const headRow = (opts.headerRow != null ? opts.headerRow : 1);
+  const nCols = range.e.c + 1;
+  for (let c = 0; c < nCols; c++) {
+    const cell = ws[XLSX.utils.encode_cell({ r: headRow, c: c })];
+    if (!cell) continue;
+    cell.s = {
+      font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: 'FFFFFF' } },
+      fill: { patternType: 'solid', fgColor: { rgb: '2F5496' } },
+      alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+      border: BORDER,
+    };
+  }
+  for (let r = headRow + 1; r <= range.e.r; r++) {
+    const zebra = ((r - headRow - 1) % 2) === 1;
+    for (let c = 0; c < nCols; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: r, c: c })];
+      if (!cell) continue;
+      cell.s = cell.s || {};
+      cell.s.font = { name: 'Calibri', sz: 11 };
+      if (zebra) cell.s.fill = { patternType: 'solid', fgColor: { rgb: 'F2F7FD' } };
+      cell.s.alignment = { horizontal: 'center', vertical: 'center' };
+      cell.s.border = BORDER;
+      if (typeof cell.v === 'number') cell.s.numFmt = '#,##0.00';
+    }
+  }
+  ws['!views'] = [{ RTL: true }];
+}
+
 // ===== LAN SYNC: live list refresh =====
 window._pageSyncHandlers = window._pageSyncHandlers || {};
 window._pageSyncHandlers['supplier-returns'] = function supplierReturnsSyncData() {
-  renderSupplierReturns();
+  window.syncPreserveRefresh({
+    search: ['srSearch'],
+    render: renderSupplierReturns,
+  });
 };

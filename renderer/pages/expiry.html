@@ -1,0 +1,27 @@
+<div class="page" id="page-expiry">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-hourglass-half"></i> <span data-i18n="expiry.title">انتهاء الصلاحية</span></h1>
+      <p><span data-i18n="expiry.sub">المنتجات المنتهية صلاحيتها أو القاربة للانتهاء</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="toolbar">
+      <div class="search-bar">
+        <i class="fas fa-search"></i>
+        <input type="text" id="expirySearch" data-i18n-placeholder="expiry.search" placeholder="بحث بالاسم أو الباركود...">
+      </div>
+      <select id="expiryFilter" class="form-input" style="width:auto">
+        <option value="all" data-i18n="expiry.filterAll">الكل</option>
+        <option value="expired" data-i18n="expiry.filterExpired">منتهي الصلاحية</option>
+        <option value="expiring" data-i18n="expiry.filterExpiring">قريب الانتهاء</option>
+      </select>
+      <button class="btn" onclick="renderExpiry()"><i class="fas fa-sync-alt"></i> <span data-i18n="expiry.refresh">تحديث</span></button>
+    </div>
+
+    <div id="expirySummary" class="expiry-summary" style="margin-bottom:14px"></div>
+
+    <div class="expiry-grid" id="expiryGrid"></div>
+  </div>
+</div>

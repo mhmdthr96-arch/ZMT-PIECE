@@ -33,7 +33,7 @@
 
     <!-- === STATS GRID (Sales + Returns + Comparison) === -->
     <div class="stats-grid" style="margin-bottom:20px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">
-      <div class="stat-card" style="background:linear-gradient(135deg,#0066B1,#004d8c);color:white">
+      <div class="stat-card" style="background:linear-gradient(135deg,var(--bmw-blue-1),var(--bmw-blue-2));color:white">
         <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-chart-bar" style="color:white"></i></div>
         <div class="stat-info">
           <span class="stat-value" id="rSalesAmount" style="color:white;font-size:22px">DA0</span>
@@ -118,7 +118,7 @@
         </div>
 
         <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
-          <div class="stat-card" style="background:linear-gradient(135deg,#0066B1,#004d8c);color:white">
+          <div class="stat-card" style="background:linear-gradient(135deg,var(--bmw-blue-1),var(--bmw-blue-2));color:white">
             <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-arrow-up" style="color:white"></i></div>
             <div class="stat-info">
               <span class="stat-value" id="netReportSales" style="color:white;font-size:20px">DA0</span>
@@ -171,7 +171,7 @@
         </div>
 
         <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-top:14px">
-          <div class="stat-card" style="background:linear-gradient(135deg,#0066B1,#004d8c);color:white">
+          <div class="stat-card" style="background:linear-gradient(135deg,var(--bmw-blue-1),var(--bmw-blue-2));color:white">
             <div class="stat-icon" style="background:rgba(255,255,255,0.2);border-radius:12px"><i class="fas fa-chart-line" style="color:white"></i></div>
             <div class="stat-info">
               <span class="stat-value" id="netReportPeriodMargin" style="color:white;font-size:22px">DA0</span>
@@ -219,18 +219,6 @@
       </div>
     </div>
 
-    <!-- === CHARTS ROW 3: Breakdowns === -->
-    <div class="two-col" style="margin-bottom:20px">
-      <div class="chart-section">
-        <div class="chart-header"><h3><i class="fas fa-tags"></i> <span data-i18n="reports.salesByCategory">المبيعات حسب الفئة</span></h3></div>
-        <div class="chart-container" style="height:240px"><canvas id="categoryPieChart"></canvas></div>
-      </div>
-      <div class="chart-section">
-        <div class="chart-header"><h3><i class="fas fa-exclamation-triangle"></i> <span data-i18n="reports.returnsByReason">المرتجعات حسب السبب</span></h3></div>
-        <div class="chart-container" style="height:240px"><canvas id="returnsReasonChart"></canvas></div>
-      </div>
-    </div>
-
     <!-- === BEST SELLERS === -->
     <div class="card" style="margin-bottom:20px">
       <div class="card-header"><i class="fas fa-trophy"></i> <span data-i18n="reports.topProducts">أفضل المنتجات مبيعاً</span></div>
@@ -273,5 +261,5 @@
   .period-btn:hover { border-color:var(--bmw-blue-1);color:var(--bmw-blue-1); }
   .period-btn.active { background:var(--bmw-blue-1);color:white;border-color:var(--bmw-blue-1); }
   .form-input { padding:6px 10px;border:1px solid var(--silver-300);border-radius:6px;font-size:13px; }
-  .form-input:focus { outline:none;border-color:var(--bmw-blue-1);box-shadow:0 0 0 2px rgba(0,102,177,0.15); }
+  .form-input:focus { outline:none;border-color:var(--bmw-blue-1);box-shadow:0 0 0 2px rgba(var(--accent-rgb),0.15); }
 </style>

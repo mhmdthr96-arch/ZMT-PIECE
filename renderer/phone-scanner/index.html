@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>ZMT Scanner</title>
+  <meta name="theme-color" content="#0066B1">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ZMT Scan">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1522; color: #e6edf7;
+      display: flex; flex-direction: column; align-items: center;
+      overflow: hidden;
+    }
+    .top { width: 100%; padding: 12px 16px; display: flex; align-items: center; gap: 10px; }
+    .top .dot { width: 10px; height: 10px; border-radius: 50%; background: #6c757d; }
+    .top .dot.ok { background: #2ecc71; box-shadow: 0 0 8px #2ecc71; }
+    .top .label { font-size: 15px; font-weight: 600; }
+    .top .sub { font-size: 12px; color: #8a97ab; margin-left: auto; }
+
+    #videoWrap {
+      position: relative; width: 94%; max-width: 420px; aspect-ratio: 1/1;
+      border-radius: 16px; overflow: hidden; background: #000;
+      box-shadow: 0 0 0 3px rgba(0,102,177,.5);
+    }
+    #video { width: 100%; height: 100%; object-fit: cover; }
+    #scanline {
+      position: absolute; left: 4%; right: 4%; top: 46%; height: 8%; z-index: 2;
+      border-radius: 999px;
+      background: linear-gradient(90deg, transparent, #00e676, transparent);
+      opacity: 0; box-shadow: 0 0 12px #00e67656;
+      animation: scan 1.6s ease-in-out infinite;
+    }
+    #scanline.active { opacity: 1; }
+    @keyframes scan {
+      0%,100% { transform: translateY(0); }
+      50% { transform: translateY(34px); }
+    }
+    .corner { position: absolute; width: 34px; height: 34px; border: 4px solid #00e676; border-radius: 6px; z-index: 3; }
+    .corner.tl { top: 8px; left: 8px; border-right: none; border-bottom: none; }
+    .corner.tr { top: 8px; right: 8px; border-left: none; border-bottom: none; }
+    .corner.bl { bottom: 8px; left: 8px; border-right: none; border-top: none; }
+    .corner.br { bottom: 8px; right: 8px; border-left: none; border-top: none; }
+
+    .status { margin-top: 18px; font-size: 16px; font-weight: 500; text-align: center; min-height: 24px; color: #8a97ab; }
+    .status.error { color: #ff6b6b; }
+    .status.ok { color: #2ecc71; }
+    .history { width: 94%; max-width: 420px; margin-top: 16px; flex: 1; overflow-y: auto; }
+    .h-item {
+      background: #182334; border-radius: 10px; padding: 10px 14px; margin-bottom: 8px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .h-item .code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 17px; letter-spacing: 1px; }
+    .h-item .tick { color: #2ecc71; font-size: 18px; }
+    .h-item .time { margin-left: auto; font-size: 12px; color: #8a97ab; }
+
+    .btn {
+      margin-top: 18px; width: 94%; max-width: 420px; padding: 15px;
+      border: none; border-radius: 12px; font-size: 16px; font-weight: 600;
+      background: #0066B1; color: #fff; cursor: pointer;
+    }
+    .btn:disabled { opacity: .5; }
+    .btn.retry { background: #1f2a3d; border: 1px solid #3a4a63; }
+
+    #pairing { display: none; width: 94%; max-width: 420px; text-align: center; }
+    #pairing .spin {
+      width: 40px; height: 40px; border: 4px solid #2a3b52; border-top-color: #0066B1;
+      border-radius: 50%; margin: 20px auto; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #pairing .info { font-size: 14px; color: #8a97ab; line-height: 1.6; }
+    #pairing .name { font-weight: 700; color: #e6edf7; }
+
+    #bootLogo { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 5; background: #0f1522; }
+    #bootLogo barcode-maybe {}
+    #bootLogo .spin {
+      width: 42px; height: 42px; border: 4px solid #2a3b52; border-top-color: #0066B1;
+      border-radius: 50%; animation: spin .8s linear infinite;
+    }
+    #bootLogo .txt { margin-top: 14px; color: #8a97ab; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <span class="dot" id="connDot"></span>
+    <span class="label" id="connLabel">ZMT Scanner</span>
+    <span class="sub" id="connSub">—</span>
+  </div>
+
+  <div id="bootLogo"><div style="text-align:center"><div class="spin"></div><div class="txt">Connecting…</div></div></div>
+
+  <div id="videoWrap">
+    <video id="video" muted playsinline></video>
+    <div class="corner tl"></div><div class="corner tr"></div>
+    <div class="corner bl"></div><div class="corner br"></div>
+    <div id="scanline"></div>
+  </div>
+
+  <div class="status" id="statusText">Starting camera…</div>
+
+  <div id="pairing">
+    <div class="name" id="pairName"></div>
+    <div class="spin"></div>
+    <div class="info">Waiting for the operator to approve this phone on ZMT PIECE…</div>
+  </div>
+
+  <div class="history" id="history"></div>
+  <button class="btn retry" id="retryBtn" style="display:none">Retry</button>
+  <button class="btn" id="installBtn" style="display:none;margin-top:10px;">
+    <span>+ Install app / أضِف للشاشة الرئيسية</span>
+  </button>
+  <div id="iosHint" style="display:none;margin-top:8px;width:94%;max-width:420px;font-size:13px;color:#8a97ab;text-align:center;line-height:1.5;padding:10px 14px;background:#182334;border-radius:10px;">
+    للحصول على أيقونة على الشاشة الرئيسية: افتح قائمة Share واختر <b>"Add to Home Screen"</b>. بمجرد التثبيت، لن تحتاج لمسح رمز QR مرة أخرى — ستفتح التطبيق من الأيقونة مباشرة.
+  </div>
+
+  <script src="vendor/zxing.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

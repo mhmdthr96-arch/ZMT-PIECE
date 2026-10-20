@@ -35,6 +35,10 @@
             <label data-i18n="login.storePassword">كلمة مرور المحل</label>
             <input type="password" id="loginManagerPassword" placeholder="أدخل كلمة المرور" data-i18n-placeholder="login.passwordPlaceholder">
           </div>
+          <div class="login-field" id="loginManagerCompanyField" style="display:none;">
+            <label data-i18n="login.chooseCompany">الشركة</label>
+            <select id="loginManagerCompany" class="login-input" style="padding:12px;border:1px solid var(--silver-300);border-radius:var(--radius);background:#fff;width:100%;font-size:14px;"></select>
+          </div>
           <div class="login-status" id="loginManagerStatus"></div>
           <button class="login-btn login-btn-primary" onclick="loginManagerDo()">
             <i class="fas fa-user-shield"></i> <span data-i18n="login.loginManager">دخول كمدير</span>
@@ -55,11 +59,21 @@
           </div>
           <div class="login-field">
             <label data-i18n="login.usernameLabel">اسم المستخدم</label>
-            <input type="text" id="loginUserUsername" placeholder="اسم المستخدم" data-i18n-placeholder="login.usernamePlaceholder">
+            <div style="display:flex;gap:0;align-items:center;">
+              <input type="text" id="loginUserUsername" placeholder="اسم المستخدم أو اختر من القائمة" data-i18n-placeholder="login.usernamePlaceholder" style="flex:1;border-radius:0 0 0 var(--radius);">
+              <button type="button" class="btn btn-sm" id="loginEmployeeToggle" onclick="loginToggleEmployeeList()" title="اختر موظف" aria-label="اختر موظف" style="border-radius:0 var(--radius) var(--radius) 0;border-left:1px solid var(--silver-300);">
+                <i class="fas fa-caret-down"></i>
+              </button>
+            </div>
+            <div id="loginEmployeeList" style="display:none;border:1px solid var(--silver-300);border-top:none;border-radius:0 0 var(--radius) var(--radius);background:#fff;max-height:160px;overflow-y:auto;"></div>
           </div>
           <div class="login-field">
             <label data-i18n="login.userPassword">كلمة المرور</label>
             <input type="password" id="loginUserPassword" placeholder="كلمة المرور" data-i18n-placeholder="login.passwordPlaceholder">
+          </div>
+          <div class="login-field" id="loginUserCompanyField" style="display:none;">
+            <label data-i18n="login.chooseCompany">الشركة</label>
+            <select id="loginUserCompany" class="login-input" style="padding:12px;border:1px solid var(--silver-300);border-radius:var(--radius);background:#fff;width:100%;font-size:14px;"></select>
           </div>
           <div class="login-status" id="loginUserStatus"></div>
           <button class="login-btn login-btn-primary" onclick="loginUserDo()">
@@ -96,6 +110,10 @@
           <div class="login-field">
             <label data-i18n="login.branchPassword">كلمة مرور الفرع</label>
             <input type="password" id="loginBranchPassword" placeholder="أدخل كلمة المرور" data-i18n-placeholder="login.passwordPlaceholder">
+          </div>
+          <div class="login-field" id="loginBranchCompanyField" style="display:none;">
+            <label data-i18n="login.chooseCompany">الشركة</label>
+            <select id="loginBranchCompany" class="login-input" style="padding:12px;border:1px solid var(--silver-300);border-radius:var(--radius);background:#fff;width:100%;font-size:14px;"></select>
           </div>
           <div class="login-status" id="loginBranchStatus"></div>
           <button class="login-btn login-btn-primary" onclick="loginConnectBranch()">
@@ -153,10 +171,10 @@
 
       <!-- Step 2: Show Code + Password -->
       <div class="recovery-step" id="recoveryStep2" style="display:none;">
-        <div class="recovery-success-icon" style="color:#0066B1;">
+        <div class="recovery-success-icon" style="color:var(--bmw-blue-1);">
           <i class="fas fa-store"></i>
         </div>
-        <div style="background:#f0f7ff;border:1px solid #0066B1;border-radius:8px;padding:16px;margin-bottom:16px;">
+        <div style="background:#f0f7ff;border:1px solid var(--bmw-blue-1);border-radius:8px;padding:16px;margin-bottom:16px;">
           <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
             <span style="color:#666;" data-i18n="login.storeNameSpan">اسم المحل:</span>
             <strong id="recoveryStoreName">-</strong>
@@ -187,10 +205,10 @@
 
       <!-- Step 3: Reset Password -->
       <div class="recovery-step" id="recoveryStep3" style="display:none;">
-        <div class="recovery-success-icon" style="color:#0066B1;">
+        <div class="recovery-success-icon" style="color:var(--bmw-blue-1);">
           <i class="fas fa-lock"></i>
         </div>
-        <h3 style="text-align:center;color:#0066B1;margin-bottom:16px;" data-i18n="login.newPasswordTitle">تعيين كلمة مرور جديدة</h3>
+        <h3 style="text-align:center;color:var(--bmw-blue-1);margin-bottom:16px;" data-i18n="login.newPasswordTitle">تعيين كلمة مرور جديدة</h3>
         <div class="login-field">
           <label data-i18n="login.newPassLabel">كلمة المرور الجديدة</label>
           <input type="password" id="recoveryNewPass" placeholder="أدخل كلمة المرور الجديدة" data-i18n-placeholder="login.newPassPlaceholder">

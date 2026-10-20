@@ -9,8 +9,9 @@ function init_dashboard() {
   if (sel) {
     renderChart(parseInt(sel.value));
     const clone = sel.cloneNode(true);
-    sel.parentNode.replaceChild(clone, clone);
-    clone.addEventListener('change', () => renderChart(parseInt(clone.value)));
+    if (sel.parentNode) {
+      sel.parentNode.replaceChild(clone, sel);
+    }
   }
   renderLowStockAlert();
   renderProfitChart();
@@ -26,8 +27,11 @@ function updateDashboardStats() {
   const totalProducts = products.length;
   const totalCustomers = customers.length;
 
+  const voucherIds = new Set(invoices.filter(i => i.type === 'payment').map(i => i.id));
+  const isVoucherPmt = p => !!(p.invoiceId && voucherIds.has(p.invoiceId));
+
   const totalSales = payments
-    .filter(p => p.customerId)
+    .filter(p => p.customerId && !isVoucherPmt(p))
     .reduce((s, p) => s + p.amount, 0);
 
   const now = new Date();
@@ -35,19 +39,20 @@ function updateDashboardStats() {
   const monthInvoices = invoices.filter(inv => inv.type === 'customer' && inv.createdAt >= monthStart);
   const thisMonthTotal = monthInvoices.reduce((s, inv) => s + inv.totalAmount, 0);
 
-  document.getElementById('statInventory').textContent = totalItems.toLocaleString();
+  document.getElementById('statInventory').textContent = (typeof window.toLatinDigits === 'function') ? window.toLatinDigits(totalItems.toLocaleString('en-US')) : totalItems.toLocaleString();
   document.getElementById('statInvoices').textContent = monthInvoices.length;
   document.getElementById('statCustomers').textContent = totalCustomers;
-  document.getElementById('statSales').textContent = `DA${totalSales.toFixed(1).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+  document.getElementById('statSales').textContent = `DA${fmtMoney(totalSales)}`;
 
   document.getElementById('dashLowStock').textContent = products.filter(p => p.quantity > 0 && p.quantity <= 5).length;
-  document.getElementById('dashMonthSales').textContent = `DA${thisMonthTotal.toFixed(2)}`;
-  document.getElementById('dashProfit').textContent = `DA${invoices.filter(i => i.type === 'customer' && DB.getInvoicePaidAmount(i.id) >= (i.totalAmount || 0)).reduce((s, i) => s + (i.profit || 0), 0).toFixed(2)}`;
+  document.getElementById('dashMonthSales').textContent = `DA${fmtMoney(thisMonthTotal)}`;
+  document.getElementById('dashProfit').textContent = `DA${fmtMoney(invoices.filter(i => i.type === 'customer' && DB.getInvoiceEffectivePaid(i) >= (i.totalAmount || 0)).reduce((s, i) => s + (i.profit || 0), 0))}`;
 }
 
 function generateRealData(months) {
   const invoices = DB.getInvoices();
-  const payments = DB.getPayments().filter(p => p.customerId);
+  const voucherIds = new Set(invoices.filter(i => i.type === 'payment').map(i => i.id));
+  const payments = DB.getPayments().filter(p => p.customerId && !(p.invoiceId && voucherIds.has(p.invoiceId)));
   const returns = DB.getReturns();
   const products = DB.getProducts();
   const now = new Date();
@@ -69,7 +74,7 @@ function generateRealData(months) {
     const returnQty = monthReturns.reduce((s, r) => s + (r.qty || 0), 0);
 
     const monthProfit = invoices
-      .filter(inv => inv.type === 'customer' && inv.createdAt >= mStart && inv.createdAt <= mEndTs && DB.getInvoicePaidAmount(inv.id) >= (inv.totalAmount || 0))
+      .filter(inv => inv.type === 'customer' && inv.createdAt >= mStart && inv.createdAt <= mEndTs && DB.getInvoiceEffectivePaid(inv) >= (inv.totalAmount || 0))
       .reduce((s, inv) => s + (inv.profit || 0), 0);
 
     data.push({ label, sales, inventory, returns: returnQty, profit: monthProfit });
@@ -196,3 +201,13 @@ function renderLowStockAlert() {
 }
 
 window.renderChart = renderChart;
+
+// ===== LAN SYNC HANDLER =====
+window._pageSyncHandlers = window._pageSyncHandlers || {};
+window._pageSyncHandlers['dashboard'] = function dashboardSyncData() {
+  // Refresh the stat cards, low-stock alert and profit split in place; the
+  // month bar/line charts keep their current period (they read monthSelect).
+  updateDashboardStats();
+  renderLowStockAlert();
+  renderProfitChart();
+};

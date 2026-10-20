@@ -1,0 +1,121 @@
+<div class="page" id="page-expenses">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-money-bill-wave"></i> <span data-i18n="expenses.title">المصاريف</span></h1>
+      <p><span data-i18n="expenses.sub">سجل كل المصروفات المسجلة في صافي الحساب مع الوقت والتاريخ</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon" style="background:#dc3545"><i class="fas fa-arrow-down"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="expTotalAmount">DA0.00</span>
+          <span class="stat-label" data-i18n="expenses.totalLabel">إجمالي المصروفات</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon" style="background:var(--bmw-blue-1)"><i class="fas fa-list-ol"></i></div>
+        <div class="stat-info">
+          <span class="stat-value" id="expTotalCount">0</span>
+          <span class="stat-label" data-i18n="expenses.countLabel">عدد العمليات</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbar" style="flex-wrap:wrap">
+      <div class="search-bar" style="min-width:260px">
+        <i class="fas fa-search"></i>
+        <input type="text" id="expSearch" data-i18n-placeholder="expenses.searchPlaceholder" placeholder="بحث باسم الفاتورة أو المورد أو العميل...">
+      </div>
+      <button class="btn" id="btnExpYear" onclick="openExpDatePicker('year')" style="min-width:120px"><i class="fas fa-calendar-alt"></i> <span id="expYearLabel" data-i18n="expenses.allYears">كل السنوات</span></button>
+      <button class="btn" id="btnExpMonth" onclick="openExpDatePicker('month')" style="min-width:120px"><i class="fas fa-calendar-alt"></i> <span id="expMonthLabel" data-i18n="expenses.allMonths">كل الشهور</span></button>
+      <button class="btn" id="btnExpDay" onclick="openExpDatePicker('day')" style="min-width:120px"><i class="fas fa-calendar-alt"></i> <span id="expDayLabel" data-i18n="expenses.allDays">كل الأيام</span></button>
+      <button class="btn" id="btnAddExpense" onclick="openAddExpenseModal()" style="background:#dc3545;color:#fff;display:inline-flex"><i class="fas fa-plus"></i> <span data-i18n="expenses.addBtn">إضافة صرف</span></button>
+      <input type="hidden" id="expYearVal" value="">
+      <input type="hidden" id="expMonthVal" value="">
+      <input type="hidden" id="expDayVal" value="">
+    </div>
+
+    <div class="card">
+      <div class="card-header"><i class="fas fa-list"></i> <span data-i18n="expenses.listTitle">سجل المصروفات</span></div>
+      <div class="card-body">
+        <div id="expList"></div>
+        <div style="text-align:center;margin-top:16px">
+          <button class="btn btn-primary" id="expShowMoreBtn" style="display:none" onclick="expLoadMore()"><i class="fas fa-chevron-down"></i> <span data-i18n="expenses.showMore">إظهار المزيد</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== ADD EXPENSE MODAL ===== -->
+<div class="modal-overlay" id="addExpenseModal" style="display:none">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <h3><i class="fas fa-money-bill-wave"></i> <span data-i18n="expenses.addTitle">إضافة صرف</span></h3>
+      <button class="modal-close" onclick="closeAddExpenseModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label data-i18n="expenses.reasonLabel">السبب</label>
+        <input type="text" class="form-input" id="expReason" data-i18n-placeholder="expenses.reasonPlaceholder" placeholder="مثال: نقل بضاعة، فاتورة كهرباء..." maxlength="120">
+      </div>
+      <div class="form-group">
+        <label data-i18n="expenses.amountLabel">المبلغ</label>
+        <input type="number" class="form-input no-spinner" id="expAmount" value="" min="0" step="0.01" style="font-size:22px;font-weight:700;text-align:center" placeholder="0.00" oninput="onExpAmountInput()">
+      </div>
+      <div class="form-group">
+        <label style="font-size:13px;font-weight:600" data-i18n="sales.payMethod">طريقة الدفع</label>
+        <div class="sales-pay-methods">
+          <button class="pay-method-btn active" data-method="cash" onclick="setExpenseMethod('cash')" data-i18n="sales.payCash">نقداً</button>
+          <button class="pay-method-btn" data-method="ccp" onclick="setExpenseMethod('ccp')" data-i18n="sales.payCcp">CCP</button>
+          <button class="pay-method-btn" data-method="mixed" onclick="setExpenseMethod('mixed')" data-i18n="sales.payBoth">الاثنان معاً</button>
+        </div>
+      </div>
+      <div id="expMixedPay" style="display:none">
+        <div class="form-row">
+          <div class="form-group">
+            <label style="font-size:13px;font-weight:600" data-i18n="sales.cashAmount">المبلغ النقدي</label>
+            <input type="number" class="form-input no-spinner" id="expCashAmount" value="0" min="0" step="0.01" style="font-size:18px;font-weight:700;text-align:center" oninput="onExpMixedInput('cash')">
+          </div>
+          <div class="form-group">
+            <label style="font-size:13px;font-weight:600" data-i18n="sales.ccpAmount">مبلغ CCP</label>
+            <input type="number" class="form-input no-spinner" id="expCcpAmount" value="0" min="0" step="0.01" style="font-size:18px;font-weight:700;text-align:center" oninput="onExpMixedInput('ccp')">
+          </div>
+        </div>
+        <div id="expMixedTotal" style="text-align:center;font-size:15px;font-weight:700;color:#28a745;margin-top:6px"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeAddExpenseModal()" data-i18n="common.cancel">إلغاء</button>
+      <button class="btn btn-primary" onclick="confirmAddExpense()"><i class="fas fa-check"></i> <span data-i18n="expenses.saveBtn">تسجيل الصرف</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== DATE PICKER MODAL ===== -->
+<div class="modal-overlay" id="expDatePickerModal" style="display:none">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3><i class="fas fa-calendar-alt"></i> <span id="expDatePickerTitle"></span></h3>
+      <button class="modal-close" onclick="closeExpDatePicker()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="expDatePickerItems" style="display:flex;flex-wrap:wrap;gap:8px;max-height:320px;overflow-y:auto"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="expSetDateFilter('all')" data-i18n="expenses.allLabel">الكل</button>
+      <button class="btn btn-primary" onclick="closeExpDatePicker()" data-i18n="common.done">تم</button>
+    </div>
+  </div>
+</div>
+
+<!-- Expenses page styles -->
+<style>
+  .exp-date-item { border:1px solid var(--silver-300); background:white; font-size:12px; }
+  .exp-date-item:hover { border-color:var(--bmw-blue-1); color:var(--bmw-blue-1); }
+  .exp-date-item.active { background:var(--bmw-blue-1); color:white; border-color:var(--bmw-blue-1); }
+  .form-group input.has-value { border-color:var(--bmw-blue-1); }
+</style>

@@ -19,6 +19,7 @@
         <div class="sd-info-details" id="sdDetails"></div>
       </div>
       <div class="sd-info-actions">
+        <button class="btn btn-sm" onclick="openBalanceEditModal('supplier', _sdSupplierId)" title="تعديل الرصيد" id="sdBalEditBtn"><i class="fas fa-coins"></i></button>
         <button class="btn btn-sm" onclick="showSdEditForm()" title="تعديل" data-i18n-title="common.edit"><i class="fas fa-edit"></i></button>
         <button class="btn btn-sm btn-danger" onclick="confirmSdDelete()" title="حذف" data-i18n-title="common.delete"><i class="fas fa-trash"></i></button>
       </div>
@@ -49,13 +50,16 @@
       </div>
     </div>
 
-    <!-- Tabs: Invoices & Payments -->
+    <!-- Tabs: Invoices & Payments & Records -->
     <div class="sd-tabs">
-      <button class="sd-tab active" onclick="switchSdTab('invoices')">
+      <button class="sd-tab active" data-tab="invoices" onclick="switchSdTab('invoices')">
         <i class="fas fa-file-invoice"></i> <span data-i18n="invoices.title">الفواتير</span> <span class="sd-badge" id="sdInvCount">0</span>
       </button>
-      <button class="sd-tab" onclick="switchSdTab('payments')">
+      <button class="sd-tab" data-tab="payments" onclick="switchSdTab('payments')">
         <i class="fas fa-money-bill-wave"></i> <span data-i18n="debts.payments">الدفعات</span> <span class="sd-badge" id="sdPayCount">0</span>
+      </button>
+      <button class="sd-tab" data-tab="records" onclick="switchSdTab('records')">
+        <i class="fas fa-clipboard-list"></i> السجل <span class="sd-badge" id="sdRecCount">0</span>
       </button>
     </div>
 
@@ -79,6 +83,11 @@
       </div>
       <div id="sdPaymentsList"></div>
     </div>
+
+    <!-- Records Tab (سجل المورد) -->
+    <div id="sdTabRecords" class="sd-tab-content" style="display:none">
+      <div id="sdRecordsList"></div>
+    </div>
   </div>
 </div>
 
@@ -101,7 +110,7 @@
       </div>
       <div style="display:flex;gap:6px">
         <button class="btn" onclick="document.getElementById('sdInvoiceModal').style.display='none'"><span data-i18n="common.close">إغلاق</span></button>
-        <button class="btn btn-danger" id="sdDeleteInvoiceBtn" onclick="deleteInvoiceFromDetail()" style="display:none">
+        <button class="btn btn-danger" id="sdDeleteInvoiceBtn" onclick="sdDeleteInvoiceFromDetail()" style="display:none">
           <i class="fas fa-trash"></i> <span data-i18n="common.delete">حذف</span>
         </button>
       </div>
@@ -133,6 +142,39 @@
     <div class="modal-footer">
       <button class="btn" onclick="closePayModal()"><span data-i18n="common.cancel">إلغاء</span></button>
       <button class="btn btn-success" onclick="confirmPay()"><i class="fas fa-check"></i> <span data-i18n="common.confirmPay">تأكيد الدفع</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Supplier Modal -->
+<div class="modal-overlay" id="editSupplierModal">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header">
+      <h3><i class="fas fa-edit"></i> <span data-i18n="suppliers.editModalTitle">تعديل المورد</span></h3>
+      <button class="modal-close" onclick="closeSdEdit()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label><span data-i18n="suppliers.formName">اسم المورد</span> <span class="required">*</span></label>
+        <input type="text" class="form-input" id="editSupName">
+      </div>
+      <div class="form-group">
+        <label><span data-i18n="suppliers.formPhone">رقم الهاتف</span></label>
+        <input type="text" class="form-input" id="editSupPhone" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label><span data-i18n="suppliers.formAddress">العنوان</span></label>
+        <input type="text" class="form-input" id="editSupAddress">
+      </div>
+      <div class="form-group">
+        <label><span data-i18n="suppliers.formEmail">البريد الإلكتروني (اختياري)</span></label>
+        <input type="email" class="form-input" id="editSupEmail" dir="ltr">
+      </div>
+      <input type="hidden" id="editSupId">
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeSdEdit()"><span data-i18n="suppliers.cancel">إلغاء</span></button>
+      <button class="btn btn-success" onclick="confirmSdEdit()"><i class="fas fa-check"></i> <span data-i18n="suppliers.save">حفظ</span></button>
     </div>
   </div>
 </div>
