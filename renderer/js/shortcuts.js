@@ -455,7 +455,17 @@
       case 'F2': e.preventDefault(); handleAddSupplier(); break;
       case 'F3': e.preventDefault(); handleAddCustomer(); break;
       case 'F4': e.preventDefault(); handleSalesHistory(); break;
+      case 'F12': e.preventDefault(); openDrawerHotkey(); break;
       case 'Escape': handleEscape(e); break;
     }
   });
+
+  // F12 opens the cash drawer. The main process intercepts F12 first and sends
+  // an IPC event (the reliable path); this DOM handler is the redundant safety
+  // net for builds where the main-process hook is unavailable. The drawer module
+  // guards against double-firing with a busy flag, so both paths are harmless.
+  function openDrawerHotkey() {
+    if (typeof window.CashDrawer === 'undefined') return;
+    try { window.CashDrawer.openManual(); } catch (e) {}
+  }
 })();

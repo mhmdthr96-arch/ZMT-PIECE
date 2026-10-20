@@ -2198,6 +2198,14 @@ function confirmSalesCheckout() {
   } else {
     showInvoicePreview(inv);
   }
+
+  // Cash drawer: kick the drawer open after a confirmed sale. Deliberately
+  // fire-and-forget — a drawer that will not open must never hold up the
+  // cashier; the module shows a short toast only when it is worth nagging.
+  if (window.CashDrawer && window.CashDrawer.isAvailable()) {
+    try { window.CashDrawer.openFromSale(); } catch (e) {}
+  }
+
   document.getElementById('salesBarcodeScan').focus();
 }
 

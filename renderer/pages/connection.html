@@ -67,6 +67,9 @@
       <button class="conn-tab" data-tab="display" onclick="connSwitchTab('display')" id="connTabDisplayBtn">
         <i class="fas fa-tv"></i> <span data-i18n="pd.tab">شاشة عرض السعر</span>
       </button>
+      <button class="conn-tab" data-tab="drawer" onclick="connSwitchTab('drawer')" id="connTabDrawerBtn" style="display:none;">
+        <i class="fas fa-cash-register"></i> <span data-i18n="drawer.tab">درج النقود</span>
+      </button>
     </div>
 
     <!-- TAB: SETUP -->
@@ -669,6 +672,139 @@
             </div>
             <div class="conn-sync-result" id="pdPinResult"></div>
           </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: CASH DRAWER («درج النقود») — managers only -->
+    <div class="conn-tab-content" id="connTabDrawer">
+      <div class="conn-card">
+        <div class="conn-card-header">
+          <i class="fas fa-cash-register"></i>
+          <span data-i18n="drawer.title">درج النقود</span>
+        </div>
+        <div class="conn-card-body">
+          <p class="conn-info-text" data-i18n="drawer.desc">يفتح البرنامج درج النقود تلقائيًا بعد كل عملية بيع، وبالضغط على F12 في أي وقت. الدرج يُفتح عبر طابعتك الحرارية (نبضة ESC/POS)، وليس عبر الكمبيوتر مباشرة.</p>
+
+          <!-- ENABLE + OPEN ON SALE -->
+          <div class="conn-auto-toggle" style="margin-bottom:8px;">
+            <label class="switch">
+              <input type="checkbox" id="drawerEnabled" onchange="drawerToggleEnabled()">
+              <span class="slider"></span>
+            </label>
+            <span data-i18n="drawer.enable">فتح الدرج تلقائيًا بعد كل عملية بيع</span>
+          </div>
+          <div class="conn-sync-result" id="drawerEnableResult"></div>
+
+          <!-- STATUS STRIP -->
+          <div class="phs-status-strip" id="drawerStatusStrip" style="margin-top:14px;">
+            <div class="phs-status-icon" id="drawerStatusIcon"><i class="fas fa-circle-notch fa-spin"></i></div>
+            <div>
+              <div class="phs-status-title" id="drawerStatusTitle">—</div>
+              <div class="phs-status-clients" id="drawerStatusSub"></div>
+            </div>
+          </div>
+
+          <!-- SCAN -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-search" style="color:#0066b1;"></i> <span data-i18n="drawer.scanTitle">المسح والاكتشاف</span></h4>
+            <p class="conn-info-text" data-i18n="drawer.scanDesc">ابحث عن منافذ COM والطابعات المتصلة بهذا الكمبيوتر، ثم اختر الهدف الذي يوجد عليه الدرج.</p>
+            <div class="conn-actions">
+              <button class="btn btn-primary" onclick="drawerScan()"><i class="fas fa-search"></i> <span data-i18n="drawer.scanBtn">مسح واكتشاف</span></button>
+              <button class="btn btn-secondary" onclick="drawerUseLastGood()"><i class="fas fa-history"></i> <span data-i18n="drawer.useLastGood">استعمال آخر مسار ناجح</span></button>
+            </div>
+            <div class="conn-sync-result" id="drawerScanResult"></div>
+            <div id="drawerTargetsList" style="margin-top:10px;"></div>
+            <div id="drawerPsInfo" class="conn-info-text" style="margin-top:8px;"></div>
+          </div>
+
+          <!-- MANUAL TARGET -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-plug" style="color:#0066b1;"></i> <span data-i18n="drawer.targetTitle">الهدف (يدوي)</span></h4>
+            <div class="pd-grid">
+              <div class="pd-field">
+                <label for="drawerTransport" data-i18n="drawer.transport">طريقة الاتصال</label>
+                <select class="form-input" id="drawerTransport" onchange="drawerOnTransportChange()">
+                  <option value="auto" data-i18n="drawer.transportAuto">تلقائي (يجرّب الكل)</option>
+                  <option value="com" data-i18n="drawer.transportCom">منفذ COM</option>
+                  <option value="net" data-i18n="drawer.transportNet">شبكة (IP:9100)</option>
+                  <option value="win" data-i18n="drawer.transportWin">طابعة ويندوز</option>
+                  <option value="raw-usb" data-i18n="drawer.transportRawUsb">كتابة خام — منفذ USB افتراضي</option>
+                  <option value="raw-com" data-i18n="drawer.transportRawCom">كتابة خام — منفذ COM</option>
+                </select>
+              </div>
+              <div class="pd-field" id="drawerComField">
+                <label for="drawerComPort" data-i18n="drawer.comPort">منفذ COM</label>
+                <input type="text" class="form-input" id="drawerComPort" dir="ltr" placeholder="COM3" onchange="drawerSaveConfig()">
+              </div>
+              <div class="pd-field" id="drawerRawUsbField">
+                <label for="drawerRawUsb" data-i18n="drawer.rawUsbLabel">منفذ USB الخام</label>
+                <input type="text" class="form-input" id="drawerRawUsb" dir="ltr" placeholder="USB002" onchange="drawerSaveConfig()">
+              </div>
+              <div class="pd-field" id="drawerHostField">
+                <label for="drawerHost" data-i18n="drawer.host">عنوان IP</label>
+                <input type="text" class="form-input" id="drawerHost" dir="ltr" placeholder="192.168.1.50" onchange="drawerSaveConfig()">
+              </div>
+              <div class="pd-field" id="drawerPortField">
+                <label for="drawerPort" data-i18n="drawer.port">المنفذ</label>
+                <input type="number" class="form-input" id="drawerPort" dir="ltr" value="9100" min="1" max="65535" onchange="drawerSaveConfig()">
+              </div>
+              <div class="pd-field" id="drawerPrinterField">
+                <label for="drawerPrinterName" data-i18n="drawer.printerName">اسم الطابعة (ويندوز)</label>
+                <input type="text" class="form-input" id="drawerPrinterName" onchange="drawerSaveConfig()">
+              </div>
+            </div>
+          </div>
+
+          <!-- PULSE -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-bolt" style="color:#0066b1;"></i> <span data-i18n="drawer.pulseTitle">أمر الفتح (النبضة)</span></h4>
+            <p class="conn-info-text" data-i18n="drawer.pulseDesc">إن لم يفتح الدرج، جرّب أمرًا آخر. زر «اختبار الاتصال» يجرّب الأوامر كلها تلقائيًا ويحفظ الذي نجح.</p>
+            <div class="pd-grid">
+              <div class="pd-field">
+                <label for="drawerPulse" data-i18n="drawer.pulse">الأمر</label>
+                <select class="form-input" id="drawerPulse" onchange="drawerSaveConfig()"></select>
+              </div>
+              <div class="pd-field">
+                <label for="drawerCustomHex" data-i18n="drawer.customHex">أمر مخصّص (Hex، اختياري)</label>
+                <input type="text" class="form-input" id="drawerCustomHex" dir="ltr" placeholder="1B 70 00 19 FA" onchange="drawerSaveConfig()">
+              </div>
+              <div class="pd-field">
+                <label for="drawerTimeout" data-i18n="drawer.timeout">المهلة (مللي ثانية)</label>
+                <input type="number" class="form-input" id="drawerTimeout" dir="ltr" value="4000" min="500" max="30000" onchange="drawerSaveConfig()">
+              </div>
+            </div>
+          </div>
+
+          <!-- TEST -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-vial" style="color:#0066b1;"></i> <span data-i18n="drawer.testTitle">اختبار الاتصال</span></h4>
+            <p class="conn-info-text" data-i18n="drawer.testDesc">اضغط الزر وراقب الدرج: إن فُتح فقد نجح الإعداد ويُحفظ تلقائيًا.</p>
+            <div class="conn-actions">
+              <button class="btn btn-success btn-lg" id="drawerTestBtn" onclick="drawerTest()"><i class="fas fa-cash-register"></i> <span data-i18n="drawer.testBtn">اختبار الاتصال (افتح الدرج)</span></button>
+              <button class="btn btn-secondary btn-lg" id="drawerTestRawBtn" onclick="drawerTestRaw()"><i class="fas fa-terminal"></i> <span data-i18n="drawer.rawBtn">جرّب المسار الخام فقط</span></button>
+            </div>
+            <div class="conn-sync-result" id="drawerTestResult"></div>
+            <div id="drawerAttempts"></div>
+            <p class="conn-info-text" style="margin-top:8px;" data-i18n="drawer.rawDesc">«المسار الخام» يفتح منفذ USB الافتراضي (USB001/USB002) كملف جهاز ويرسل النبضة مباشرة متجاوزًا مشغّل الطباعة. قد ينجح أو يفشل حسب الطابعة والنسخة — المحاولة آمنة ولا تضرّ.</p>
+          </div>
+
+          <!-- FALLBACK -->
+          <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-life-ring" style="color:#e67e22;"></i> <span data-i18n="drawer.fallbackTitle">حل احتياطي (غير مُنصَح به)</span></h4>
+            <p class="conn-info-text" data-i18n="drawer.fallbackDesc">إن لم تدعم طابعتك النبضة الخام، يمكن طبع صفحة تُفعّل الدرج عبر مشغّل الطباعة. تحذير: يستهلك ورقًا وقد لا ينجح دائمًا.</p>
+            <div class="conn-auto-toggle" style="margin-bottom:8px;">
+              <label class="switch">
+                <input type="checkbox" id="drawerFallback" onchange="drawerSaveConfig()">
+                <span class="slider"></span>
+              </label>
+              <span data-i18n="drawer.fallbackOn">تفعيل الحل الاحتياطي عند فشل النبضة</span>
+            </div>
+          </div>
+
+          <!-- NOTES -->
+          <div class="conn-info-text" style="margin-top:18px;padding:12px;background:rgba(230,126,34,0.08);border-radius:8px;" data-i18n="drawer.note">ملاحظة مهمة: إن لم يُفتح الدرج بأي أمر، فطابعتك لا تدعم الفتح البرمجي — استعمل المفتاح المعدني للدرج، أو استبدل الطابعة بطابعة ESC/POS.</div>
 
         </div>
       </div>

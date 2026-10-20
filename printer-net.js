@@ -95,12 +95,71 @@ function runPS(expression, timeoutMs) {
   });
 }
 
+// Like wrapScript, but for a MULTI-STATEMENT body. wrapScript puts the expression
+// inside "( ... )" so it can be piped to ConvertTo-Json — that only parses for a
+// single pipeline. Serial/network sends need several statements (open, write,
+// close), so here the body runs as-is and must end by emitting the object to the
+// pipeline itself (or call `return`).
+function wrapScriptBlock(script, resultFile) {
+  const q = resultFile.replace(/'/g, "''");
+  return (
+    "$ErrorActionPreference = 'Stop'\n" +
+    'try {\n' +
+    '  $__zmt = & {\n' +
+    script +
+    '\n  }\n' +
+    '  $__zmt | ConvertTo-Json -Compress -Depth 6 | Out-File -Encoding utf8 -LiteralPath \'' +
+    q +
+    '\'\n' +
+    '} catch {\n' +
+    '  [pscustomobject]@{\n' +
+    '    __error = ($_.Exception.Message | Out-String).Trim()\n' +
+    '  } | ConvertTo-Json -Compress | Out-File -Encoding utf8 -LiteralPath \'' +
+    q +
+    '\'\n' +
+    '}\n'
+  );
+}
+
+// Same contract as runPS() but takes a multi-statement script block.
+function runPSBlock(script, timeoutMs) {
+  return new Promise((resolve) => {
+    const resultFile = newResultFile();
+    let resolved = false;
+    const safeResolve = (v) => { if (!resolved) { resolved = true; try { clearTimeout(timer); } catch (e) {} resolve(v); } };
+    const child = spawn(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encode(wrapScriptBlock(script, resultFile))],
+      { windowsHide: true, shell: false }
+    );
+    let errOut = '';
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch (e) {}
+      safeResolve({ success: false, error: 'TIMEOUT (' + (timeoutMs || 25000) + 'ms)' });
+    }, timeoutMs || 25000);
+    child.stderr.on('data', (d) => { errOut += d.toString(); });
+    child.on('error', (e) => {
+      safeResolve({ success: false, error: e.message });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (resolved) return;
+      resolved = true;
+      const data = readResultFile(resultFile);
+      if (data && data.__error) {
+        resolve({ success: false, error: data.__error });
+        return;
+      }
+      resolve({ success: code === 0, data, stderr: errOut });
+    });
+  });
+}
+
 // Run PowerShell elevated via UAC: shows a consent prompt; the child writes a
 // result file, we wait, then read it. A denied/cancelled prompt surfaces as a
 // needsPermission flag instead of an exception so the UI can show a manual hint
 // (mirrors lan-ensure-firewall).
-function runPSElevated(expression, timeoutMs) {
-  return new Promise((resolve) => {
+function runPSElevated(expression, timeoutMs) {  return new Promise((resolve) => {
     const resultFile = newResultFile();
     let resolved = false;
     const safeResolve = (v) => { if (!resolved) { resolved = true; try { clearTimeout(timer); } catch (e) {} resolve(v); } };
@@ -435,6 +494,554 @@ ${serversImplant}Restart-Service Spooler -Force
   return { success: true, data: r.data };
 }
 
+// ============================================================================
+// CASH DRAWER («درج النقود»)
+// ----------------------------------------------------------------------------
+// A cash drawer is a dumb mechanical box wired to the RJ11 kick port of a
+// thermal printer: it opens only when the printer receives the ESC/POS pulse
+// (ESC p m t1 t2). Two consequences drive everything below:
+//   * the pulse must be RAW bytes — webContents.print() sends a rasterised page,
+//     so it can never open a drawer; and
+//   * if the printer has no ESC/POS kick support, NO software can open it.
+// We therefore speak to the drawer over several transports, all through the same
+// PowerShell 5.1 layer the LAN printer module already uses (no native modules,
+// so the Electron 22 / Windows 7 build is untouched):
+//   - COM     : [IO.Ports.SerialPort]
+//   - LAN     : [Net.Sockets.TcpClient] to a JetDirect-style IP:9100
+//   - RAW-USB : [IO.File]::Open('\\.\USB00x') — best-effort, bypasses the spooler
+//   - RAW-COM : [IO.File]::Open('\\.\COMx')   — when another app holds the port
+//   - WIN     : the printer's own port, resolved from Win32_Printer
+// Stored per device in userData/cash-drawer.json (see main.js).
+// ============================================================================
+
+// Default ESC/POS kick command, plus the variants that real printers accept.
+// Some models ignore m/t1/t2 differences, others need the init first, and a few
+// only react on the pin-5 (ring/bell) line — so we try them in order and keep
+// whichever one the shop's hardware actually answered to.
+const DRAWER_PULSES = [
+  { id: 'kick-a', label: 'ESC p 0 25 250', hex: '1B 70 00 19 FA' },
+  { id: 'kick-b', label: 'ESC p 0 25 0', hex: '1B 70 00 19 00' },
+  { id: 'kick-c', label: 'ESC p 1 25 250', hex: '1B 70 01 19 FA' },
+  { id: 'init-kick', label: 'ESC @ + kick', hex: '1B 40 1B 70 00 19 FA' },
+  { id: 'bell', label: 'Bell (pin 5 line)', hex: '07 1B 70 00 19 FA' },
+];
+
+function drawerDefaults() {
+  return {
+    enabled: false,           // open the drawer automatically after each sale
+    transport: 'auto',        // auto | com | net | win
+    comPort: '',              // e.g. COM3
+    baudRate: 9600,
+    host: '',                 // e.g. 192.168.1.50
+    port: 9100,
+    printerName: '',          // Windows printer whose port carries the drawer
+    rawUsbPort: '',           // USB001/USB002 — reached as \\.\USB002 (best effort)
+    pulseId: 'kick-a',
+    customHex: '',            // when set, overrides pulseId
+    timeoutMs: 4000,
+    lastGood: null,           // { transport, pulseId, hex, at } — fastest path
+    fallbackPrint: false,     // last-resort: print a kick page through the driver
+  };
+}
+
+// Accept "1B 70 00 19 FA", "1b700019fa" or "1B,70,00,19,FA" alike.
+function parseHexBytes(hex) {
+  const clean = String(hex || '').replace(/0x/gi, '').replace(/[^0-9a-fA-F]/g, '');
+  if (!clean || clean.length % 2 !== 0) return null;
+  const out = [];
+  for (let i = 0; i < clean.length; i += 2) out.push(parseInt(clean.slice(i, i + 2), 16));
+  return out.every((b) => Number.isFinite(b)) ? out : null;
+}
+
+// PowerShell literal for a byte array; keep it tiny so it survives EncodedCommand.
+function psBytes(bytes) {
+  return '@(' + bytes.map((b) => String(b)).join(',') + ')';
+}
+
+// Resolve the pulse the user configured (custom hex wins over the preset).
+function resolvePulse(cfg) {
+  const custom = parseHexBytes(cfg && cfg.customHex);
+  if (custom && custom.length) return { id: 'custom', label: 'custom', bytes: custom, hex: custom.map((b) => b.toString(16).toUpperCase().padStart(2, '0')).join(' ') };
+  const want = String((cfg && cfg.pulseId) || 'kick-a');
+  const found = DRAWER_PULSES.find((p) => p.id === want) || DRAWER_PULSES[0];
+  return { id: found.id, label: found.label, bytes: parseHexBytes(found.hex), hex: found.hex };
+}
+
+// ---- PowerShell version probe (Windows 7 may ship 2.0, which lacks Get-Printer) ----
+let _psInfo = null;
+async function detectPowerShell() {
+  if (_psInfo) return _psInfo;
+  // Resolve the real executable rather than trusting PATH: on a few locked-down
+  // Win7 images the PATH entry is missing even though the shell is installed.
+  // NOTE: runPS wraps the expression in "( ... )" and pipes it to ConvertTo-Json,
+  // so it must be ONE pipeline — no leading assignments (they break the grouping).
+  const r = await runPS(
+    `[pscustomobject]@{
+  version       = $PSVersionTable.PSVersion.Major
+  exe           = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source
+  hasGetPrinter = [bool](Get-Command Get-Printer -ErrorAction SilentlyContinue)
+  exeFallback   = [bool](Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'))
+}`,
+    20000
+  );
+  const d = (r && r.success && r.data) ? r.data : {};
+  _psInfo = {
+    success: !!(r && r.success),
+    version: parseInt(d.version, 10) || 2,
+    exe: d.exe || '',
+    hasGetPrinter: !!d.hasGetPrinter,
+    // Win32_Printer is the WMI fallback that works on PowerShell 2.0 as well.
+    useWmi: !d.hasGetPrinter,
+  };
+  return _psInfo;
+}
+
+// ---- Scan: enumerate every target a drawer could hang off -------------------
+async function scanDrawerTargets() {
+  const ps = await detectPowerShell();
+
+  // Serial ports (drawer wired straight to COM, or through a USB→Serial adapter).
+  const comExpr = `@(Get-CimInstance Win32_SerialPort -ErrorAction SilentlyContinue | ForEach-Object {
+    [pscustomobject]@{
+      port        = $_.DeviceID
+      description = $_.Description
+      name        = $_.Name
+      pnpId       = $_.PNPDeviceID
+    }
+  })`;
+
+  // Printers + their ports. Prefer Get-Printer (Win8+/WMF3+); fall back to WMI
+  // so a bare Windows 7 with PowerShell 2.0 still returns a usable list.
+  const printerExpr = ps.useWmi
+    ? `@(Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | ForEach-Object {
+        [pscustomobject]@{
+          name        = $_.Name
+          portName    = $_.PortName
+          driverName  = $_.DriverName
+          isDefault   = [bool]$_.Default
+          shared      = [bool]$_.Shared
+          printerStatus = $_.PrinterStatus
+        }
+      })`
+    : `@(Get-Printer -ErrorAction SilentlyContinue | ForEach-Object {
+        [pscustomobject]@{
+          name        = $_.Name
+          portName    = $_.PortName
+          driverName  = $_.DriverName
+          isDefault   = [bool]$_.Default
+          shared      = [bool]$_.Shared
+          printerStatus = 3
+        }
+      })`;
+
+  const [comRes, prnRes] = await Promise.all([
+    runPS(comExpr, 25000),
+    runPS(printerExpr, 25000),
+  ]);
+
+  const comList = (comRes && comRes.success && Array.isArray(comRes.data)) ? comRes.data : [];
+  const prnList = (prnRes && prnRes.success && Array.isArray(prnRes.data)) ? prnRes.data : [];
+  if (prnList.length === 0 && prnRes && prnRes.data && !Array.isArray(prnRes.data)) {
+    prnList.push(prnRes.data);
+  }
+
+  // Thermal / POS printer names worth trusting for ESC/POS kick support.
+  const THERMAL_RE = /epson|tm-|xprinter|xp-|rongta|goojprt|bixolon|star |citizen|pos-?80|pos-?58|thermal|receipt|zebra|gprinter|hoin|snbc|munbyn|beeprt|hprt|aisino|sewoo|seri(es)? ?80/i;
+  // Ports that carry raw ESC/POS: real serial or a TCP address.
+  const RAW_PORT_RE = /^(COM\d+|\\\\|\\\\[^\\]+\\)/i;
+  const USB_PORT_RE = /^USB\d{3}$/i;   // spooler's virtual USB port — not raw-sendable
+  const VIRTUAL_PORT_RE = /^(PORTPROMPT|FILE|NUL|SHRFAX|Microsoft)/i;
+
+  const targets = [];
+
+  comList.forEach((c) => {
+    const port = String(c.port || '').trim();
+    if (!port) return;
+    const desc = c.description ? ' — ' + c.description : (c.name ? ' — ' + c.name : '');
+    targets.push({
+      kind: 'com',
+      id: 'com:' + port,
+      label: port + desc,
+      port,
+      escpos: 'unknown',
+      note: 'منفذ تسلسلي: يمكن إرسال النبضة الخام مباشرة.',
+      noteEn: 'Serial port: raw ESC/POS pulse can be sent directly.',
+    });
+    // Same port, reached as a raw device file — the fallback when another
+    // program already holds the serial port open.
+    targets.push({
+      kind: 'raw-com',
+      id: 'raw-com:' + port,
+      label: port + desc + '  [كتابة خام]',
+      port,
+      comPort: port,
+      escpos: 'maybe',
+      note: 'بديل خام عبر \\\\.\\' + port + ': يمرّ حتى لو كان المنفذ مشغولًا ببرنامج آخر.',
+      noteEn: 'Raw fallback via \\\\.\\' + port + ': works even when the port is held open.',
+    });
+  });
+
+  prnList.forEach((p) => {
+    const name = String(p.name || '').trim();
+    if (!name) return;
+    if (_PSEUDO_RE.test(name)) return;              // PDF/XPS/Fax — never a drawer
+    const port = String(p.portName || '').trim();
+    const looksThermal = THERMAL_RE.test(name) || THERMAL_RE.test(String(p.driverName || ''));
+    const isVirtual = VIRTUAL_PORT_RE.test(port);
+    const isUsbVirtual = USB_PORT_RE.test(port);
+    const isRaw = RAW_PORT_RE.test(port) && !isUsbVirtual;
+
+    let escpos = 'unknown';
+    let note;
+    if (isVirtual) {
+      escpos = 'no';
+      note = 'منفذ افتراضي (لا يقبل بايتات خام) — لن تُفتح النبضة عبره.';
+    } else if (isUsbVirtual) {
+      // The single most common real-world blocker: the printer is online and
+      // prints fine, but Windows owns USB001 so we cannot inject raw bytes.
+      escpos = looksThermal ? 'maybe' : 'unknown';
+      note = 'منفذ USB افتراضي: قد لا يقبل النبضة الخام. جرّب COM أو الشبكة إن فشل.';
+    } else if (isRaw) {
+      escpos = looksThermal ? 'yes' : 'maybe';
+      note = 'منفذ خام: يمكن إرسال النبضة مباشرة.';
+    } else {
+      escpos = looksThermal ? 'maybe' : 'unknown';
+      note = looksThermal ? 'طابعة حرارية معروفة — يُرجّح دعم النبضة.' : 'غير معروف — جرّب الاختبار.';
+    }
+    targets.push({
+      kind: 'win',
+      id: 'win:' + name,
+      label: name + (port ? '  [' + port + ']' : '') + (p.isDefault ? '  ⭐' : ''),
+      printerName: name,
+      port,
+      driverName: String(p.driverName || ''),
+      isDefault: !!p.isDefault,
+      looksThermal,
+      escpos,
+      note,
+    });
+
+    // A virtual USB spooler port cannot take raw bytes through the spooler, but
+    // it can sometimes be opened as a raw device file. Offer that as a distinct,
+    // explicitly best-effort target so the shopkeeper can try it on demand.
+    if (isUsbVirtual && looksThermal) {
+      targets.push({
+        kind: 'raw-usb',
+        id: 'raw-usb:' + port,
+        label: name + '  —  ' + port + '  [كتابة خام]',
+        rawUsbPort: port,
+        printerName: name,
+        escpos: 'maybe',
+        note: 'منفذ USB افتراضي: يجري إرسال خام عبر \\\\.\\' + port + ' — قد ينجح أو يفشل حسب الطابعة والمشغّل.',
+        noteEn: 'Virtual USB port: raw send via \\\\.\\' + port + ' — may or may not work.',
+      });
+    }
+  });
+
+  return {
+    success: true,
+    data: {
+      targets,
+      comCount: comList.length,
+      printerCount: prnList.length,
+      powerShell: ps,
+      pulsePresets: DRAWER_PULSES.map((p) => ({ id: p.id, label: p.label, hex: p.hex })),
+    },
+  };
+}
+
+// ---- Transport runners ------------------------------------------------------
+// Each returns { success, error? } and is deliberately self-contained so a
+// failure on one transport never poisons the next attempt.
+
+function drawerComExpr(port, baud, bytes, timeoutMs) {
+  const p = String(port).replace(/'/g, "''");
+  return `$sp = New-Object System.IO.Ports.SerialPort
+$sp.PortName    = '${p}'
+$sp.BaudRate    = ${parseInt(baud, 10) || 9600}
+$sp.Parity      = 'None'
+$sp.DataBits    = 8
+$sp.StopBits    = 'One'
+$sp.Handshake   = 'None'
+$sp.WriteTimeout = ${Math.max(500, parseInt(timeoutMs, 10) || 4000)}
+$sp.ReadTimeout  = 500
+$sp.Open()
+try {
+  $sp.Write(${psBytes(bytes)}, 0, ${bytes.length})
+  $sp.BaseStream.Flush()
+  Start-Sleep -Milliseconds 250
+} finally { $sp.Close(); $sp.Dispose() }
+[pscustomobject]@{ sent = ${bytes.length}; transport = 'com'; port = '${p}' }`;
+}
+
+function drawerNetExpr(host, port, bytes, timeoutMs) {
+  const h = String(host).replace(/'/g, "''");
+  const ms = Math.max(500, parseInt(timeoutMs, 10) || 4000);
+  return `$client = New-Object System.Net.Sockets.TcpClient
+$iar = $client.BeginConnect('${h}', ${parseInt(port, 10) || 9100}, $null, $null)
+if (-not $iar.AsyncWaitHandle.WaitOne(${ms})) { $client.Close(); throw 'CONNECT_TIMEOUT' }
+$client.EndConnect($iar)
+$stream = $client.GetStream()
+$stream.Write(${psBytes(bytes)}, 0, ${bytes.length})
+$stream.Flush()
+Start-Sleep -Milliseconds 250
+$stream.Close(); $client.Close()
+[pscustomobject]@{ sent = ${bytes.length}; transport = 'net'; host = '${h}' }`;
+}
+
+// A Windows printer is reached through whatever its port really is. A virtual
+// spooler port (USB001/PORTPROMPT) cannot take raw bytes, so we say so plainly
+// instead of reporting a misleading failure.
+function drawerWinExpr(printerName, bytes) {
+  const n = String(printerName).replace(/'/g, "''");
+  return `$prn = Get-CimInstance Win32_Printer -Filter "Name='${n}'" -ErrorAction SilentlyContinue
+if (-not $prn) { throw 'PRINTER_NOT_FOUND' }
+$port = [string]$prn.PortName
+if ($port -match '^COM\\d+$') {
+  $sp = New-Object System.IO.Ports.SerialPort
+  $sp.PortName = $port; $sp.BaudRate = 9600; $sp.Parity = 'None'
+  $sp.DataBits = 8; $sp.StopBits = 'One'; $sp.Handshake = 'None'
+  $sp.WriteTimeout = 4000
+  $sp.Open()
+  try { $sp.Write(${psBytes(bytes)}, 0, ${bytes.length}); $sp.BaseStream.Flush(); Start-Sleep -Milliseconds 250 }
+  finally { $sp.Close(); $sp.Dispose() }
+  [pscustomobject]@{ sent = ${bytes.length}; transport = 'win-com'; port = $port }
+} elseif ($port -match '^(USB\\d+|PORTPROMPT|FILE|NUL|SHRFAX|Microsoft)' -or $port -eq '') {
+  throw "VIRTUAL_PORT:$port"
+} else {
+  throw "UNSUPPORTED_PORT:$port"
+}`;
+}
+
+// A raw device-file write: open the port as a file and push the bytes straight
+// through it, bypassing the spooler *and* the SerialPort class.
+//   [IO.File]::Open('\\.\USB002','Open','Write')   ← virtual USB printer port
+//   [IO.File]::Open('\\.\COM3','Open','Write')     ← COM held open by another app
+// It is the only software route that could ever reach a USB00x virtual port, but
+// it is best-effort by nature: many Windows builds (and drivers) refuse to share
+// the device node, so a failure here is expected and never fatal. FileShare is
+// set to ReadWrite so we ask for sharing rather than demanding exclusive access.
+function drawerRawExpr(devicePath, bytes) {
+  // Escape for a single-quoted PowerShell literal: backslashes are literal there,
+  // only the quote itself doubles. The path already looks like \\.\USB002.
+  const p = String(devicePath).replace(/'/g, "''");
+  return `$fs = [System.IO.File]::Open('${p}', [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+try {
+  $fs.Write(${psBytes(bytes)}, 0, ${bytes.length})
+  $fs.Flush()
+  Start-Sleep -Milliseconds 250
+} finally { $fs.Close(); $fs.Dispose() }
+[pscustomobject]@{ sent = ${bytes.length}; transport = 'raw'; device = '${p}' }`;
+}
+
+// Turn a raw PowerShell/exception string into an Arabic, actionable reason.
+function drawerErrorReason(rawError, ctx) {
+  const m = String(rawError || '');
+  if (/VIRTUAL_PORT/i.test(m)) {
+    const p = (m.split('VIRTUAL_PORT:')[1] || '').trim();
+    return {
+      code: 'virtual_port',
+      ar: 'المنفذ «' + (p || 'افتراضي') + '» منفذ ويندوز افتراضي ولا يقبل بايتات خام. ' +
+          'إن كان الدرج على COM أو الشبكة فاختره من قائمة المسح، وإلا فطابعتك لا تدعم الفتح البرمجي ' +
+          '(استعمل المفتاح المعدني أو استبدلها بطابعة ESC/POS).',
+    };
+  }
+  if (/UNSUPPORTED_PORT/i.test(m)) {
+    const p = (m.split('UNSUPPORTED_PORT:')[1] || '').trim();
+    return { code: 'unsupported_port', ar: 'منفذ غير مدعوم للنقل الخام: «' + (p || '?') + '». اختر منفذ COM أو عنوان IP من قائمة المسح.' };
+  }
+  if (/CONNECT_TIMEOUT|timed out|timeout/i.test(m) && ctx && ctx.transport === 'net') {
+    return { code: 'net_timeout', ar: 'لم يستجب الجهاز على ' + (ctx.host || '') + ':' + (ctx.port || '') + ' خلال المهلة. تأكد أن الطابعة على الشبكة وأن المنفذ 9100 مفتوح.' };
+  }
+  if (/PRINTER_NOT_FOUND/i.test(m)) return { code: 'not_found', ar: 'لم يُعثر على الطابعة المحددة. أعد المسح واختر من جديد.' };
+  // The best-effort raw device write: a refusal here is normal, not a bug.
+  if (/^raw/i.test(String((ctx && ctx.transport) || '')) && /denied|0x00000005|استعمل|being used|sharing|not available/i.test(m)) {
+    return { code: 'raw_denied',
+      ar: 'مشغّل الطباعة يحتفظ بالمنفذ «' + ((ctx && ctx.device) || '') + '» ولا يسمح بالكتابة الخام. ' +
+          'هذا متوقَّع على كثير من نسخ ويندوز. إن أمكن وصّل الطابعة على COM أو الشبكة، أو استعمل المفتاح المعدني للدرج.' };
+  }
+  if (/Access.*denied|0x00000005|غير مسموح/i.test(m)) return { code: 'denied', ar: 'الوصول مرفوض: المنفذ مستعمل من برنامج آخر أو يحتاج صلاحية. أغلق البرامج التي تستعمل المنفذ وحاول مجددًا.' };
+  if (/does not exist|cannot find|not found/i.test(m)) return { code: 'no_port', ar: 'المنفذ غير موجود. وصّل الجهاز ثم أعد المسح.' };
+  return { code: 'failed', ar: 'فشل الإرسال: ' + (m || 'سبب غير معروف') };
+}
+
+// Send `bytes` over the chosen transport. Never throws.
+async function sendDrawerBytes(cfg, bytes, transportHint) {
+  const transport = transportHint || (cfg && cfg.transport) || 'auto';
+  const timeoutMs = Math.max(500, parseInt((cfg && cfg.timeoutMs) || 4000, 10));
+
+  if (transport === 'com') {
+    const port = String((cfg && cfg.comPort) || '').trim();
+    if (!port) return { success: false, error: 'NO_COM_PORT', errorAr: 'لم تُحدَّد أي منفذ COM.' };
+    const r = await runPSBlock(drawerComExpr(port, cfg && cfg.baudRate, bytes, timeoutMs), timeoutMs + 8000);
+    if (!r.success) return { success: false, error: r.error, errorAr: drawerErrorReason(r.error, { transport: 'com', port }).ar };
+    return { success: true, data: r.data, transport: 'com' };
+  }
+
+  if (transport === 'net') {
+    const host = String((cfg && cfg.host) || '').trim();
+    const port = parseInt((cfg && cfg.port) || 9100, 10) || 9100;
+    if (!host) return { success: false, error: 'NO_HOST', errorAr: 'لم يُحدَّد أي عنوان IP.' };
+    const r = await runPSBlock(drawerNetExpr(host, port, bytes, timeoutMs), timeoutMs + 8000);
+    if (!r.success) return { success: false, error: r.error, errorAr: drawerErrorReason(r.error, { transport: 'net', host, port }).ar };
+    return { success: true, data: r.data, transport: 'net' };
+  }
+
+  if (transport === 'win') {
+    const name = String((cfg && cfg.printerName) || '').trim();
+    if (!name) return { success: false, error: 'NO_PRINTER', errorAr: 'لم تُحدَّد أي طابعة.' };
+    const r = await runPSBlock(drawerWinExpr(name, bytes), timeoutMs + 8000);
+    if (!r.success) return { success: false, error: r.error, errorAr: drawerErrorReason(r.error, { transport: 'win', printerName: name }).ar };
+    return { success: true, data: r.data, transport: 'win' };
+  }
+
+  // Raw device-file write — best effort, bypasses the spooler entirely.
+  //   raw-usb : \\.\USB00x  (a virtual spooler port: the only hope for a drawer
+  //             wired to a USB printer whose port Windows owns)
+  //   raw-com : \\.\COMx    (a COM port another program currently holds open)
+  if (transport === 'raw-usb' || transport === 'raw-com') {
+    const dev = transport === 'raw-usb'
+      ? String((cfg && cfg.rawUsbPort) || '').trim()
+      : String((cfg && cfg.comPort) || '').trim();
+    if (!dev) {
+      return {
+        success: false,
+        error: transport === 'raw-usb' ? 'NO_RAW_USB' : 'NO_COM_PORT',
+        errorAr: transport === 'raw-usb' ? 'لم يُحدَّد أي منفذ USB خام.' : 'لم تُحدَّد أي منفذ COM.',
+      };
+    }
+    const devicePath = '\\\\.\\' + dev;
+    const r = await runPSBlock(drawerRawExpr(devicePath, bytes), timeoutMs + 8000);
+    if (!r.success) {
+      return {
+        success: false,
+        error: r.error,
+        errorAr: drawerErrorReason(r.error, { transport, device: dev }).ar,
+      };
+    }
+    return { success: true, data: r.data, transport };
+  }
+
+  // auto: try the recorded good path, then every configured transport in turn.
+  const order = [];
+  if (cfg && cfg.lastGood && cfg.lastGood.transport) order.push(cfg.lastGood.transport);
+  ['com', 'net', 'raw-usb', 'raw-com', 'win'].forEach((t) => { if (order.indexOf(t) === -1) order.push(t); });
+  const usable = order.filter((t) => {
+    if (t === 'com') return !!String((cfg && cfg.comPort) || '').trim();
+    if (t === 'net') return !!String((cfg && cfg.host) || '').trim();
+    if (t === 'win') return !!String((cfg && cfg.printerName) || '').trim();
+    if (t === 'raw-usb') return !!String((cfg && cfg.rawUsbPort) || '').trim();
+    if (t === 'raw-com') return !!String((cfg && cfg.comPort) || '').trim();
+    return false;
+  });
+  if (!usable.length) {
+    return { success: false, error: 'NO_TARGET', errorAr: 'لم يُحدَّد أي هدف. امسح الأجهزة ثم اختر المنفذ أو الطابعة.' };
+  }
+  let lastErr = null;
+  for (const t of usable) {
+    // eslint-disable-next-line no-await-in-loop
+    const r = await sendDrawerBytes(cfg, bytes, t);
+    if (r.success) return r;
+    lastErr = r;
+  }
+  return lastErr || { success: false, error: 'FAILED', errorAr: 'فشلت كل المسارات المتاحة.' };
+}
+
+// ---- Test: walk the pulse list until the drawer answers ---------------------
+// Every transport is silent on success AND on failure (a kick port sends no
+// reply), so "the drawer opened" is ultimately confirmed by the shopkeeper.
+// We report the first pulse that the hardware accepted without error and store
+// it as lastGood so the sales path never has to guess again.
+async function testDrawer(cfg) {
+  const conf = Object.assign(drawerDefaults(), cfg || {});
+  const ps = await detectPowerShell();
+  const presets = parseHexBytes(conf.customHex) && conf.customHex
+    ? [{ id: 'custom', label: 'custom', bytes: parseHexBytes(conf.customHex) }]
+    : DRAWER_PULSES.map((p) => ({ id: p.id, label: p.label, bytes: parseHexBytes(p.hex) }));
+
+  const attempts = [];
+  for (const pulse of presets) {
+    if (!pulse.bytes || !pulse.bytes.length) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const started = Date.now();
+    const r = await sendDrawerBytes(conf, pulse.bytes);
+    const elapsed = Date.now() - started;
+    attempts.push({
+      pulseId: pulse.id,
+      pulseLabel: pulse.label,
+      transport: r.transport || conf.transport,
+      ok: !!r.success,
+      elapsedMs: elapsed,
+      error: r.success ? null : (r.error || 'FAILED'),
+      errorAr: r.success ? null : (r.errorAr || ''),
+    });
+    if (r.success) {
+      return {
+        success: true,
+        data: {
+          opened: true,
+          pulseId: pulse.id,
+          hex: pulse.id === 'custom'
+            ? String(conf.customHex || '')
+            : ((DRAWER_PULSES.find((x) => x.id === pulse.id) || {}).hex || ''),
+          transport: r.transport,
+          elapsedMs: elapsed,
+          attempts,
+          powerShell: ps,
+          virtualPort: /USB\d+/i.test(String(conf.comPort || '')),
+        },
+      };
+    }
+    // Some failures are identical for every pulse, so stop early instead of
+    // hammering the hardware: a virtual/unsupported Windows port, a missing
+    // printer, or an unreachable network host all fail the same way each time.
+    // A raw device-file refusal is deliberately NOT in this list: it may succeed
+    // for a different port/pulse, so we let the loop continue.
+    if (/virtual_port|unsupported_port|no_port|not_found|connect_timeout|net_timeout/i.test(String(r.error || '')) &&
+        !/^raw/i.test(String(r.transport || ''))) {
+      return { success: false, data: { opened: false, attempts, powerShell: ps }, error: r.error, errorAr: r.errorAr };
+    }
+  }
+  const firstErr = attempts.find((a) => !a.ok);
+  return {
+    success: false,
+    data: { opened: false, attempts, powerShell: ps },
+    error: firstErr ? firstErr.error : 'FAILED',
+    errorAr: firstErr ? firstErr.errorAr : 'لم ينجح أي أمر في فتح الدرج — طابعتك قد لا تدعم الفتح البرمجي.',
+  };
+}
+
+// ---- Open: the fast path used by the sale confirm + F12 ---------------------
+// Uses the recorded lastGood pulse when available (one shot, no probing), and
+// only falls back to the full test when nothing has been proven yet.
+async function openDrawer(cfg) {
+  const conf = Object.assign(drawerDefaults(), cfg || {});
+  let bytes = null;
+  let pulseId = conf.pulseId;
+  let hex = '';
+
+  if (conf.lastGood && conf.lastGood.hex) {
+    bytes = parseHexBytes(conf.lastGood.hex);
+    pulseId = conf.lastGood.pulseId || pulseId;
+    hex = conf.lastGood.hex;
+  }
+  if (!bytes || !bytes.length) {
+    const pulse = resolvePulse(conf);
+    bytes = pulse.bytes;
+    pulseId = pulse.id;
+    hex = pulse.hex;
+  }
+  if (!bytes || !bytes.length) return { success: false, error: 'NO_PULSE', errorAr: 'لا يوجد أمر فتح صالح.' };
+
+  const started = Date.now();
+  const r = await sendDrawerBytes(conf, bytes);
+  return Object.assign({}, r, {
+    pulseId,
+    hex,
+    elapsedMs: Date.now() - started,
+  });
+}
+
 module.exports = {
   listLocalPrinters,
   listLocalDrivers,
@@ -449,4 +1056,13 @@ module.exports = {
   connectNetworkPrinter,
   setDefaultPrinter,
   fixPrintNightmare,
+  // Cash drawer
+  DRAWER_PULSES,
+  drawerDefaults,
+  parseHexBytes,
+  detectPowerShell,
+  scanDrawerTargets,
+  testDrawer,
+  openDrawer,
+  drawerRawExpr,
 };

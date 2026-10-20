@@ -96,6 +96,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   printerConnect: (unc) => ipcRenderer.invoke('printer-connect', unc),
   printerSetDefault: (name) => ipcRenderer.invoke('printer-set-default', name),
   printerFix: (trustedHost) => ipcRenderer.invoke('printer-fix', trustedHost),
+  // Cash drawer («درج النقود»): scan / test / open + per-device settings
+  cashDrawerGet: () => ipcRenderer.invoke('cash-drawer-get'),
+  cashDrawerSave: (patch) => ipcRenderer.invoke('cash-drawer-save', patch),
+  cashDrawerScan: () => ipcRenderer.invoke('cash-drawer-scan'),
+  cashDrawerTest: (cfg) => ipcRenderer.invoke('cash-drawer-test', cfg),
+  cashDrawerOpen: (opts) => ipcRenderer.invoke('cash-drawer-open', opts),
+  onCashDrawerHotkey: (cb) => ipcRenderer.on('cash-drawer-hotkey', () => cb()),
   // Quick Entry standalone window (F1 → separate, minimizable BrowserWindow)
   openQuickEntryWindow: () => ipcRenderer.invoke('quick-entry-open'),
   onQuickEntryRefresh: (cb) => ipcRenderer.on('quick-entry-refresh', () => cb()),

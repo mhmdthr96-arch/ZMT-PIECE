@@ -12,6 +12,7 @@ function init_connection() {
   setupPhoneScanner();
   setupPhoneSale();
   setupRestaurant();
+  setupCashDrawer();
   pdInit();
 
   const autoSync = localStorage.getItem('zmt_cloud_autosync') === '1';
@@ -34,6 +35,7 @@ function connSwitchTab(tab) {
   if (panel) {
     panel.classList.add('active');
     if (tab === 'scanner') phsRefresh();
+    if (tab === 'drawer') drawerInit();
   }
 }
 
@@ -1658,4 +1660,371 @@ function pdSavePin() {
   pdSave(cfg);
   if (inp) inp.value = '';
   pdResult('pdPinResult', t('pd.saved') || 'تم الحفظ', true);
+}
+
+// ============================================================
+// CASH DRAWER («درج النقود») — managers only
+// Settings live in userData/cash-drawer.json via the preload bridge; the
+// renderer never touches the file directly. The tab is hidden for non-managers
+// exactly like the other privileged controls in this page.
+// ============================================================
+
+let _drawerCfg = null;        // last loaded config
+let _drawerTargets = [];      // last scan results
+let _drawerScanMeta = null;   // { targets, powerShell, pulsePresets }
+
+// Fallback preset list used when the scan has not run yet, so the pulse <select>
+// is never empty (main.js keeps the authoritative copy).
+const DRAWER_PULSE_FALLBACK = [
+  { id: 'kick-a', label: 'ESC p 0 25 250', hex: '1B 70 00 19 FA' },
+  { id: 'kick-b', label: 'ESC p 0 25 0', hex: '1B 70 00 19 00' },
+  { id: 'kick-c', label: 'ESC p 1 25 250', hex: '1B 70 01 19 FA' },
+  { id: 'init-kick', label: 'ESC @ + kick', hex: '1B 40 1B 70 00 19 FA' },
+  { id: 'bell', label: 'Bell (pin 5 line)', hex: '07 1B 70 00 19 FA' },
+];
+
+function drawerApi() {
+  return (window.electronAPI && window.electronAPI.cashDrawerGet) ? window.electronAPI : null;
+}
+
+// Managers only: hide the tab button (and its panel) for everyone else.
+function drawerApplyRole() {
+  const btn = document.getElementById('connTabDrawerBtn');
+  const isMgr = (typeof Auth !== 'undefined' && Auth && typeof Auth.isManager === 'function') ? !!Auth.isManager() : false;
+  if (btn) btn.style.display = isMgr ? '' : 'none';
+  if (!isMgr) {
+    const panel = document.getElementById('connTabDrawer');
+    if (panel) panel.classList.remove('active');
+    const active = document.querySelector('.conn-tab.active');
+    if (active && active.getAttribute('data-tab') === 'drawer') connSwitchTab('setup');
+  }
+  return isMgr;
+}
+
+// Called once from init_connection() — wires role visibility + first load.
+function setupCashDrawer() {
+  drawerApplyRole();
+  const api = drawerApi();
+  if (!api) return;                       // browser / phone build: silently off
+  drawerFillPulseOptions(DRAWER_PULSE_FALLBACK);
+  if (drawerApplyRole()) drawerInit();
+}
+
+// Called every time the tab is opened.
+async function drawerInit() {
+  if (!drawerApplyRole()) return;
+  const api = drawerApi();
+  if (!api) return;
+  const res = await api.cashDrawerGet();
+  if (res && res.success && res.data) {
+    _drawerCfg = res.data;
+    drawerRenderConfig(_drawerCfg);
+  }
+  drawerRenderStatus();
+}
+
+function drawerRenderConfig(cfg) {
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+  const chk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
+
+  chk('drawerEnabled', cfg.enabled);
+  chk('drawerFallback', cfg.fallbackPrint);
+  set('drawerTransport', cfg.transport || 'auto');
+  set('drawerComPort', cfg.comPort || '');
+  set('drawerHost', cfg.host || '');
+  set('drawerPort', cfg.port || 9100);
+  set('drawerPrinterName', cfg.printerName || '');
+  set('drawerRawUsb', cfg.rawUsbPort || '');
+  set('drawerTimeout', cfg.timeoutMs || 4000);
+  set('drawerCustomHex', cfg.customHex || '');
+
+  drawerFillPulseOptions(_drawerScanMeta && _drawerScanMeta.pulsePresets ? _drawerScanMeta.pulsePresets : DRAWER_PULSE_FALLBACK);
+  const pulseSel = document.getElementById('drawerPulse');
+  if (pulseSel) pulseSel.value = cfg.pulseId || 'kick-a';
+
+  drawerOnTransportChange();
+}
+
+function drawerFillPulseOptions(list) {
+  const sel = document.getElementById('drawerPulse');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = (list || []).map(p =>
+    '<option value="' + escAttr(p.id) + '">' + escHtml(p.label) + '  (' + escHtml(p.hex) + ')</option>'
+  ).join('');
+  if (cur) sel.value = cur;
+}
+
+// Show only the fields that match the selected transport (auto shows all).
+function drawerOnTransportChange() {
+  const t = (document.getElementById('drawerTransport') || {}).value || 'auto';
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+  show('drawerComField', t === 'auto' || t === 'com' || t === 'raw-com');
+  show('drawerHostField', t === 'auto' || t === 'net');
+  show('drawerPortField', t === 'auto' || t === 'net');
+  show('drawerPrinterField', t === 'auto' || t === 'win');
+  show('drawerRawUsbField', t === 'auto' || t === 'raw-usb');
+}
+
+// Collect the current form into a config patch.
+function drawerReadForm() {
+  const val = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const chk = (id) => { const el = document.getElementById(id); return el ? !!el.checked : false; };
+  return {
+    enabled: chk('drawerEnabled'),
+    fallbackPrint: chk('drawerFallback'),
+    transport: val('drawerTransport') || 'auto',
+    comPort: String(val('drawerComPort') || '').trim(),
+    host: String(val('drawerHost') || '').trim(),
+    port: parseInt(val('drawerPort'), 10) || 9100,
+    printerName: String(val('drawerPrinterName') || '').trim(),
+    rawUsbPort: String(val('drawerRawUsb') || '').trim(),
+    timeoutMs: parseInt(val('drawerTimeout'), 10) || 4000,
+    pulseId: val('drawerPulse') || 'kick-a',
+    customHex: String(val('drawerCustomHex') || '').trim(),
+  };
+}
+
+async function drawerSaveConfig(silent) {
+  const api = drawerApi();
+  if (!api) return null;
+  const patch = drawerReadForm();
+  const res = await api.cashDrawerSave(patch);
+  if (res && res.success && res.data) {
+    _drawerCfg = res.data;
+    if (!silent) drawerResult('drawerEnableResult', t('drawer.saved') || 'تم الحفظ', true);
+  }
+  drawerRenderStatus();
+  return res;
+}
+
+function drawerToggleEnabled() {
+  const on = !!((document.getElementById('drawerEnabled') || {}).checked);
+  drawerSaveConfig(true).then(() => {
+    drawerResult('drawerEnableResult',
+      on ? (t('drawer.enabled') || 'تم تفعيل الفتح التلقائي بعد البيع')
+         : (t('drawer.disabled') || 'تم تعطيل الفتح التلقائي'),
+      true);
+  });
+}
+
+function drawerResult(id, msg, ok) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = '<span style="color:' + (ok ? '#28a745' : '#dc2545') + ';">' + escHtml(msg) + '</span>';
+  clearTimeout(el._drT);
+  el._drT = setTimeout(function () { el.innerHTML = ''; }, 4000);
+}
+
+// ---- Scan ----------------------------------------------------------------
+async function drawerScan() {
+  const api = drawerApi();
+  if (!api) return;
+  const out = document.getElementById('drawerScanResult');
+  if (out) out.innerHTML = '<span class="text-muted">' + (t('drawer.scanning') || 'جارٍ المسح…') + '</span>';
+  const res = await api.cashDrawerScan();
+  if (!res || !res.success || !res.data) {
+    drawerResult('drawerScanResult', (t('drawer.scanFail') || 'فشل المسح') + ': ' + ((res && res.error) || ''), false);
+    return;
+  }
+  _drawerScanMeta = res.data;
+  _drawerTargets = res.data.targets || [];
+  drawerRenderTargets(_drawerTargets);
+  drawerRenderPsInfo(res.data.powerShell);
+  drawerResult('drawerScanResult',
+    (t('drawer.scanDone') || 'اكتمل المسح') + ': ' + _drawerTargets.length + ' ' + (t('drawer.targetsCount') || 'هدف'), true);
+}
+
+function drawerRenderPsInfo(ps) {
+  const el = document.getElementById('drawerPsInfo');
+  if (!el || !ps) return;
+  const ver = ps.version || '?';
+  const note = ps.hasGetPrinter ? '' : ' (' + (t('drawer.wmiFallback') || 'وضع التوافق: Win32_Printer') + ')';
+  el.textContent = 'PowerShell ' + ver + note;
+}
+
+function drawerRenderTargets(targets) {
+  const box = document.getElementById('drawerTargetsList');
+  if (!box) return;
+  if (!targets || !targets.length) {
+    box.innerHTML = '<div class="conn-info-text">' + (t('drawer.noTargets') || 'لم يُعثر على أي منفذ أو طابعة.') + '</div>';
+    return;
+  }
+  const badge = (t, kind, isRaw) => {
+    if (isRaw) {
+      return '<span style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:11px;color:#fff;background:#e67e22;">'
+        + escHtml(t('drawer.rawMayWork') || 'قد ينجح') + '</span>';
+    }
+    const color = kind === 'yes' ? '#28a745' : (kind === 'maybe' ? '#e6a817' : (kind === 'no' ? '#dc2545' : '#8899aa'));
+    const label = kind === 'yes' ? (t('drawer.escposYes') || 'مدعوم')
+      : kind === 'maybe' ? (t('drawer.escposMaybe') || 'يُرجّح')
+      : kind === 'no' ? (t('drawer.escposNo') || 'غير مدعوم')
+      : (t('drawer.escposUnknown') || 'غير معروف');
+    return '<span style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:11px;color:#fff;background:' + color + ';">' + escHtml(label) + '</span>';
+  };
+  box.innerHTML = targets.map((tg, i) => {
+    return '<div class="conn-list-row" style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--silver-200,#eef1f6);">'
+      + '<input type="radio" name="drawerTarget" value="' + escAttr(tg.id) + '" onchange="drawerPickTarget(' + i + ')">'
+      + '<div style="flex:1;min-width:0;">'
+      +   '<div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escHtml(tg.label || tg.id) + '</div>'
+      +   '<div class="conn-info-text" style="margin:0;">' + escHtml(tg.note || '') + '</div>'
+      + '</div>'
+      + badge(t, tg.escpos, /^raw-/.test(String(tg.kind)))
+      + '</div>';
+  }).join('');
+}
+
+// Selecting a scanned target fills the manual fields so the test uses it.
+function drawerPickTarget(i) {
+  const tg = _drawerTargets[i];
+  if (!tg) return;
+  if (tg.kind === 'com') {
+    document.getElementById('drawerTransport').value = 'com';
+    document.getElementById('drawerComPort').value = tg.port || '';
+  } else if (tg.kind === 'raw-com') {
+    document.getElementById('drawerTransport').value = 'raw-com';
+    document.getElementById('drawerComPort').value = tg.comPort || tg.port || '';
+  } else if (tg.kind === 'raw-usb') {
+    document.getElementById('drawerTransport').value = 'raw-usb';
+    document.getElementById('drawerRawUsb').value = tg.rawUsbPort || '';
+    if (tg.printerName) document.getElementById('drawerPrinterName').value = tg.printerName;
+  } else if (tg.kind === 'win') {
+    document.getElementById('drawerTransport').value = 'win';
+    document.getElementById('drawerPrinterName').value = tg.printerName || '';
+  } else if (tg.kind === 'net') {
+    document.getElementById('drawerTransport').value = 'net';
+    document.getElementById('drawerHost').value = tg.host || '';
+    if (tg.port) document.getElementById('drawerPort').value = tg.port;
+  }
+  drawerOnTransportChange();
+  drawerSaveConfig(true);
+}
+
+async function drawerUseLastGood() {
+  const cfg = _drawerCfg || {};
+  if (!cfg.lastGood) { drawerResult('drawerScanResult', t('drawer.noLastGood') || 'لا يوجد مسار ناجح محفوظ بعد.', false); return; }
+  const t2 = cfg.lastGood.transport;
+  if (t2 === 'com') { document.getElementById('drawerTransport').value = 'com'; }
+  else if (t2 === 'net') { document.getElementById('drawerTransport').value = 'net'; }
+  else if (t2 === 'win') { document.getElementById('drawerTransport').value = 'win'; }
+  else if (t2 === 'raw-usb') { document.getElementById('drawerTransport').value = 'raw-usb'; }
+  else if (t2 === 'raw-com') { document.getElementById('drawerTransport').value = 'raw-com'; }
+  if (cfg.lastGood.pulseId) { const ps = document.getElementById('drawerPulse'); if (ps) ps.value = cfg.lastGood.pulseId; }
+  drawerOnTransportChange();
+  await drawerSaveConfig(true);
+  drawerResult('drawerScanResult', t('drawer.lastGoodRestored') || 'تم استرجاع آخر مسار ناجح.', true);
+  drawerRenderStatus();
+}
+
+// ---- Test ---------------------------------------------------------------
+let _drawerTesting = false;
+async function drawerTest() {
+  const api = drawerApi();
+  if (!api || _drawerTesting) return;
+  _drawerTesting = true;
+  const btn = document.getElementById('drawerTestBtn');
+  drawerResult('drawerTestResult', t('drawer.testing') || 'جارٍ الإرسال… جرّب الأوامر واحدًا واحدًا.', true);
+  const attemptsBox = document.getElementById('drawerAttempts');
+  if (attemptsBox) attemptsBox.innerHTML = '';
+
+  const cfg = drawerReadForm();
+  const res = await api.cashDrawerTest(cfg);
+  _drawerTesting = false;
+
+  const data = (res && res.data) || {};
+  drawerRenderAttempts(data.attempts || []);
+
+  if (res && res.success && data.opened) {
+    // Persist the winning pulse so sales + F12 are a single fast shot.
+    await api.cashDrawerSave({ lastGood: { transport: data.transport, pulseId: data.pulseId, hex: data.hex, at: Date.now() }, pulseId: data.pulseId });
+    const r = await api.cashDrawerGet();
+    if (r && r.success) { _drawerCfg = r.data; drawerRenderConfig(_drawerCfg); }
+    drawerResult('drawerTestResult', t('drawer.opened') || 'تم إرسال أمر الفتح بنجاح — إن لم يُفتح الدرج فطابعتك لا تدعم النبضة.', true);
+  } else {
+    drawerResult('drawerTestResult', (res && res.errorAr) || (t('drawer.testFail') || 'فشل فتح الدرج.'), false);
+  }
+  drawerRenderStatus();
+}
+
+// Advanced: force ONLY the raw device-file path (raw-usb / raw-com), so a
+// manager can test that specific route without the full auto loop. Best-effort
+// by design — a refusal is reported plainly and is never fatal.
+let _drawerTestingRaw = false;
+async function drawerTestRaw() {
+  const api = drawerApi();
+  if (!api || _drawerTestingRaw) return;
+  _drawerTestingRaw = true;
+  drawerResult('drawerTestResult', t('drawer.testing') || 'جارٍ الإرسال… جرّب الأوامر واحدًا واحدًا.', true);
+  const attemptsBox = document.getElementById('drawerAttempts');
+  if (attemptsBox) attemptsBox.innerHTML = '';
+
+  const cur = drawerReadForm();
+  const wantUsb = /^USB\d+/i.test(String(cur.rawUsbPort || ''));
+  const cfg = Object.assign({}, cur, { transport: wantUsb ? 'raw-usb' : 'raw-com' });
+
+  const res = await api.cashDrawerTest(cfg);
+  _drawerTestingRaw = false;
+
+  const data = (res && res.data) || {};
+  drawerRenderAttempts(data.attempts || []);
+
+  if (res && res.success && data.opened) {
+    await api.cashDrawerSave({ lastGood: { transport: data.transport, pulseId: data.pulseId, hex: data.hex, at: Date.now() }, pulseId: data.pulseId });
+    const r = await api.cashDrawerGet();
+    if (r && r.success) { _drawerCfg = r.data; drawerRenderConfig(_drawerCfg); }
+    drawerResult('drawerTestResult', t('drawer.rawOk') || 'نجح المسار الخام — إن لم يُفتح الدرج فطابعتك لا تدعم النبضة.', true);
+  } else {
+    drawerResult('drawerTestResult', (res && res.errorAr) || (t('drawer.rawFail') || 'المسار الخام لم ينجح على هذا الجهاز — هذا متوقَّع.'), false);
+  }
+  drawerRenderStatus();
+}
+
+function drawerRenderAttempts(attempts) {
+  const box = document.getElementById('drawerAttempts');
+  if (!box) return;
+  if (!attempts.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<table style="width:100%;font-size:12px;margin-top:8px;border-collapse:collapse;">'
+    + '<thead><tr style="text-align:right;color:var(--silver-600,#667);">'
+    + '<th>' + escHtml(t('drawer.colPulse') || 'الأمر') + '</th>'
+    + '<th>' + escHtml(t('drawer.colTransport') || 'المسار') + '</th>'
+    + '<th>' + escHtml(t('drawer.colTime') || 'الزمن') + '</th>'
+    + '<th>' + escHtml(t('drawer.colResult') || 'النتيجة') + '</th></tr></thead><tbody>'
+    + attempts.map(a => '<tr style="border-top:1px solid var(--silver-200,#eef1f6);">'
+      + '<td style="padding:3px 4px;">' + escHtml(a.pulseLabel || a.pulseId || '') + '</td>'
+      + '<td style="padding:3px 4px;">' + escHtml(a.transport || '') + '</td>'
+      + '<td style="padding:3px 4px;">' + (a.elapsedMs || 0) + 'ms</td>'
+      + '<td style="padding:3px 4px;color:' + (a.ok ? '#28a745' : '#dc2545') + ';">' + escHtml(a.ok ? (t('drawer.ok') || 'نجح') : (a.errorAr || a.error || '')) + '</td>'
+      + '</tr>').join('')
+    + '</tbody></table>';
+}
+
+// ---- Status strip --------------------------------------------------------
+function drawerRenderStatus() {
+  const cfg = _drawerCfg || {};
+  const icon = document.getElementById('drawerStatusIcon');
+  const title = document.getElementById('drawerStatusTitle');
+  const sub = document.getElementById('drawerStatusSub');
+  const good = cfg.lastGood;
+
+  let cls = '', ico = 'fa-circle-notch fa-spin', ttl = t('drawer.statusIdle') || 'لم يُختبر بعد', subTxt = '';
+
+  if (good && good.transport) {
+    cls = 'ok'; ico = 'fa-check-circle';
+    ttl = t('drawer.statusReady') || 'جاهز';
+    const when = good.at ? new Date(good.at).toLocaleString() : '';
+    subTxt = (t('drawer.statusVia') || 'المسار') + ': ' + good.transport + (good.pulseId ? ' · ' + good.pulseId : '') + (when ? ' · ' + when : '');
+    if (/^raw-/.test(String(good.transport))) {
+      subTxt += ' · ' + (t('drawer.rawWarn') || 'مسار غير مضمون — قد يتوقّف بعد إعادة التشغيل');
+    }
+  } else if (cfg.transport && cfg.transport !== 'auto') {
+    subTxt = (t('drawer.statusSelected') || 'هدف محدَّد') + ': ' + cfg.transport;
+  }
+  if (!cfg.enabled) subTxt += (subTxt ? ' · ' : '') + (t('drawer.statusAutoOff') || 'الفتح التلقائي بعد البيع مُعطَّل');
+
+  if (icon) {
+    icon.className = 'phs-status-icon' + (cls ? ' ' + cls : '');
+    icon.innerHTML = '<i class="fas ' + ico + '"></i>';
+  }
+  if (title) title.textContent = ttl;
+  if (sub) sub.textContent = subTxt;
 }

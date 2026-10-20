@@ -142,15 +142,23 @@ function createWindow() {
     console.log(`Renderer [${level}]: ${message}`);
   });
 
-  // ===== DEVTOOLS ACCESS (any machine, any build) =====
-  // F12 (or Ctrl+Shift+I) toggles the inspector even in release installs, so a
+  // ===== DEVTOOLS + CASH DRAWER KEYS =====
+  // Ctrl+Shift+I keeps toggling the inspector even in release installs, so a
   // support agent can read the renderer console on-site (e.g. to diagnose the
   // "white screen" after licence deletion) without a --dev relaunch.
+  // F12 is now reserved for the cash drawer: it is forwarded to the renderer,
+  // which asks the main process to send the ESC/POS pulse.
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return;
     const isF12 = input.key === 'F12';
     const isDevShortcut = !!(input.control && input.shift && (input.key === 'I' || input.key === 'i'));
-    if (!isF12 && !isDevShortcut) return;
+
+    if (isF12) {
+      event.preventDefault();
+      try { mainWindow.webContents.send('cash-drawer-hotkey'); } catch (e) {}
+      return;
+    }
+    if (!isDevShortcut) return;
     event.preventDefault();
     const wc = mainWindow.webContents;
     if (wc.isDevToolsOpened()) wc.closeDevTools();
@@ -1181,3 +1189,62 @@ printerHandle('printer-install-driver-share', (uncFolder) => PrinterNet.installD
 printerHandle('printer-connect', (unc) => PrinterNet.connectNetworkPrinter(unc));
 printerHandle('printer-set-default', (name) => PrinterNet.setDefaultPrinter(name));
 printerHandle('printer-fix', (trustedHost) => PrinterNet.fixPrintNightmare(trustedHost));
+
+// ===== CASH DRAWER («درج النقود») =====
+// Settings live per device in userData/cash-drawer.json (never in the DB, stock
+// or LAN sync). Channels mirror the printer-* family and always resolve to a
+// JSON object, so a missing printer or port can never crash the renderer.
+const cashDrawerFile = () => path.join(app.getPath('userData'), 'cash-drawer.json');
+
+function readCashDrawerConfig() {
+  try {
+    const raw = fs.readFileSync(cashDrawerFile(), 'utf8');
+    const saved = JSON.parse(raw);
+    return Object.assign(PrinterNet.drawerDefaults(), saved || {});
+  } catch (e) {
+    return PrinterNet.drawerDefaults();
+  }
+}
+
+function writeCashDrawerConfig(patch) {
+  try {
+    const merged = Object.assign(readCashDrawerConfig(), patch || {});
+    fs.writeFileSync(cashDrawerFile(), JSON.stringify(merged, null, 2), 'utf8');
+    return { success: true, data: merged };
+  } catch (e) {
+    return { success: false, error: e.message || 'WRITE_FAILED' };
+  }
+}
+
+function cashDrawerHandle(channel, fn) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    try {
+      return await fn(...args);
+    } catch (e) {
+      console.warn('[CashDrawer]', channel, e.message);
+      return { success: false, error: e.message || 'UNKNOWN' };
+    }
+  });
+}
+
+cashDrawerHandle('cash-drawer-get', () => ({ success: true, data: readCashDrawerConfig() }));
+cashDrawerHandle('cash-drawer-save', (patch) => writeCashDrawerConfig(patch));
+cashDrawerHandle('cash-drawer-scan', () => PrinterNet.scanDrawerTargets());
+cashDrawerHandle('cash-drawer-test', (cfg) => PrinterNet.testDrawer(Object.assign(readCashDrawerConfig(), cfg || {})));
+cashDrawerHandle('cash-drawer-open', async (opts) => {
+  const cfg = readCashDrawerConfig();
+  // `enabled` gates the AUTOMATIC open at sale time; a manual open (F12 or the
+  // settings test button) must always work even when the toggle is off.
+  if (!opts || opts.source !== 'manual') {
+    if (!cfg.enabled) return { success: false, error: 'DISABLED', skipped: true };
+  }
+  const res = await PrinterNet.openDrawer(cfg);
+  // Remember the winning path so the next sale is a single fast shot.
+  if (res && res.success && res.transport) {
+    writeCashDrawerConfig({
+      lastGood: { transport: res.transport, pulseId: res.pulseId, hex: res.hex, at: Date.now() },
+    });
+  }
+  return res;
+});
+
