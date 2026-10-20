@@ -32,8 +32,13 @@ const pkg = require(path.join(ROOT, 'package.json'));
 const VER = pkg.version;
 const PRODUCT = pkg.productName || pkg.build.productName || 'ZMT PIECE';
 
-const INSTALL_TIMEOUT = 180000;
-const UNINSTALL_TIMEOUT = 120000;
+// A silent install of a ~100 MB NSIS package takes ~90-120s on a busy disk,
+// and verify runs BOTH architectures back-to-back, so the second one starts
+// under load. 180s proved too tight (the x64 install was seen timing out at
+// ~110s of real work, not hanging). 300s keeps a real hang detectable while
+// never mistaking a slow-but-healthy install for a failure.
+const INSTALL_TIMEOUT = 300000;
+const UNINSTALL_TIMEOUT = 180000;
 const REQUIRED_ASAR_ENTRIES = [
   'package.json',
   'main.js',
@@ -97,10 +102,12 @@ function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function rmRecursive(p) {
   // freshly-installed files are often still locked for a moment (antivirus /
-  // indexer), so retry with a growing backoff before calling it a failure.
-  for (let i = 0; i < 8; i++) {
+  // indexer / a lingering NSIS helper), so retry with a growing backoff before
+  // calling it a failure. ~60s of patience: a TEMP leftover is harmless anyway,
+  // and the previous ~18s window was too short right after a big install.
+  for (let i = 0; i < 20; i++) {
     try { fs.rmSync(p, { recursive: true, force: true, maxRetries: 3 }); return; }
-    catch (e) { await sleep(500 + i * 500); }
+    catch (e) { await sleep(500 + i * 300); }
   }
   if (fs.existsSync(p)) {
     let left = [];
