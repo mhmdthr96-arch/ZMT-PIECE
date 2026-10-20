@@ -1,6 +1,11 @@
 node_modules/
 dist/
 dist-win7/
+# Live Firebird database — modified by simply running the app, never commit it
+STOCK.FDB
+STOCK.FDB.*
+*.FDB
+*.GDB
 # Generated update manifest (tools/publish-update.js writes it at release time)
 update.json
 build/*
