@@ -461,6 +461,81 @@ const PD_SAFE_EXT = (p) => {
   return /^\.[a-z0-9]{1,6}$/.test(ext) ? ext : '.bin';
 };
 
+// ===== BUSINESS LOGO — invoices only, LOCAL-ONLY (never uploaded) =====
+// The invoice logo lives on the device disk and only its PATH is kept in
+// localStorage, so a cloud backup never carries image bytes and the free
+// Supabase tier is never spent on it. Print windows are isolated popups (and
+// the PDF path renders through a hidden `data:` URL), so the logo has to be
+// inlined as a base64 data URL every time it is drawn — a `file://` src would
+// simply not load there.
+const INVOICE_LOGO_DIR = () => path.join(app.getPath('userData'), 'zmt-invoice-logo');
+const LOGO_EXT = (p) => {
+  const ext = path.extname(String(p || '')).toLowerCase();
+  return /^\.(png|jpe?g|gif|webp|bmp|svg)$/.test(ext) ? ext : '.png';
+};
+// True when `child` is genuinely inside `parent` (not a sibling whose name
+// merely starts with the same prefix, e.g. "zmt-invoice-logo-evil").
+function _isInside(parent, child) {
+  const rel = path.relative(path.resolve(parent), path.resolve(child));
+  return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+const LOGO_MIME = (ext) => ({
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml',
+}[ext] || 'image/png');
+
+// Copy the picked file into the app's own folder so the logo survives the user
+// moving/deleting the original, and delete the previous one to avoid leftovers.
+ipcMain.handle('invoice-logo-import', async (event, srcPath, previousPath) => {
+  try {
+    if (!srcPath || typeof srcPath !== 'string') return { success: false, error: 'bad_path' };
+    if (!fs.existsSync(srcPath)) return { success: false, error: 'missing_source' };
+    const dir = INVOICE_LOGO_DIR();
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const ext = LOGO_EXT(srcPath);
+    const dest = path.join(dir, 'logo-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8) + ext);
+    fs.copyFileSync(srcPath, dest);
+    // best-effort cleanup of the replaced file (only ever inside our own dir)
+    try {
+      if (previousPath && typeof previousPath === 'string') {
+        if (_isInside(dir, previousPath) && fs.existsSync(previousPath)) fs.unlinkSync(previousPath);
+      }
+    } catch (e) { /* a leftover file is harmless */ }
+    return { success: true, path: dest, size: fs.statSync(dest).size };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('invoice-logo-remove', async (event, destPath) => {
+  try {
+    if (!destPath || typeof destPath !== 'string') return { success: true };
+    const dir = INVOICE_LOGO_DIR();
+    if (!_isInside(dir, destPath)) return { success: false, error: 'outside_logo_dir' };
+    if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Read the stored logo and hand it back as a ready-to-inline data URL.
+// Missing file is NOT an error result the UI should shout about — callers
+// simply print the invoice without a logo (the sale must never be blocked).
+ipcMain.handle('invoice-logo-dataurl', async (event, logoPath) => {
+  try {
+    if (!logoPath || typeof logoPath !== 'string') return { success: false, error: 'no_path' };
+    if (!fs.existsSync(logoPath)) return { success: false, error: 'missing_file' };
+    const ext = LOGO_EXT(logoPath);
+    const buf = fs.readFileSync(logoPath);
+    return { success: true, dataUrl: 'data:' + LOGO_MIME(ext) + ';base64,' + buf.toString('base64'), size: buf.length };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle('pd-import-media', async (event, srcPath, kind) => {
   try {
     if (!srcPath || typeof srcPath !== 'string') return { success: false, error: 'bad_path' };
@@ -481,9 +556,8 @@ ipcMain.handle('pd-remove-media', async (event, destPath) => {
   try {
     if (!destPath || typeof destPath !== 'string') return { success: false, error: 'bad_path' };
     const dir = PD_MEDIA_DIR();
-    const resolved = path.resolve(destPath);
-    if (resolved.toLowerCase().indexOf(dir.toLowerCase()) !== 0) return { success: false, error: 'outside_media_dir' };
-    if (fs.existsSync(resolved)) fs.unlinkSync(resolved);
+    if (!_isInside(dir, destPath)) return { success: false, error: 'outside_media_dir' };
+    if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };

@@ -752,25 +752,19 @@ function buildPaymentInvoiceHTML(inv) {
   const amount = inv.totalAmount || 0;
   return `
     <div id="invDetailPrintArea" style="padding:30px 35px;font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;color:#222;direction:ltr;text-align:left" dir="ltr">
-      <table style="width:100%;border-collapse:collapse" dir="ltr">
-        <tr>
-          <td style="vertical-align:top;width:60%">
-            <div style="font-size:20px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:1px">${escHtml(store.name)}</div>
+      ${buildDocHeaderRow(
+        `<div style="font-size:20px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:1px">${escHtml(store.name)}</div>
             <div style="font-size:10px;color:#999;margin-top:1px;text-transform:uppercase;letter-spacing:0.5px">${isCustomer ? 'Reçu de versement' : inv.direction === 'out' ? 'Billet de dette' : 'Bon de caisse'}</div>
             ${store.address ? `<div style="font-size:11px;color:#555;margin-top:4px">${escHtml(store.address)}</div>` : ''}
             ${store.phone ? `<div style="font-size:11px;color:#555">Tél: ${escHtml(store.phone)}</div>` : ''}
-            ${storeLegalLineHTML(inv)}
-          </td>
-          <td style="vertical-align:top;text-align:right;width:40%">
-            <div style="font-size:26px;font-weight:900;color:#00897b;text-transform:uppercase;letter-spacing:2px">${_invTypeLabel(inv)}</div>
+            ${storeLegalLineHTML(inv)}`,
+        `<div style="font-size:26px;font-weight:900;color:#00897b;text-transform:uppercase;letter-spacing:2px">${_invTypeLabel(inv)}</div>
             <div style="font-size:14px;font-weight:700;color:#333;margin-top:6px">N° ${inv.invoiceNumber || '—'}</div>
             <div style="font-size:11px;color:#555;margin-top:4px;line-height:1.6">
               <div>Date: ${dateStr}</div>
               <div>Heure: ${timeStr}</div>
-            </div>
-          </td>
-        </tr>
-      </table>
+            </div>`
+      )}
 
       <div style="border-top:2px solid #1a1a1a;margin:16px 0 14px"></div>
       <div style="height:1px;background:#ddd;margin-bottom:16px"></div>
@@ -903,7 +897,7 @@ function showInvDetail(invoiceId) {
 
   title.innerHTML = `<i class="fas fa-file-invoice"></i> ${invNum}`;
 
-  body.innerHTML = isPayment ? buildPaymentInvoiceHTML(inv) : buildInvoiceDetailHTML(inv, typeLabel, paidAmount);
+  _renderInvDetailBody(inv, isPayment, paidAmount, invoiceId);
   // Payment vouchers are final balance settlements: no partial payment and no editing.
   if (footer) footer.querySelectorAll('button').forEach(b => {
     const oc = b.getAttribute && b.getAttribute('onclick');
@@ -913,9 +907,52 @@ function showInvDetail(invoiceId) {
   modal.style.display = 'flex';
 }
 
+// Render the invoice body, then re-render once the logo has been inlined (the
+// data URL is fetched asynchronously at startup). Keeps the on-screen preview
+// identical to what will be printed, in both the editable and read-only views.
+function _renderInvDetailBody(inv, isPayment, paidAmount, invoiceId) {
+  const body = document.getElementById('invDetailBody');
+  if (!body) return;
+  const build = function () {
+    return isPayment ? buildPaymentInvoiceHTML(inv) : buildInvoiceDetailHTML(inv, _invTypeLabel(inv), paidAmount);
+  };
+  body.innerHTML = build();
+  const L = (typeof window.InvoiceLogo !== 'undefined') ? window.InvoiceLogo : null;
+  if (L && L.isEnabled() && !L.current()) {
+    Promise.resolve(L.warm()).then(function () {
+      if (_invDetailId !== invoiceId) return;
+      if (!L.current()) return;
+      const cur = document.getElementById('invDetailBody');
+      if (cur) cur.innerHTML = build();
+    }).catch(function () {});
+  }
+}
+
+// ===== SHARED DOCUMENT HEADER (shop name | optional logo | document type) ====
+// One builder for every printed header in this file, so the logo can never
+// appear on one document and be missing from another:
+//   • buildInvoiceDetailHTML   (A4 invoice)
+//   • buildPaymentInvoiceHTML  (payment voucher)
+//   • the employee preparation sheet
+// The PDF + email paths reuse the same builders, so they inherit the logo too.
+//
+// With a logo:  [ shop 45% ] [ logo ] [ document type 40% ]
+// Without one:  the original two-column layout, untouched.
+//
+// `leftCell` / `rightCell` are the already-rendered HTML of the two original
+// columns. The layout itself lives in the shared InvoiceLogo lib so the sales
+// page and the settings preview render byte-for-byte the same header.
+function buildDocHeaderRow(leftCell, rightCell, mono) {
+  const L = (typeof window.InvoiceLogo !== 'undefined') ? window.InvoiceLogo : null;
+  if (L && typeof L.headerRow === 'function') return L.headerRow(leftCell, rightCell, mono);
+  return '<table style="width:100%;border-collapse:collapse" dir="ltr"><tr>' +
+    '<td style="vertical-align:top;width:60%">' + leftCell + '</td>' +
+    '<td style="vertical-align:top;text-align:right;width:40%">' + rightCell + '</td>' +
+    '</tr></table>';
+}
+
 function storeLegalLineHTML(inv, forceCat) {
-  const store = getStoreInfo();
-  const vis = (typeof getLegalInfoVisibility === 'function')
+  const store = getStoreInfo();  const vis = (typeof getLegalInfoVisibility === 'function')
     ? getLegalInfoVisibility()
     : {
         customer: localStorage.getItem('zmt_inv_legal_customer') === '1',
@@ -955,26 +992,20 @@ function buildInvoiceDetailHTML(inv, typeLabel, paidAmount) {
 
   return `
     <div id="invDetailPrintArea" style="padding:30px 35px;font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;color:#222;direction:ltr;text-align:left" dir="ltr">
-      <table style="width:100%;border-collapse:collapse" dir="ltr">
-        <tr>
-          <td style="vertical-align:top;width:60%">
-            <div style="font-size:20px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:1px">${escHtml(store.name)}</div>
+      ${buildDocHeaderRow(
+        `<div style="font-size:20px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:1px">${escHtml(store.name)}</div>
             <div style="font-size:10px;color:#999;margin-top:1px;text-transform:uppercase;letter-spacing:0.5px">${inv.type === 'proforma' ? 'Document proforma — sans valeur commerciale' : 'Document commercial'}</div>
             ${store.address ? `<div style="font-size:11px;color:#555;margin-top:4px">${escHtml(store.address)}</div>` : ''}
             ${store.phone ? `<div style="font-size:11px;color:#555">Tél: ${escHtml(store.phone)}</div>` : ''}
-            ${storeLegalLineHTML(inv)}
-          </td>
-          <td style="vertical-align:top;text-align:right;width:40%">
-            <div style="font-size:26px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:2px">${typeLabel}</div>
+            ${storeLegalLineHTML(inv)}`,
+        `<div style="font-size:26px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:2px">${typeLabel}</div>
             <div style="font-size:10px;font-weight:600;color:#888;margin-top:1px;text-transform:uppercase;letter-spacing:1px">${inv.type === 'proforma' ? 'PROFORMA' : 'Original'}</div>
             <div style="font-size:14px;font-weight:700;color:#333;margin-top:6px">N° ${inv.invoiceNumber || '—'}</div>
             <div style="font-size:11px;color:#555;margin-top:4px;line-height:1.6">
               <div>Date: ${dateStr}</div>
               <div>Heure: ${timeStr}</div>
-            </div>
-          </td>
-        </tr>
-      </table>
+            </div>`
+      )}
 
       <div style="border-top:2px solid #1a1a1a;margin:16px 0 14px"></div>
       <div style="height:1px;background:#ddd;margin-bottom:16px"></div>
@@ -1136,7 +1167,7 @@ function viewInvoiceReadOnly(invoiceId) {
   const typeLabel = _invTypeLabel(inv);
 
   document.getElementById('invDetailTitle').innerHTML = `<i class="fas fa-file-invoice"></i> ${invNum}`;
-  body.innerHTML = isPayment ? buildPaymentInvoiceHTML(inv) : buildInvoiceDetailHTML(inv, typeLabel, paidAmount);
+  _renderInvDetailBody(inv, isPayment, paidAmount, invoiceId);
 
   const footer = document.getElementById('invDetailFooter');
   if (footer) {
@@ -1177,6 +1208,12 @@ function invBwCss() {
     }
     #invDetailPrintArea tbody tr:nth-child(even), #invEmpPrintArea tbody tr:nth-child(even), #invoicePrintArea tbody tr:nth-child(even) {
       background:#f5f5f5 !important; background-color:#f5f5f5 !important;
+    }
+    /* The business logo is a colour image with an inline grayscale(0%) filter;
+       in N&B mode the filter is re-asserted at 100% so the printed watermark is
+       a true grey. Opacity is preserved (it is what makes it a watermark). */
+    #invDetailPrintArea img.zmt-doc-logo, #invEmpPrintArea img.zmt-doc-logo, #invoicePrintArea img.zmt-doc-logo {
+      filter:grayscale(100%) !important;
     }`;
 }
 
@@ -1193,9 +1230,32 @@ function openPrintWindow(title, bodyHtml, mode) {
 
 // `mode`: 'color' (default) or 'bw' (أبيض وأسود) — chosen in the print dialog.
 function printInvFromDetail(mode) {
-  const content = document.getElementById('invDetailPrintArea');
-  if (!content) return;
-  openPrintWindow(t('invoices.invoiceDetails') || 'Facture', stripInvPrintHidden(content.outerHTML), mode);
+  // Warm the logo first, then rebuild the body from the record so the printed
+  // copy carries the same header as the screen — the data URL is fetched
+  // asynchronously at startup and may not have been ready when the modal opened.
+  withInvoiceLogo(function () {
+    const inv = DB.getInvoice(_invDetailId);
+    if (inv) {
+      const isPayment = inv.type === 'payment';
+      const paidAmount = isPayment ? (inv.totalAmount || 0) : DB.getInvoiceEffectivePaid(_invDetailId);
+      const body = document.getElementById('invDetailBody');
+      if (body) body.innerHTML = isPayment
+        ? buildPaymentInvoiceHTML(inv)
+        : buildInvoiceDetailHTML(inv, _invTypeLabel(inv), paidAmount);
+    }
+    const content = document.getElementById('invDetailPrintArea');
+    if (!content) return;
+    openPrintWindow(t('invoices.invoiceDetails') || 'Facture', stripInvPrintHidden(content.outerHTML), mode);
+  });
+}
+
+// Refresh the inlined logo data URL, then run the print callback. Kept separate
+// so every entry point (screen print, employee sheet, PDF, email) draws the
+// exact same header. A failure just prints without the logo.
+function withInvoiceLogo(fn) {
+  const L = (typeof window.InvoiceLogo !== 'undefined') ? window.InvoiceLogo : null;
+  if (!L || !L.isEnabled()) { fn(); return; }
+  Promise.resolve(L.warm()).then(fn).catch(function () { fn(); });
 }
 
 function openInvPrintChoice() {
@@ -1221,8 +1281,10 @@ function printInvEmployee() {
   const inv = DB.getInvoice(_invDetailId);
   if (!inv) return;
   closeInvPrintChoice();
-  const html = buildEmployeePrintHTML(inv);
-  openPrintWindow(t('invoices.employeeDocTitle') || 'Bon de préparation', html);
+  withInvoiceLogo(function () {
+    const html = buildEmployeePrintHTML(inv);
+    openPrintWindow(t('invoices.employeeDocTitle') || 'Bon de préparation', html);
+  });
 }
 
 function buildEmployeePrintHTML(inv) {
@@ -1261,24 +1323,18 @@ function buildEmployeePrintHTML(inv) {
 
   return `
     <div id="invEmpPrintArea" style="padding:30px 35px;font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;color:#222;direction:ltr;text-align:left" dir="ltr">
-      <table style="width:100%;border-collapse:collapse" dir="ltr">
-        <tr>
-          <td style="vertical-align:top;width:60%">
-            <div style="font-size:20px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:1px">${escHtml(store.name)}</div>
+      ${buildDocHeaderRow(
+        `<div style="font-size:20px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:1px">${escHtml(store.name)}</div>
             ${store.address ? `<div style="font-size:11px;color:#555;margin-top:4px">${escHtml(store.address)}</div>` : ''}
             ${store.phone ? `<div style="font-size:11px;color:#555">Tél: ${escHtml(store.phone)}</div>` : ''}
-            ${storeLegalLineHTML(inv, 'employee')}
-          </td>
-          <td style="vertical-align:top;text-align:right;width:40%">
-            <div style="font-size:24px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:2px">BON DE PRÉPARATION</div>
+            ${storeLegalLineHTML(inv, 'employee')}`,
+        `<div style="font-size:24px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:2px">BON DE PRÉPARATION</div>
             <div style="font-size:14px;font-weight:700;color:#333;margin-top:6px">N° ${inv.invoiceNumber || '—'}</div>
             <div style="font-size:11px;color:#555;margin-top:4px;line-height:1.6">
               <div>Date: ${dateStr}</div>
               <div>Heure: ${timeStr}</div>
-            </div>
-          </td>
-        </tr>
-      </table>
+            </div>`
+      )}
 
       <div style="border-top:2px solid #1a1a1a;margin:16px 0 14px"></div>
 
@@ -3922,6 +3978,7 @@ async function saveInvoicePdf() {
   const inv = DB.getInvoice(_invDetailId);
   if (!inv) return;
   try {
+    if (window.InvoiceLogo && window.InvoiceLogo.isEnabled()) { try { await window.InvoiceLogo.warm(); } catch (e) {} }
     const html = buildInvoicePrintDocHTML(inv);
     const res = await window.electronAPI.generateInvoicePdf(html);
     if (!res || !res.success) { invToast('تعذّر توليد ملف PDF', 'error'); return; }
@@ -3991,6 +4048,7 @@ async function sendInvoiceEmail() {
 
   // Generate + save the PDF so the user can attach it, then open Gmail in the browser.
   try {
+    if (window.InvoiceLogo && window.InvoiceLogo.isEnabled()) { try { await window.InvoiceLogo.warm(); } catch (e) {} }
     const html = buildInvoicePrintDocHTML(inv);
     const pdfRes = await window.electronAPI.generateInvoicePdf(html);
     if (pdfRes && pdfRes.success) {

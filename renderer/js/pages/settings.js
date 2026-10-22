@@ -148,6 +148,7 @@ function init_settings() {
   settingsLoadLicense();
   loadAuditLog();
   prtInit();
+  if (typeof settingsInitInvoiceLogo === 'function') settingsInitInvoiceLogo();
 }
 
 const PROVIDER_INFO = {
@@ -1617,5 +1618,202 @@ function prtTestPrint() {
   if (typeof window.openPrintWindow === 'function') openPrintWindow('ZMT PIECE — Test', bodyHtml);
   else window.print();
 }
+
+// ===== INVOICE LOGO (settings) ==========================================
+// The logo is stored on this device only: the image is copied into the app's
+// own folder and just its PATH is kept in localStorage. Nothing is uploaded to
+// the cloud, and no logo is drawn on the thermal receipt or the 80mm cashier
+// ticket. The buttons live here in Settings; the invoice screen only renders.
+
+// A toast that works even if the invoices page (which owns invToast) has never
+// been opened in this session — the settings page can be the very first page.
+function settingsLogoToast(msg, type) {
+  if (typeof window.invToast === 'function') { try { window.invToast(msg, type); return; } catch (e) {} }
+  try { console.log('[logo]', msg); } catch (e) {}
+}
+
+function settingsInitInvoiceLogo() {
+  const L = window.InvoiceLogo;
+  if (!L) return;
+
+  const previewBtn = document.getElementById('settingsLogoPreviewBtn');
+  const clearBtn = document.getElementById('settingsLogoClearBtn');
+  const thumbWrap = document.getElementById('settingsLogoThumbWrap');
+  const thumb = document.getElementById('settingsLogoThumb');
+  const meta = document.getElementById('settingsLogoMeta');
+  const controls = document.getElementById('settingsLogoControls');
+  const sizeEl = document.getElementById('settingsLogoSize');
+  const sizeVal = document.getElementById('settingsLogoSizeVal');
+  const opEl = document.getElementById('settingsLogoOpacity');
+  const opVal = document.getElementById('settingsLogoOpacityVal');
+
+  const cfg = L.load();
+  if (sizeEl) sizeEl.value = cfg.size;
+  if (sizeVal) sizeVal.textContent = cfg.size + 'px';
+  if (opEl) opEl.value = cfg.opacity;
+  if (opVal) opVal.textContent = cfg.opacity + '%';
+  settingsMarkLogoPosition(cfg.position);
+
+  const has = L.isEnabled();
+  if (previewBtn) previewBtn.style.display = has ? '' : 'none';
+  if (clearBtn) clearBtn.style.display = has ? '' : 'none';
+  if (controls) controls.style.display = has ? '' : 'none';
+  if (thumbWrap) thumbWrap.style.display = has ? 'flex' : 'none';
+
+  if (has && thumb) {
+    // Reuse the shared reader so the thumbnail and the invoice agree.
+    L.warm().then(function (url) {
+      if (url) {
+        thumb.src = url;
+        if (meta) meta.textContent = settingsLogoFileLabel(cfg.path);
+      }
+    }).catch(function () {});
+  }
+
+  // Bind the controls once. This function is re-entered after an upload or a
+  // removal to refresh the thumbnails, and stacking duplicate listeners would
+  // fire each save as many times as the section was refreshed.
+  if (!settingsInitInvoiceLogo._bound) {
+    settingsInitInvoiceLogo._bound = true;
+
+  if (sizeEl) sizeEl.addEventListener('input', function () {
+    if (sizeVal) sizeVal.textContent = sizeEl.value + 'px';
+    settingsSaveLogoLayout();
+  });
+  if (opEl) opEl.addEventListener('input', function () {
+    if (opVal) opVal.textContent = opEl.value + '%';
+    settingsSaveLogoLayout();
+  });
+  const grid = document.getElementById('settingsLogoPosGrid');
+  if (grid) grid.addEventListener('click', function (ev) {
+    const btn = ev.target.closest ? ev.target.closest('[data-logo-pos]') : null;
+    if (!btn) return;
+    const c = L.load();
+    c.position = btn.getAttribute('data-logo-pos');
+    L.save(c);
+    settingsMarkLogoPosition(c.position);
+  });
+
+  } // end one-time binding
+}
+
+function settingsLogoFileLabel(p) {
+  const base = String(p || '').split(/[\\/]/).pop() || '';
+  return base ? ('الملف: ' + base) : '';
+}
+
+function settingsMarkLogoPosition(pos) {
+  const grid = document.getElementById('settingsLogoPosGrid');
+  if (!grid) return;
+  grid.querySelectorAll('[data-logo-pos]').forEach(function (b) {
+    const on = b.getAttribute('data-logo-pos') === pos;
+    b.classList.toggle('btn-primary', on);
+    b.style.background = on ? '' : '#f0f0f0';
+  });
+}
+
+function settingsSaveLogoLayout() {
+  const L = window.InvoiceLogo;
+  if (!L) return;
+  const c = L.load();
+  const sizeEl = document.getElementById('settingsLogoSize');
+  const opEl = document.getElementById('settingsLogoOpacity');
+  if (sizeEl) c.size = parseInt(sizeEl.value, 10) || c.size;
+  if (opEl) c.opacity = parseInt(opEl.value, 10) || c.opacity;
+  L.save(c);
+}
+
+async function settingsUploadInvoiceLogo() {
+  const L = window.InvoiceLogo;
+  const api = window.electronAPI;
+  if (!L || !api || !api.openFile) return;
+  try {
+    const res = await api.openFile({
+      title: 'Select business logo',
+      properties: ['openFile'],
+      filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] }],
+    });
+    if (!res || res.canceled || !res.filePaths || !res.filePaths.length) return;
+    const src = res.filePaths[0];
+    const prev = L.load().path;
+    let dest = src;
+    if (api.invoiceLogoImport) {
+      const r = await api.invoiceLogoImport(src, prev);
+      if (r && r.success && r.path) dest = r.path;
+      else { settingsLogoToast(t('settings.logoImportFailed') || 'تعذّر استيراد اللوغو', 'error'); return; }
+    }
+    const c = L.load();
+    c.path = dest;
+    L.save(c);
+    L.invalidate();
+    await L.warm();
+    // Warn (but keep the logo) when the image is heavy. Nothing is uploaded to
+    // the cloud, yet an oversized file still slows down the print path.
+    let size = 0;
+    try {
+      const st = await api.readFileBuffer(dest);
+      if (st && st.success && st.data) size = Math.floor(st.data.length * 0.75);
+    } catch (e) {}
+    if (size > 2 * 1024 * 1024) {
+      settingsLogoToast('تم حفظ اللوغو، لكن حجمه يتجاوز 2MB (' + (size / 1048576).toFixed(1) + 'MB) — قد تُطبَع الفاتورة ببطء.', 'info');
+    } else {
+      settingsLogoToast(t('settings.logoSaved') || 'تم حفظ لوغو العمل', 'success');
+    }
+    settingsInitInvoiceLogo();
+  } catch (e) {
+    settingsLogoToast('خطأ: ' + (e && e.message ? e.message : e), 'error');
+  }
+}
+
+function settingsClearInvoiceLogo() {
+  const L = window.InvoiceLogo;
+  if (!L) return;
+  if (!confirm(t('settings.logoRemoveConfirm') || 'إزالة لوغو العمل من الفواتير؟')) return;
+  L.clear();
+  L.invalidate();
+  settingsLogoToast(t('settings.logoRemoved') || 'تمت إزالة اللوغو', 'success');
+  settingsInitInvoiceLogo();
+}
+
+// Renders the same header the printed invoice uses, so the preview is truthful.
+async function settingsPreviewInvoiceLogo() {
+  const L = window.InvoiceLogo;
+  const modal = document.getElementById('settingsLogoPreviewModal');
+  const stage = document.getElementById('settingsLogoPreviewStage');
+  if (!L || !modal || !stage) return;
+  if (!L.isEnabled()) { settingsLogoToast(t('settings.logoNone') || 'لا يوجد لوغو محمّل', 'info'); return; }
+  await L.warm();
+  settingsRenderLogoPreview();
+  if (!modal._host) modal._host = modal.parentNode;
+  if (modal.parentNode !== document.body) document.body.appendChild(modal);
+  modal.style.display = 'flex';
+}
+
+function settingsCloseLogoPreview() {
+  const modal = document.getElementById('settingsLogoPreviewModal');
+  if (!modal) return;
+  modal.style.display = 'none';
+  if (modal._host && modal.parentNode === document.body) modal._host.appendChild(modal);
+}
+
+function settingsRenderLogoPreview() {
+  const L = window.InvoiceLogo;
+  const stage = document.getElementById('settingsLogoPreviewStage');
+  if (!L || !stage) return;
+  const bwEl = document.getElementById('settingsLogoPreviewBw');
+  const mono = !!(bwEl && bwEl.checked);
+  const store = (typeof getStoreInfo === 'function') ? getStoreInfo() : { name: 'ZMT PIECE' };
+  const left = '<div style="font-size:20px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:1px">' +
+    L.esc(store.name || 'ZMT PIECE') + '</div>' +
+    '<div style="font-size:10px;color:#999;margin-top:1px;text-transform:uppercase;letter-spacing:0.5px">Document commercial</div>';
+  const right = '<div style="font-size:26px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:2px">FACTURE</div>' +
+    '<div style="font-size:11px;font-weight:700;color:#0066B1;margin-top:-2px;text-transform:uppercase;letter-spacing:1.5px">DE VENTE</div>' +
+    '<div style="font-size:13px;font-weight:700;color:#333;margin-top:6px">N° APERÇU</div>';
+  stage.innerHTML = (typeof L.headerRow === 'function') ? L.headerRow(left, right, mono) : '';
+  stage.style.background = '#fff';
+  const img = stage.querySelector('img.zmt-doc-logo');
+  if (img && mono) img.style.filter = 'grayscale(100%)';
+}
+
 
 

@@ -1,6 +1,6 @@
 {
   "name": "zmt-piece",
-  "version": "2.11.0",
+  "version": "2.11.1",
   "description": "ZMT PIECE - برنامج إدارة قطع غيار السيارات",
   "main": "main.js",
   "author": "ZERIBIT MOHAMMED TAHAR - ZMT SOFTWARE",
@@ -20,6 +20,7 @@
     "verify:merge": "node renderer/tests/merge-waybills-verify.js",
     "verify:thermal": "node renderer/tests/thermal-verify.js",
     "verify:cash": "node renderer/tests/cash-drawer-verify.js",
+    "verify:logo": "node renderer/tests/invoice-logo-verify.js",
     "verify:copy": "scripts/verify-copy.cmd",
     "publish:update": "node tools/publish-update.js",
     "phone-keygen": "node tools/phone-signer.js generate",

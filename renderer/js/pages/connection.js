@@ -1319,6 +1319,7 @@ const PD_STORE_KEY = 'zmt_pd_settings';
 function pdDefaults() {
   return {
     enabled: false,
+    media: [],
     videos: [],
     logoPath: '',
     bg: '#0b1220',
@@ -1417,23 +1418,105 @@ function pdSaveEnable() {
   pdResult('pdEnableResult', cfg.enabled ? (t('pd.enabled') || 'تم التفعيل') : (t('pd.disabled') || 'تم التعطيل'), true);
 }
 
-// ---- videos ------------------------------------------------------
+// ---- media playlist (images + video) -----------------------------
+// One ordered list. Images carry their own `duration` in seconds (3–60); a
+// video plays its full length. `videos` from older builds is migrated on read
+// so nothing the user already added is lost.
+const PD_IMG_DEFAULT_SECONDS = 5;
+
+function pdMediaList(cfg) {
+  if (Array.isArray(cfg.media) && cfg.media.length) return cfg.media;
+  const legacy = Array.isArray(cfg.videos) ? cfg.videos : [];
+  return legacy.map(function (v, i) {
+    return {
+      id: v.id || ('m' + i),
+      name: v.name || String(v.path || '').split(/[\\/]/).pop(),
+      path: v.path,
+      type: 'video',
+      duration: PD_IMG_DEFAULT_SECONDS,
+    };
+  });
+}
+
+function pdSetMedia(cfg, list) {
+  cfg.media = list;
+  // Keep `videos` mirrored for any older reader, then stop writing it.
+  cfg.videos = list.filter(function (m) { return m.type === 'video'; }).map(function (m) {
+    return { id: m.id, name: m.name, path: m.path };
+  });
+}
+
 function pdRenderVideos(cfg) {
   const list = document.getElementById('pdVideoList');
   const empty = document.getElementById('pdVideoEmpty');
   if (!list) return;
-  const vids = cfg.videos || [];
-  if (empty) empty.style.display = vids.length ? 'none' : '';
-  list.innerHTML = vids.map(function (v, i) {
-    const name = v.name || String(v.path || '').split(/[\\/]/).pop();
+  const items = pdMediaList(cfg);
+  if (empty) empty.style.display = items.length ? 'none' : '';
+  list.innerHTML = items.map(function (m, i) {
+    const name = m.name || String(m.path || '').split(/[\\/]/).pop();
+    const isImg = m.type === 'image';
+    const dur = Math.min(60, Math.max(3, parseInt(m.duration, 10) || PD_IMG_DEFAULT_SECONDS));
+    const durCell = isImg
+      ? '<span class="pd-vid-dur" style="display:inline-flex;align-items:center;gap:6px;margin:0 6px">' +
+          '<input type="range" min="3" max="60" step="1" value="' + dur + '" ' +
+            'oninput="pdSetDuration(' + i + ', this.value)" style="width:110px;vertical-align:middle">' +
+          '<b data-dur-for="' + i + '" style="min-width:34px;font-size:12px;color:#0066b1">' + dur + 's</b>' +
+        '</span>'
+      : '<span class="pd-vid-dur" style="margin:0 8px;font-size:11px;color:#8a94a6">كامل الطول</span>';
+    const badge = isImg
+      ? '<i class="fas fa-image" title="صورة" style="color:#0066b1;margin-right:6px"></i>'
+      : '<i class="fas fa-film" title="فيديو" style="color:#e65100;margin-right:6px"></i>';
     return '<div class="pd-vid-row">' +
       '<span class="pd-vid-idx">' + (i + 1) + '</span>' +
-      '<span class="pd-vid-name" title="' + escAttr(v.path || '') + '">' + escHtml(name) + '</span>' +
+      badge +
+      '<span class="pd-vid-name" title="' + escAttr(m.path || '') + '">' + escHtml(name) + '</span>' +
+      durCell +
       '<button class="pd-icon-btn" type="button" title="↑" onclick="pdMoveVideo(' + i + ',-1)" ' + (i === 0 ? 'disabled' : '') + '><i class="fas fa-arrow-up"></i></button>' +
-      '<button class="pd-icon-btn" type="button" title="↓" onclick="pdMoveVideo(' + i + ',1)" ' + (i === vids.length - 1 ? 'disabled' : '') + '><i class="fas fa-arrow-down"></i></button>' +
-      '<button class="pd-icon-btn danger" type="button" title="X" onclick="pdRemoveVideo(' + i + ')"><i class="fas fa-trash"></i></button>' +
+      '<button class="pd-icon-btn" type="button" title="↓" onclick="pdMoveVideo(' + i + ',1)" ' + (i === items.length - 1 ? 'disabled' : '') + '><i class="fas fa-arrow-down"></i></button>' +
+      '<button class="pd-icon-btn danger" type="button" title="حذف" onclick="pdRemoveVideo(' + i + ')"><i class="fas fa-trash"></i></button>' +
       '</div>';
   }).join('');
+}
+
+function pdSetDuration(i, val) {
+  const cfg = pdLoad();
+  const media = pdMediaList(cfg);
+  if (!media[i]) return;
+  media[i].duration = Math.min(60, Math.max(3, parseInt(val, 10) || PD_IMG_DEFAULT_SECONDS));
+  pdSetMedia(cfg, media);
+  pdSave(cfg);
+  const list = document.getElementById('pdVideoList');
+  const lbl = list ? list.querySelector('[data-dur-for="' + i + '"]') : null;
+  if (lbl) lbl.textContent = media[i].duration + 's';
+}
+
+async function pdAddImage() {
+  const api = window.electronAPI;
+  if (!api || !api.openFile) { pdResult('pdVideoResult', t('common.error') || 'خطأ', false); return; }
+  const res = await api.openFile({
+    title: 'Select images',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }]
+  });
+  if (!res || res.canceled || !res.filePaths || !res.filePaths.length) return;
+  const out = document.getElementById('pdVideoResult');
+  if (out) out.innerHTML = '<span class="text-muted">' + (t('connection.uploading') || '...') + '</span>';
+  const cfg = pdLoad();
+  const list = pdMediaList(cfg);
+  for (const p of res.filePaths) {
+    const base = String(p).split(/[\\/]/).pop();
+    if (list.some(function (m) { return m.path === p; })) continue;
+    let dest = p;
+    if (api.pdImportMedia) {
+      const r = await api.pdImportMedia(p, 'image');
+      if (r && r.success && r.path) dest = r.path;
+    }
+    list.push({ id: 'm' + Date.now() + Math.random().toString(36).slice(2, 7), name: base, path: dest, type: 'image', duration: PD_IMG_DEFAULT_SECONDS });
+  }
+  pdSetMedia(cfg, list);
+  pdSave(cfg);
+  pdRenderVideos(cfg);
+  pdResult('pdVideoResult', t('pd.imageAdded') || 'تمت إضافة الصورة', true);
 }
 
 async function pdAddVideo() {
@@ -1448,18 +1531,18 @@ async function pdAddVideo() {
   const out = document.getElementById('pdVideoResult');
   if (out) out.innerHTML = '<span class="text-muted">' + (t('connection.uploading') || '...') + '</span>';
   const cfg = pdLoad();
-  cfg.videos = Array.isArray(cfg.videos) ? cfg.videos : [];
+  const list = pdMediaList(cfg);
   for (const p of res.filePaths) {
     const base = String(p).split(/[\\/]/).pop();
-    if (cfg.videos.some(function (v) { return v.path === p; })) continue;
+    if (list.some(function (m) { return m.path === p; })) continue;
+    let dest = p;
     if (api.pdImportMedia) {
       const r = await api.pdImportMedia(p, 'video');
-      if (r && r.success && r.path) cfg.videos.push({ id: 'v' + Date.now() + Math.random().toString(36).slice(2, 7), name: base, path: r.path });
-      else cfg.videos.push({ id: 'v' + Date.now() + Math.random().toString(36).slice(2, 7), name: base, path: p });
-    } else {
-      cfg.videos.push({ id: 'v' + Date.now() + Math.random().toString(36).slice(2, 7), name: base, path: p });
+      if (r && r.success && r.path) dest = r.path;
     }
+    list.push({ id: 'm' + Date.now() + Math.random().toString(36).slice(2, 7), name: base, path: dest, type: 'video', duration: PD_IMG_DEFAULT_SECONDS });
   }
+  pdSetMedia(cfg, list);
   pdSave(cfg);
   pdRenderVideos(cfg);
   pdResult('pdVideoResult', t('pd.videoAdded') || 'تمت الإضافة', true);
@@ -1467,8 +1550,9 @@ async function pdAddVideo() {
 
 function pdRemoveVideo(i) {
   const cfg = pdLoad();
-  if (!Array.isArray(cfg.videos)) cfg.videos = [];
-  const removed = cfg.videos.splice(i, 1)[0];
+  const list = pdMediaList(cfg);
+  const removed = list.splice(i, 1)[0];
+  pdSetMedia(cfg, list);
   pdSave(cfg);
   pdRenderVideos(cfg);
   if (removed && removed.path && window.electronAPI && window.electronAPI.pdRemoveMedia) {
@@ -1478,12 +1562,13 @@ function pdRemoveVideo(i) {
 
 function pdMoveVideo(i, dir) {
   const cfg = pdLoad();
-  if (!Array.isArray(cfg.videos)) cfg.videos = [];
+  const list = pdMediaList(cfg);
   const j = i + dir;
-  if (j < 0 || j >= cfg.videos.length) return;
-  const tmp = cfg.videos[i];
-  cfg.videos[i] = cfg.videos[j];
-  cfg.videos[j] = tmp;
+  if (j < 0 || j >= list.length) return;
+  const tmp = list[i];
+  list[i] = list[j];
+  list[j] = tmp;
+  pdSetMedia(cfg, list);
   pdSave(cfg);
   pdRenderVideos(cfg);
 }

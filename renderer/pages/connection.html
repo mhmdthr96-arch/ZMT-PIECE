@@ -521,17 +521,18 @@
           </div>
           <div class="conn-sync-result" id="pdEnableResult"></div>
 
-          <!-- VIDEOS -->
+          <!-- MEDIA PLAYLIST (images + video) -->
           <div style="margin-top:20px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
-            <h4 style="margin-bottom:6px;"><i class="fas fa-film" style="color:#0066b1;"></i> <span data-i18n="pd.videosTitle">مقاطع الفيديو</span></h4>
-            <p class="conn-info-text" data-i18n="pd.videosDesc">تُعرض المقاطع بالترتيب ثم تُكرَّر تلقائيًا. يُمنع رفعها إلى السحابة — تُنسَخ داخل مجلد بيانات البرنامج المحلي.</p>
-            <div class="conn-actions" style="margin-bottom:10px;">
-              <button class="btn btn-primary" onclick="pdAddVideo()"><i class="fas fa-plus"></i> <span data-i18n="pd.videosAdd">إضافة فيديو</span></button>
+            <h4 style="margin-bottom:6px;"><i class="fas fa-photo-film" style="color:#0066b1;"></i> <span data-i18n="pd.mediaTitle">الصور والفيديوهات</span></h4>
+            <p class="conn-info-text" data-i18n="pd.mediaDesc">تُعرض العناصر بالترتيب ثم تُكرَّر تلقائيًا: الصورة تبقى وفق مدّتها، والفيديو يُعرض كاملًا. يُمنع رفعها إلى السحابة — تُنسَخ داخل مجلد بيانات البرنامج المحلي.</p>
+            <div class="conn-actions" style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-primary" onclick="pdAddImage()"><i class="fas fa-image"></i> <span data-i18n="pd.mediaAddImage">إضافة صورة</span></button>
+              <button class="btn btn-primary" onclick="pdAddVideo()"><i class="fas fa-film"></i> <span data-i18n="pd.mediaAddVideo">إضافة فيديو</span></button>
             </div>
             <div id="pdVideoList" class="pd-vid-list"></div>
             <div id="pdVideoEmpty" class="conn-empty-state">
-              <i class="fas fa-film"></i>
-              <p data-i18n="pd.videosEmpty">لا توجد مقاطع فيديو</p>
+              <i class="fas fa-photo-film"></i>
+              <p data-i18n="pd.mediaEmpty">لا توجد صور أو فيديوهات</p>
             </div>
             <div class="conn-sync-result" id="pdVideoResult"></div>
           </div>

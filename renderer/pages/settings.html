@@ -19,6 +19,52 @@
               <label data-i18n="settings.companyName">اسم الشركة النشطة</label>
               <input type="text" class="form-input" id="settingsCompanyName" placeholder="اسم الشركة (اختياري)" style="width:300px">
             </div>
+            <div class="setting-row" style="align-items:flex-start">
+              <label data-i18n="settings.invoiceLogo">لوغو العمل (الفواتير)</label>
+              <div style="display:flex;flex-direction:column;gap:8px;flex:1;max-width:520px">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <button type="button" class="btn btn-primary" id="settingsLogoUploadBtn" onclick="settingsUploadInvoiceLogo()">
+                    <i class="fas fa-upload"></i> <span data-i18n="settings.logoUpload">تحميل لوغو العمل</span>
+                  </button>
+                  <button type="button" class="btn" id="settingsLogoPreviewBtn" onclick="settingsPreviewInvoiceLogo()" style="display:none">
+                    <i class="fas fa-eye"></i> <span data-i18n="settings.logoPreview">معاينة اللوغو</span>
+                  </button>
+                  <button type="button" class="btn" id="settingsLogoClearBtn" onclick="settingsClearInvoiceLogo()" style="display:none;color:#c62828">
+                    <i class="fas fa-trash-alt"></i> <span data-i18n="settings.logoRemove">إزالة</span>
+                  </button>
+                </div>
+                <div id="settingsLogoThumbWrap" style="display:none;align-items:center;gap:10px">
+                  <div style="width:64px;height:64px;border:1px solid var(--silver-300,#ddd);border-radius:8px;background:#fafafa;display:flex;align-items:center;justify-content:center;overflow:hidden">
+                    <img id="settingsLogoThumb" alt="" style="max-width:60px;max-height:60px;object-fit:contain;opacity:.85">
+                  </div>
+                  <div style="font-size:12px;color:#666;line-height:1.7">
+                    <div id="settingsLogoMeta"></div>
+                    <div data-i18n="settings.logoLocalHint" style="color:#999">يُحفظ على هذا الجهاز فقط ولا يُرفع إلى السحابة.</div>
+                  </div>
+                </div>
+                <div id="settingsLogoControls" style="display:none;border:1px solid var(--silver-200,#eee);border-radius:8px;padding:10px 12px;background:#fcfcfc">
+                  <div style="font-size:12px;font-weight:700;color:#555;margin-bottom:8px"><i class="fas fa-sliders-h"></i> <span data-i18n="settings.logoLayout">موضع اللوغو وحجمه وشفافيته</span></div>
+                  <div id="settingsLogoPosGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-width:260px;margin-bottom:12px">
+                    <button type="button" class="btn" data-logo-pos="top-left" style="padding:6px 0"><i class="fas fa-arrow-up"></i><i class="fas fa-align-left"></i></button>
+                    <button type="button" class="btn" data-logo-pos="top-center" style="padding:6px 0"><i class="fas fa-arrow-up"></i><i class="fas fa-align-center"></i></button>
+                    <button type="button" class="btn" data-logo-pos="top-right" style="padding:6px 0"><i class="fas fa-arrow-up"></i><i class="fas fa-align-right"></i></button>
+                    <button type="button" class="btn" data-logo-pos="bottom-left" style="padding:6px 0"><i class="fas fa-arrow-down"></i><i class="fas fa-align-left"></i></button>
+                    <button type="button" class="btn" data-logo-pos="bottom-center" style="padding:6px 0"><i class="fas fa-arrow-down"></i><i class="fas fa-align-center"></i></button>
+                    <button type="button" class="btn" data-logo-pos="bottom-right" style="padding:6px 0"><i class="fas fa-arrow-down"></i><i class="fas fa-align-right"></i></button>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                    <span style="font-size:12px;color:#666;min-width:64px" data-i18n="settings.logoSize">الحجم</span>
+                    <input type="range" id="settingsLogoSize" min="30" max="160" step="5" value="80" style="flex:1;max-width:220px">
+                    <span id="settingsLogoSizeVal" style="font-size:12px;color:#333;min-width:44px">80px</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <span style="font-size:12px;color:#666;min-width:64px" data-i18n="settings.logoOpacity">الشفافية</span>
+                    <input type="range" id="settingsLogoOpacity" min="10" max="100" step="5" value="20" style="flex:1;max-width:220px">
+                    <span id="settingsLogoOpacityVal" style="font-size:12px;color:#333;min-width:44px">20%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           <div class="setting-row">
             <label data-i18n="settings.storeAddress">عنوان المحل</label>
             <input type="text" class="form-input" id="settingsStoreAddress" value="" style="width:300px" placeholder="مثال: 15 Rue Didouche Mourad, Alger">
@@ -619,6 +665,28 @@
     <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border-color)">
       <button class="btn" onclick="settingsHideFirewallModal()"><i class="fas fa-times"></i> إغلاق</button>
       <button class="btn btn-primary" onclick="settingsAllowFirewall()"><i class="fas fa-shield-alt"></i> محاولة السماح تلقائياً</button>
+    </div>
+  </div>
+</div>
+
+<!-- Invoice logo preview modal (settings only) -->
+<div id="settingsLogoPreviewModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)settingsCloseLogoPreview()">
+  <div class="modal" style="max-width:760px;width:92%">
+    <div class="modal-header">
+      <h3><i class="fas fa-eye"></i> <span data-i18n="settings.logoPreview">معاينة اللوغو</span></h3>
+      <button class="modal-close" onclick="settingsCloseLogoPreview()">&times;</button>
+    </div>
+    <div class="modal-body" style="padding:0">
+      <div style="padding:12px 18px;background:#f7f7f7;border-bottom:1px solid #eee;display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#666">
+        <span><i class="fas fa-palette"></i> <span data-i18n="settings.logoPreviewHint">هكذا سيظهر اللوغو على الفاتورة المطبوعة.</span></span>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="settingsLogoPreviewBw" onchange="settingsRenderLogoPreview()"> <span data-i18n="settings.logoPreviewBw">أبيض وأسود</span>
+        </label>
+      </div>
+      <div id="settingsLogoPreviewStage" style="padding:24px 28px;background:#fff;direction:ltr;text-align:left;font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;color:#222;min-height:220px"></div>
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border-color)">
+      <button class="btn" onclick="settingsCloseLogoPreview()"><i class="fas fa-times"></i> <span data-i18n="common.close">إغلاق</span></button>
     </div>
   </div>
 </div>

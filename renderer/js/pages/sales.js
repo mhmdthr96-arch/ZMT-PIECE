@@ -1837,7 +1837,23 @@ function showInvoicePreview(inv) {
       <div id="invoicePrintArea" style="padding:30px 35px;font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;color:#222;direction:ltr;text-align:left" dir="ltr">
 
         <!-- Header -->
-        <table style="width:100%;border-collapse:collapse" dir="ltr">
+        ${(typeof buildDocHeaderRow === 'function')
+          ? buildDocHeaderRow(
+              `<div style="font-size:20px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:1px">${escHtml(store.name)}</div>
+              <div style="font-size:10px;color:#999;margin-top:1px;text-transform:uppercase;letter-spacing:0.5px">Document commercial</div>
+              ${store.address ? `<div style="font-size:11px;color:#555;margin-top:4px">${escHtml(store.address)}</div>` : ''}
+              ${store.phone ? `<div style="font-size:11px;color:#555">Tél: ${escHtml(store.phone)}</div>` : ''}
+              <div style="font-size:10px;color:#999;margin-top:2px">${(store.nif ? 'NIF: ' + escHtml(store.nif) : 'NIF: —')} &nbsp;|&nbsp; ${(store.rcc ? 'RC: ' + escHtml(store.rcc) : 'RC: —')}${store.article ? ' &nbsp;|&nbsp; ART: ' + escHtml(store.article) : ''}</div>`,
+              `<div style="font-size:30px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:3px">FACTURE</div>
+              <div style="font-size:11px;font-weight:700;color:#0066B1;margin-top:-2px;text-transform:uppercase;letter-spacing:1.5px">DE VENTE</div>
+              <div style="font-size:10px;font-weight:600;color:#888;margin-top:1px;text-transform:uppercase;letter-spacing:1px">Original</div>
+              <div style="font-size:14px;font-weight:700;color:#333;margin-top:6px">N° ${inv.invoiceNumber}</div>
+              <div style="font-size:11px;color:#555;margin-top:4px;line-height:1.6">
+                <div>Date: ${dateStr}</div>
+                <div>Heure: ${timeStr}</div>
+              </div>`
+            )
+          : `<table style="width:100%;border-collapse:collapse" dir="ltr">
           <tr>
             <td style="vertical-align:top;width:60%">
               <div style="font-size:20px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:1px">${escHtml(store.name)}</div>
@@ -1857,7 +1873,7 @@ function showInvoicePreview(inv) {
               </div>
             </td>
           </tr>
-        </table>
+        </table>`}
 
         <!-- Separator -->
         <div style="border-top:2px solid #1a1a1a;margin:16px 0 14px"></div>
@@ -2041,6 +2057,18 @@ function showInvoicePreview(inv) {
   `;
 
   document.body.appendChild(modal);
+
+  // The logo is inlined asynchronously — rebuild the preview once it is ready so
+  // the on-screen copy shows exactly what will be printed. Guarded by a flag to
+  // avoid an infinite rebuild loop (the second pass finds _current set).
+  const _L = (typeof window.InvoiceLogo !== 'undefined') ? window.InvoiceLogo : null;
+  if (_L && _L.isEnabled() && !_L.current() && !showInvoicePreview._rebuilding) {
+    Promise.resolve(_L.warm()).then(function () {
+      if (!_L.current()) return;
+      showInvoicePreview._rebuilding = true;
+      try { showInvoicePreview(inv); } finally { showInvoicePreview._rebuilding = false; }
+    }).catch(function () {});
+  }
 }
 
 function printInvoicePreview(mode) {
@@ -2094,6 +2122,8 @@ function printInvoicePreview(mode) {
           background: #f5f5f5 !important;
           background-color: #f5f5f5 !important;
         }
+        /* Business logo: force the greyscale watermark in N&B mode. */
+        #invoicePrintArea img.zmt-doc-logo { filter: grayscale(100%) !important; }
         ` : ''}
       </style>
     </head>

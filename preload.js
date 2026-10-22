@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Price display (شاشة عرض السعر): local media + kiosk + Windows auto start
   pdImportMedia: (srcPath, kind) => ipcRenderer.invoke('pd-import-media', srcPath, kind),
   pdRemoveMedia: (destPath) => ipcRenderer.invoke('pd-remove-media', destPath),
+  // Business logo for invoices — LOCAL ONLY, never uploaded to the cloud
+  invoiceLogoImport: (srcPath, previousPath) => ipcRenderer.invoke('invoice-logo-import', srcPath, previousPath),
+  invoiceLogoRemove: (destPath) => ipcRenderer.invoke('invoice-logo-remove', destPath),
+  invoiceLogoDataUrl: (logoPath) => ipcRenderer.invoke('invoice-logo-dataurl', logoPath),
   windowSetKiosk: (on) => ipcRenderer.invoke('window-set-kiosk', on),
   autoLaunchGet: () => ipcRenderer.invoke('auto-launch-get'),
   autoLaunchSet: (enabled) => ipcRenderer.invoke('auto-launch-set', enabled),

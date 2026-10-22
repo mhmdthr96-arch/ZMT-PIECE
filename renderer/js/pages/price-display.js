@@ -16,8 +16,9 @@
   const SCAN_GAP = 120;
 
   let cfg = null;
-  let vids = [];
-  let vIdx = 0;
+  let media = [];
+  let mIdx = 0;
+  let imageTimer = 0;
   let priceTimer = 0;
   let buf = '';
   let bufTimer = 0;
@@ -30,6 +31,7 @@
   function pdDefaults() {
     return {
       enabled: false,
+      media: [],
       videos: [],
       logoPath: '',
       bg: '#0b1220',
@@ -124,31 +126,73 @@
     if (track) track.classList.toggle('no-anim', !!cfg.tickerNoAnim);
   }
 
-  // ---- video playlist ------------------------------------------------
-  function loadVideos() {
-    vids = (Array.isArray(cfg.videos) ? cfg.videos : []).filter(function (v) {
-      return v && typeof v.path === 'string' && v.path.trim() !== '';
+  // ---- media playlist (images + video, one ordered list) --------------
+  // Each item: { id, name, path, type: 'image' | 'video', duration }.
+  // Images stay on screen for their own `duration` (seconds); a video plays its
+  // full length and then the next item starts. When the list ends it restarts.
+  const IMG_DEFAULT_SECONDS = 5;
+
+  // Older builds stored only `videos` — migrate them in place so an existing
+  // installation keeps playing without the user re-adding anything.
+  function normalizeMedia(c) {
+    if (Array.isArray(c.media) && c.media.length) return c.media;
+    const legacy = Array.isArray(c.videos) ? c.videos : [];
+    return legacy.map(function (v, i) {
+      return {
+        id: v.id || ('m' + i),
+        name: v.name || String(v.path || '').split(/[\\/]/).pop(),
+        path: v.path,
+        type: 'video',
+        duration: IMG_DEFAULT_SECONDS,
+      };
     });
-    if (!vids.length) stopVideo();
-    else playAt(0);
   }
 
-  function stopVideo() {
-    const v = document.getElementById('pdVideo');
+  function loadVideos() {
+    media = normalizeMedia(cfg).filter(function (m) {
+      return m && typeof m.path === 'string' && m.path.trim() !== '';
+    });
+    if (!media.length) { stopMedia(); return; }
+    playAt(0);
+  }
+
+  function stopMedia() {
     const stage = document.getElementById('pdStage');
     if (stage) stage.classList.remove('has-video');
-    if (!v) return;
-    try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
+    const v = document.getElementById('pdVideo');
+    if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} }
+    const img = document.getElementById('pdImage');
+    if (img) { img.style.display = 'none'; img.removeAttribute('src'); }
   }
+  const stopVideo = stopMedia; // keep the old name for any external caller
 
   function playAt(i) {
     const v = document.getElementById('pdVideo');
+    const img = document.getElementById('pdImage');
     const stage = document.getElementById('pdStage');
-    if (!v || !vids.length) { stopVideo(); return; }
-    vIdx = ((i % vids.length) + vids.length) % vids.length;
+    if (!media.length) { stopMedia(); return; }
+    mIdx = ((i % media.length) + media.length) % media.length;
+    const item = media[mIdx] || {};
     if (stage) stage.classList.add('has-video');
+    clearTimeout(imageTimer);
+
+    if (item.type === 'image') {
+      // Image: show it, hide the video, and advance after its duration.
+      if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {} }
+      if (img) {
+        img.src = fileUrl(item.path);
+        img.style.display = '';
+      }
+      const secs = Math.min(60, Math.max(3, parseInt(item.duration, 10) || IMG_DEFAULT_SECONDS));
+      imageTimer = setTimeout(function () { playAt(mIdx + 1); }, secs * 1000);
+      return;
+    }
+
+    // Video: hide the image and let the full clip play.
+    if (img) { img.style.display = 'none'; img.removeAttribute('src'); }
+    if (!v) { stopMedia(); return; }
     try {
-      v.src = fileUrl(vids[vIdx].path);
+      v.src = fileUrl(item.path);
       v.currentTime = 0;
       const pr = v.play();
       if (pr && pr.catch) pr.catch(function () { /* autoplay blocked: retry on first interaction */ });
@@ -156,8 +200,17 @@
   }
 
   function resumeVideo() {
+    // Resume whatever is currently on screen: a paused video, or (for an image)
+    // simply restart its remaining display window.
+    const item = media[mIdx] || {};
+    if (item.type === 'image') {
+      const secs = Math.min(60, Math.max(3, parseInt(item.duration, 10) || IMG_DEFAULT_SECONDS));
+      clearTimeout(imageTimer);
+      imageTimer = setTimeout(function () { playAt(mIdx + 1); }, secs * 1000);
+      return;
+    }
     const v = document.getElementById('pdVideo');
-    if (!v || !vids.length) return;
+    if (!v || !media.length) return;
     const pr = v.play();
     if (pr && pr.catch) pr.catch(function () {});
   }
@@ -176,6 +229,8 @@
     layer.classList.add('show');
     const v = document.getElementById('pdVideo');
     if (v) { try { v.pause(); } catch (e) {} }
+    // Freeze the image countdown while the price is on screen.
+    clearTimeout(imageTimer);
 
     clearTimeout(priceTimer);
     priceTimer = setTimeout(function () {
@@ -331,8 +386,12 @@
 
     const v = document.getElementById('pdVideo');
     if (v) {
-      v.addEventListener('ended', function () { playAt(vIdx + 1); });
-      v.addEventListener('error', function () { setTimeout(function () { playAt(vIdx + 1); }, 600); });
+      v.addEventListener('ended', function () { playAt(mIdx + 1); });
+      v.addEventListener('error', function () { setTimeout(function () { playAt(mIdx + 1); }, 600); });
+    }
+    const imgEl = document.getElementById('pdImage');
+    if (imgEl) {
+      imgEl.addEventListener('error', function () { setTimeout(function () { playAt(mIdx + 1); }, 600); });
     }
 
     const sf = document.getElementById('pdScannerField');
