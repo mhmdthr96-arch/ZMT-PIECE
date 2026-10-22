@@ -26,7 +26,7 @@
                   <button type="button" class="btn btn-primary" id="settingsLogoUploadBtn" onclick="settingsUploadInvoiceLogo()">
                     <i class="fas fa-upload"></i> <span data-i18n="settings.logoUpload">تحميل لوغو العمل</span>
                   </button>
-                  <button type="button" class="btn" id="settingsLogoPreviewBtn" onclick="settingsPreviewInvoiceLogo()" style="display:none">
+                  <button type="button" class="btn" id="settingsLogoPreviewBtn" onclick="settingsPreviewInvoiceLogo()" disabled title="حمّل لوغو أولاً">
                     <i class="fas fa-eye"></i> <span data-i18n="settings.logoPreview">معاينة اللوغو</span>
                   </button>
                   <button type="button" class="btn" id="settingsLogoClearBtn" onclick="settingsClearInvoiceLogo()" style="display:none;color:#c62828">
@@ -42,7 +42,7 @@
                     <div data-i18n="settings.logoLocalHint" style="color:#999">يُحفظ على هذا الجهاز فقط ولا يُرفع إلى السحابة.</div>
                   </div>
                 </div>
-                <div id="settingsLogoControls" style="display:none;border:1px solid var(--silver-200,#eee);border-radius:8px;padding:10px 12px;background:#fcfcfc">
+                <div id="settingsLogoControls" style="border:1px solid var(--silver-200,#eee);border-radius:8px;padding:10px 12px;background:#fcfcfc">
                   <div style="font-size:12px;font-weight:700;color:#555;margin-bottom:8px"><i class="fas fa-sliders-h"></i> <span data-i18n="settings.logoLayout">موضع اللوغو وحجمه وشفافيته</span></div>
                   <div id="settingsLogoPosGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;max-width:260px;margin-bottom:12px">
                     <button type="button" class="btn" data-logo-pos="top-left" style="padding:6px 0"><i class="fas fa-arrow-up"></i><i class="fas fa-align-left"></i></button>

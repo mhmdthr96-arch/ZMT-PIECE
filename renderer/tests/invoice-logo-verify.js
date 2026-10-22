@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Permanent verifier for ZMT PIECE 2.11.1 — the two features of this release:
+ * Permanent verifier for ZMT PIECE 2.11.2 — the two features of this release:
  *
  *   A) BUSINESS LOGO ON INVOICES
  *      - one shared header builder used by every printed document;
@@ -51,7 +51,7 @@ function has(text, needle, label) { ok(text.indexOf(needle) !== -1, label); }
 function hasNot(text, needle, label) { ok(text.indexOf(needle) === -1, label); }
 
 console.log('============================================================');
-console.log('اختبار ميزتي الإصدار 2.11.1 — الفحص الثابت');
+console.log('اختبار ميزتي الإصدار 2.11.2 — الفحص الثابت');
 console.log('============================================================');
 
 // ===========================================================================
@@ -231,7 +231,7 @@ const PD_KEYS = ['mediaTitle', 'mediaDesc', 'mediaAddImage', 'mediaAddVideo', 'm
 // ===========================================================================
 console.log('\n--- 10. الإصدار وملاحظات النشر ---');
 ok(/^\d+\.\d+\.\d+$/.test(pkg.version), 'version: a valid semver (' + pkg.version + ')');
-ok(pkg.version === '2.11.1', 'version: 2.11.1 as agreed');
+ok(pkg.version === '2.11.2', 'version: 2.11.2 as agreed');
 ok(notes.trimStart().startsWith('ZMT PIECE ' + pkg.version), 'notes: the newest section matches the version');
 has(notes, 'ZMT PIECE 2.11.0', 'notes: the previous section is preserved');
 has(notes, 'ZMT PIECE 2.7.0', 'notes: the 2.7.0 section is preserved');

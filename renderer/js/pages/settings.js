@@ -1629,6 +1629,26 @@ function prtTestPrint() {
 // been opened in this session — the settings page can be the very first page.
 function settingsLogoToast(msg, type) {
   if (typeof window.invToast === 'function') { try { window.invToast(msg, type); return; } catch (e) {} }
+  // invToast lives in invoices.js, a page script that only loads once the user
+  // visits that page. Opening Settings first must still report the outcome, so
+  // fall back to a self-contained toast rather than a silent console line.
+  try {
+    let host = document.getElementById('settingsLogoToastHost');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'settingsLogoToastHost';
+      host.style.cssText = 'position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:99999;' +
+        'display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none';
+      (document.body || document.documentElement).appendChild(host);
+    }
+    const colors = { error: '#c62828', success: '#2e7d32', info: '#1565c0' };
+    const el = document.createElement('div');
+    el.textContent = msg;
+    el.style.cssText = 'background:' + (colors[type] || '#333') + ';color:#fff;padding:10px 16px;' +
+      'border-radius:8px;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.25);max-width:80vw;text-align:center';
+    host.appendChild(el);
+    setTimeout(function () { try { el.remove(); } catch (e) {} }, 4000);
+  } catch (e) {}
   try { console.log('[logo]', msg); } catch (e) {}
 }
 
@@ -1655,9 +1675,17 @@ function settingsInitInvoiceLogo() {
   settingsMarkLogoPosition(cfg.position);
 
   const has = L.isEnabled();
-  if (previewBtn) previewBtn.style.display = has ? '' : 'none';
+  // The preview button is always present (the user asked for both buttons side
+  // by side); it is only disabled while no logo is loaded. Layout controls are
+  // always shown so position/size/opacity can be set before uploading.
+  if (previewBtn) {
+    previewBtn.disabled = !has;
+    previewBtn.style.display = '';
+    if (has) previewBtn.removeAttribute('title');
+    else previewBtn.setAttribute('title', 'حمّل لوغو أولاً');
+  }
   if (clearBtn) clearBtn.style.display = has ? '' : 'none';
-  if (controls) controls.style.display = has ? '' : 'none';
+  if (controls) controls.style.display = '';
   if (thumbWrap) thumbWrap.style.display = has ? 'flex' : 'none';
 
   if (has && thumb) {
