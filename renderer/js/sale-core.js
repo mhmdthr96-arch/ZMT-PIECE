@@ -21,13 +21,38 @@
 
 const SaleCore = (() => {
 
-  const MIN = 0.005;
+  // Smallest positive quantity the engine will honour. Quantities are decimal
+  // (0.00006 is a real sale), so this is only a float-noise floor, NOT a
+  // "minimum 1 piece" rule.
+  const MIN = 0.000001;
+  const QTY_DECIMALS = 6;
 
   const num = (v) => {
     if (v === null || v === undefined || v === '') return 0;
     const n = Number(v);
     return isNaN(n) ? 0 : n;
   };
+
+  // Quantities are rounded to 6 decimals on every write so 0.1 + 0.2 never
+  // becomes 0.30000000000000004 in stock or on an invoice line. Money is left
+  // to the existing float pipeline (formatted at display time) so no existing
+  // total/discount/accounting behaviour changes.
+  const rq = (v) => {
+    const n = num(v);
+    const f = Math.pow(10, QTY_DECIMALS);
+    return Math.round(n * f) / f;
+  };
+
+  // Snapshot of a product's unit for the invoice line (history never rewrites).
+  function unitSnapshot(prod) {
+    if (typeof window !== 'undefined' && window.Unit && window.Unit.snapshot) {
+      return window.Unit.snapshot(prod);
+    }
+    const code = prod && prod.unit ? String(prod.unit) : 'piece';
+    const out = { unit: code };
+    if (code === 'custom' && prod && prod.unitLabel) out.unitLabel = String(prod.unitLabel);
+    return out;
+  }
 
   // ---- pharmacy/expiry helpers (mirrors sales.js) --------------------------
 
@@ -79,7 +104,11 @@ const SaleCore = (() => {
     records = records.slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     const pharm = pharmOn();
     const entries = [];
-    let remaining = Math.max(1, num(spec.qty));
+    // Decimal quantities are first-class: 0.25 kg or 0.00006 L must survive
+    // allocation untouched. Only a real zero is rejected.
+    let remaining = rq(spec.qty);
+    if (remaining < 0) remaining = 0;
+    if (remaining > 0 && remaining < MIN) remaining = MIN;
     let requested = remaining;
     let blockedExpired = 0;
     let anyFixed = false;
@@ -90,20 +119,20 @@ const SaleCore = (() => {
       }
       if (isFixed(r)) anyFixed = true;
       if (remaining <= 0) break;
-      const take = isFixed(r) ? remaining : Math.min(r.quantity || 0, remaining);
+      const take = rq(isFixed(r) ? remaining : Math.min(r.quantity || 0, remaining));
       if (take > 0) {
         const price = num(spec.price);
         entries.push({ productId: r.id, name: r.name || '', barcode: r.barcode || '', qty: take, price, total: take * price });
-        remaining -= take;
+        remaining = rq(remaining - take);
       }
     }
     const baseTotal = entries.reduce((s, e) => s + e.total, 0);
     return {
       entries,
       baseTotal,
-      qty: entries.reduce((s, e) => s + e.qty, 0),
+      qty: rq(entries.reduce((s, e) => s + e.qty, 0)),
       requested,
-      shortQty: remaining,
+      shortQty: rq(remaining),
       blockedExpired,
       anyFixed,
       recordCount: records.length,
@@ -126,7 +155,7 @@ const SaleCore = (() => {
     const custDiscPct = Math.max(0, num(opts.customerDiscountPct));
     let extraDiscAmount = Math.max(0, num(opts.extraDiscount));
 
-    const lineBaseTotal = (line) => (line.entries || []).reduce((s, e) => s + (num(e.price) * num(e.qty)), 0);
+    const lineBaseTotal = (line) => (line.entries || []).reduce((s, e) => s + (num(e.price) * rq(e.qty)), 0);
     const subTotal = lines.reduce((s, line) => s + lineBaseTotal(line), 0);
     const custDiscAmount = subTotal * (custDiscPct / 100);
     const afterCustDisc = subTotal - custDiscAmount;
@@ -140,8 +169,10 @@ const SaleCore = (() => {
       for (const entry of (line.entries || [])) {
         const prod = DB.getProduct(entry.productId);
         if (!prod) continue;
-        if (prod.fixed !== true && (prod.quantity || 0) < num(entry.qty)) {
-          return { ok: false, error: { code: 'STOCK', name: entry.name || prod.name || '', available: prod.quantity || 0, qty: num(entry.qty) } };
+        const want = rq(entry.qty);
+        if (want <= 0) continue;
+        if (prod.fixed !== true && rq(prod.quantity || 0) < want) {
+          return { ok: false, error: { code: 'STOCK', name: entry.name || prod.name || '', available: prod.quantity || 0, qty: want } };
         }
       }
     }
@@ -152,23 +183,26 @@ const SaleCore = (() => {
       const entries = line.entries || [];
       const lineBase = lineBaseTotal(line);
       for (const entry of entries) {
+        const qty = rq(entry.qty);
+        if (qty <= 0) continue;                    // never emit a zero-quantity line
         const prod = DB.getProduct(entry.productId);
         const price = num(entry.price);
-        const qty = num(entry.qty);
         const baseEntryTotal = price * qty;
         const baseTot = lineBase || baseEntryTotal || 1;
         const entryLineDisc = num(line.lineDiscount) * (baseEntryTotal / baseTot);
         const entryCustDisc = baseEntryTotal !== 0 ? custDiscAmount * (baseEntryTotal / (subTotal || 1)) : 0;
         const entryExtraDisc = baseEntryTotal !== 0 ? extraDiscAmount * (baseEntryTotal / (subTotal || 1)) : 0;
+        // Dividing by the quantity is only safe for a real positive quantity.
         const finalPrice = price - (entryLineDisc / qty) - (entryCustDisc / qty) - (entryExtraDisc / qty);
         const itemTotal = finalPrice * qty;
         const buyPrice = prod ? (prod.buyPrice || 0) : 0;
         const costSnapshot = buyPrice;
         totalProfit += (finalPrice - costSnapshot) * qty;
         if (prod && prod.fixed !== true) {
-          productUpdates.push({ id: entry.productId, changes: { quantity: (prod.quantity || 0) - qty } });
+          productUpdates.push({ id: entry.productId, changes: { quantity: rq((prod.quantity || 0) - qty) } });
         }
-        invoiceItems.push({
+        const unitSnap = unitSnapshot(prod || entry);
+        invoiceItems.push(Object.assign({
           productId: entry.productId,
           barcode: entry.barcode || (prod && prod.barcode) || '',
           name: entry.name || (prod && prod.name) || '',
@@ -180,7 +214,7 @@ const SaleCore = (() => {
           lineDiscount: entryLineDisc,
           costPrice: costSnapshot,
           lineProfit: +Math.max((finalPrice - costSnapshot) * qty, 0).toFixed(2),
-        });
+        }, unitSnap));
       }
     }
 

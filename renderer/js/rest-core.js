@@ -77,12 +77,20 @@
     return isFinite(n) ? n : 0;
   }
 
+  // Quantities are decimal everywhere (0.25 kg, 0.00006 L). Rounded to 6
+  // decimals only to kill float noise, exactly like sale-core/units.js.
+  function qtyRound(v) {
+    const n = num(v);
+    return Math.round(n * 1e6) / 1e6;
+  }
+
   function cloneItem(it) {
     it = it || {};
+    const q = qtyRound(it.qty);
     return {
       name: String(it.name || '').trim(),
       barcode: String(it.barcode || '').trim(),
-      qty: Math.max(1, Math.round(num(it.qty)) || 1),
+      qty: q > 0 ? q : 1,
       price: Math.max(0, num(it.price)),
       lineDiscount: Math.max(0, num(it.lineDiscount))
     };
@@ -238,9 +246,10 @@
     if (!isValidProduct(product)) return draft;
     const pid = String(product.productId || '');
     const hit = findDraftItem(draft, pid);
-    qty = Math.max(1, Math.round(num(qty)) || 1);
+    const q = qtyRound(qty);
+    qty = q > 0 ? q : 1;
     if (hit) {
-      hit.qty += qty;
+      hit.qty = qtyRound(hit.qty + qty);
     } else {
       draft.items.push({
         productId: pid,
@@ -256,8 +265,8 @@
   function setDraftQty(draft, productId, qty) {
     const hit = findDraftItem(draft, productId);
     if (!hit) return;
-    qty = Math.round(num(qty));
-    if (qty < 1) {
+    qty = qtyRound(qty);
+    if (qty <= 0) {
       draft.items = draft.items.filter(it => String(it.productId || '') !== String(productId || ''));
     } else {
       hit.qty = qty;

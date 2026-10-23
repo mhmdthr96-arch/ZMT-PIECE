@@ -5,6 +5,20 @@ var _invFiltered = [];
 var _invPager = null;
 var _invHideUntilSearch = false;
 
+// ---------- measurement unit helpers (shared by every product form) ----------
+// The <select> HTML is generated from Unit so the labels follow the UI language.
+function invUnitFill(selId, value, customId) {
+  Unit.fillSelect(selId, value, customId);
+}
+
+function invUnitSync(selId, customId) {
+  Unit.syncCustom(selId, customId);
+}
+
+function invUnitRead(selId, customId) {
+  return Unit.readSelect(selId, customId);
+}
+
 // Merged brand lookup, built once and reused for every card. _renderInvProductCard used
 // to allocate a fresh [...BRANDS.global, ...BRANDS.chinese] array (and then do a
 // linear find) for EACH of the 25 cards painted per page — 25 identical copies
@@ -39,6 +53,8 @@ function init_inventory() {
     scrollContainer: document.querySelector('.main-content') || window,
   });
   window._activePager = _invPager;
+  invUnitFill('invUnit', Unit.DEFAULT, 'invUnitCustom');
+  invUnitFill('invDirectUnit', Unit.DEFAULT, 'invDirectUnitCustom');
   setupInvSearch();
   _syncInvHideBtn();
   setupTransferButton();
@@ -288,6 +304,7 @@ function resetInvDirectForm() {
   document.getElementById('invDirectName').value = '';
   document.getElementById('invDirectBar').value = '';
   document.getElementById('invDirectQty').value = '1';
+  invUnitFill('invDirectUnit', Unit.DEFAULT, 'invDirectUnitCustom');
   document.getElementById('invDirectBuy').value = '0';
   document.getElementById('invDirectSell').value = '0';
   document.getElementById('invDirectWhole').value = '0';
@@ -338,10 +355,12 @@ function confirmInvAddDirect() {
     return;
   }
 
-  const qty = parseInt(document.getElementById('invDirectQty').value, 10) || 1;
+  const qty = Unit.parse(document.getElementById('invDirectQty').value);
   const buyPrice = parseFloat(document.getElementById('invDirectBuy').value) || 0;
   const sellPrice = parseFloat(document.getElementById('invDirectSell').value) || 0;
   const wholesalePrice = parseFloat(document.getElementById('invDirectWhole').value) || 0;
+  const unitSnap = invUnitRead('invDirectUnit', 'invDirectUnitCustom');
+  if (!(qty > 0)) { alert(t('inventory.qtyInvalid') || 'الكمية يجب أن تكون أكبر من صفر'); return; }
 
   const expSettings = getExpirySettings();
   const expiryDate = document.getElementById('invDirectExpiry').value || '';
@@ -353,7 +372,9 @@ function confirmInvAddDirect() {
   const res = DB.addOrMergeProduct({
     name, barcode, brandId,
     buyPrice, sellPrice, wholesalePrice: wholesalePrice || 0,
-    quantity: qty,
+    quantity: Unit.roundQty(qty),
+    unit: unitSnap.unit,
+    unitLabel: unitSnap.unitLabel,
     reference, countryOfOrigin, mark, storageLocation,
     family,
     expiryDate,
@@ -441,6 +462,7 @@ function resetInvForm() {
   document.getElementById('invProdName').value = '';
   document.getElementById('invProdBar').value = '';
   document.getElementById('invQty').value = '1';
+  invUnitFill('invUnit', Unit.DEFAULT, 'invUnitCustom');
   document.getElementById('invBuyPrice').value = '0';
   document.getElementById('invSellPrice').value = '0';
   document.getElementById('invWholePrice').value = '0';
@@ -617,7 +639,8 @@ function invAddToCart() {
   const name = document.getElementById('invProdName').value.trim();
   const barcode = document.getElementById('invProdBar').value.trim();
   const brandId = document.getElementById('invBrand').value;
-  const qty = parseInt(document.getElementById('invQty').value) || 1;
+  const qty = Unit.parse(document.getElementById('invQty').value);
+  const unitSnap = invUnitRead('invUnit', 'invUnitCustom');
   const buyPrice = parseFloat(document.getElementById('invBuyPrice').value) || 0;
   const sellPrice = parseFloat(document.getElementById('invSellPrice').value) || 0;
   const wholesalePrice = parseFloat(document.getElementById('invWholePrice').value) || 0;
@@ -628,6 +651,7 @@ function invAddToCart() {
 
   if (!name) { alert(t('inventory.enterName')); return; }
   if (!barcode) { alert(t('inventory.enterBarcode')); return; }
+  if (!(qty > 0)) { alert(t('inventory.qtyInvalid') || 'الكمية يجب أن تكون أكبر من صفر'); return; }
 
   const expSettings = getExpirySettings();
   const expiry = document.getElementById('invExpiry').value || '';
@@ -642,7 +666,7 @@ function invAddToCart() {
     return;
   }
 
-  _invCart.push({ name, barcode, brandId, qty, buyPrice, sellPrice, wholesalePrice, reference, countryOfOrigin, mark, storageLocation, family, expiryDate: expiry });
+  _invCart.push({ name, barcode, brandId, qty: Unit.roundQty(qty), unit: unitSnap.unit, unitLabel: unitSnap.unitLabel, buyPrice, sellPrice, wholesalePrice, reference, countryOfOrigin, mark, storageLocation, family, expiryDate: expiry });
   renderInvCart();
   resetInvForm();
   setTimeout(() => document.getElementById('invBarcodeScanner').focus(), 200);
@@ -671,7 +695,7 @@ function renderInvCart() {
         <span class="text-muted">${item.barcode}</span>
       </div>
       <div class="cart-item-details">
-        <span>${item.qty} × DA${fmtMoney(item.buyPrice)}</span>
+        <span>${Unit.qtyUnit(item.qty, item)} × DA${fmtMoney(item.buyPrice)}</span>
         <span class="cart-item-total">DA${fmtMoney((item.qty * item.buyPrice))}</span>
       </div>
       <button class="btn btn-sm btn-danger" onclick="invRemoveFromCart(${i})"><i class="fas fa-times"></i></button>
@@ -745,6 +769,7 @@ function invConfirmInvoice() {
       buyPrice: item.buyPrice, sellPrice: item.sellPrice,
       wholesalePrice: item.wholesalePrice || 0,
       quantity: item.qty, supplierId,
+      unit: item.unit, unitLabel: item.unitLabel,
       reference: item.reference || '', countryOfOrigin: item.countryOfOrigin || '',
       mark: item.mark || '', storageLocation: item.storageLocation || '',
       family: item.family || '',
@@ -761,11 +786,11 @@ function invConfirmInvoice() {
     }
 
     const prod = res.product;
-    invoiceItems.push({
+    invoiceItems.push(Object.assign({
       productId: prod.id, barcode: prod.barcode,
-      name: item.name, qty: item.qty,
+      name: item.name, qty: Unit.roundQty(item.qty),
       price: item.buyPrice, total: itemTotal,
-    });
+    }, Unit.snapshot(prod || item)));
   });
 
   // Calculate timbre fiscal
@@ -840,7 +865,12 @@ function editInventoryItem(id) {
     <div class="form-row">
       <div class="form-group">
         <label>${t('inventory.editLabelQty')}</label>
-        <input type="text" class="form-input no-spinner num-input" inputmode="numeric" id="invEditQty" value="${toLatinDigits(p.quantity)}" min="0" dir="ltr">
+        <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invEditQty" value="${toLatinDigits(p.quantity)}" min="0" step="any" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label>${t('units.label')}</label>
+        <select class="form-input" id="invEditUnit" onchange="invUnitSync('invEditUnit','invEditUnitCustom')"></select>
+        <input type="text" class="form-input" id="invEditUnitCustom" style="display:none;margin-top:6px" placeholder="${t('units.customPlaceholder')}" value="${escHtml(p.unit === 'custom' ? (p.unitLabel || '') : '')}">
       </div>
       ${Auth.isManager() ? `
       <div class="form-group">
@@ -888,7 +918,9 @@ function editInventoryItem(id) {
   showModal(t('inventory.editTitle'), html, () => {
     const oldQty = p.quantity;
     const oldBuyPrice = p.buyPrice;
-    const newQty = parseInt(document.getElementById('invEditQty').value) || 0;
+    const newQty = Unit.roundQty(Unit.parse(document.getElementById('invEditQty').value));
+    if (!(newQty >= 0)) { alert(t('inventory.qtyInvalid') || 'الكمية غير صالحة'); return false; }
+    const editUnit = invUnitRead('invEditUnit', 'invEditUnitCustom');
     const buyPriceInput = document.getElementById('invEditBuy');
     const newBuyPrice = (buyPriceInput && Auth.isManager()) ? (parseFloat(buyPriceInput.value) || 0) : oldBuyPrice;
     const newSellPrice = parseFloat(document.getElementById('invEditSell').value) || 0;
@@ -903,6 +935,7 @@ function editInventoryItem(id) {
       barcode: document.getElementById('invEditBar').value.trim() || p.barcode,
       brandId: document.getElementById('invEditBrand').value,
       quantity: newQty, buyPrice: newBuyPrice, sellPrice: newSellPrice, wholesalePrice: newWholePrice,
+      unit: editUnit.unit, unitLabel: editUnit.unitLabel,
       reference: document.getElementById('invEditReference').value.trim() || '',
       countryOfOrigin: document.getElementById('invEditCountry').value.trim() || '',
       mark: document.getElementById('invEditMark').value.trim() || '',
@@ -927,6 +960,8 @@ function editInventoryItem(id) {
           item.qty = newQty;
           item.price = newBuyPrice;
           item.total = newQty * newBuyPrice;
+          item.unit = editUnit.unit;
+          if (editUnit.unitLabel) item.unitLabel = editUnit.unitLabel; else delete item.unitLabel;
           inv.totalAmount = inv.items.reduce((sum, it) => sum + it.total, 0);
           DB.updateInvoice(inv.id, { items: inv.items, totalAmount: inv.totalAmount });
 
@@ -943,6 +978,7 @@ function editInventoryItem(id) {
   }, () => renderInventory());
   applyExpiryField('invEditExpiry');
   applyFamilyField('invEditFamily');
+  invUnitFill('invEditUnit', p.unit, 'invEditUnitCustom');
 }
 
 function deleteInventoryItem(id) {

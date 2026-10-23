@@ -79,6 +79,7 @@ const PhoneSaleService = (() => {
         brandId: rep.brandId || '',
         reference: rep.reference || '',
         unit: rep.unit || '',
+        unitLabel: rep.unitLabel || '',
         family: rep.family || '',
         fixed,
         available,
@@ -249,8 +250,8 @@ const PhoneSaleService = (() => {
     if (!rawLines.length) throw { code: 'EMPTY', msg: 'السلة فارغة' };
     const lines = [];
     for (const raw of rawLines) {
-      const qty = Math.round(num(raw.qty));
-      if (qty < 1) continue;
+      const qty = (window.Unit && window.Unit.roundQty) ? window.Unit.roundQty(num(raw.qty)) : num(raw.qty);
+      if (!(qty > 0)) continue;
       let price = num(raw.price);
       if (price < 0) price = 0;
       const alloc = window.SaleCore.allocateQty(DB, {
@@ -384,7 +385,7 @@ const PhoneSaleService = (() => {
       customerName,
       supplierName,
       seller: inv.seller || '',
-      items: (inv.items || []).map(it => ({ name: it.name, barcode: it.barcode || '', qty: it.qty, price: it.price, total: it.total })),
+      items: (inv.items || []).map(it => ({ name: it.name, barcode: it.barcode || '', qty: it.qty, price: it.price, total: it.total, unit: it.unit || '', unitLabel: it.unitLabel || '' })),
     };
   }
 

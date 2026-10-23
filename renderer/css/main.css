@@ -1,4 +1,4 @@
-/* ============================================================
+﻿/* ============================================================
    ZMT PIECE - Car Parts Store
    Light Gray + Two Diagonal Blue Racing Stripes
    ============================================================ */
@@ -1393,15 +1393,23 @@ body.user-mode td.hide-user { display: none !important; }
    SALES PAGE — MODERN POS LAYOUT
    ============================================================ */
 
+:root {
+  --sales-cart-width: 420px;
+}
+
 /* ----- LAYOUT ----- */
 .sales-layout {
   display: grid;
-  grid-template-columns: 1.1fr 0.9fr;
+  grid-template-columns: 1fr minmax(300px, var(--sales-cart-width));
   gap: 18px;
   height: calc(100vh - 180px);
   min-height: 520px;
   overflow-x: clip;
+  position: relative;
 }
+.sales-layout.sales-cart-narrow { grid-template-columns: 1fr minmax(300px, 380px); }
+.sales-layout.sales-cart-wide { grid-template-columns: 1fr minmax(320px, 700px); }
+
 .sales-left {
   display: flex; flex-direction: column;
   overflow: hidden;
@@ -1412,9 +1420,32 @@ body.user-mode td.hide-user { display: none !important; }
 .sales-right {
   display: flex; flex-direction: column;
   gap: 10px;
-  overflow-y: auto;
-  min-width: 0;
+  min-width: 280px;
+  max-width: 100%;
+  position: relative;
 }
+.sales-cart-resizer {
+  position: absolute;
+  left: -9px;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  cursor: col-resize;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sales-cart-resizer::before {
+  content: '';
+  width: 4px;
+  height: 48px;
+  border-radius: 4px;
+  background: var(--silver-300);
+  transition: background .15s;
+}
+.sales-cart-resizer:hover::before { background: var(--bmw-blue-1); }
+.sales-cart-resizer.active::before { background: var(--bmw-blue-1); }
 
 /* ----- SCANNER ----- */
 .sales-scanner-wrap {
@@ -1470,6 +1501,7 @@ body.user-mode td.hide-user { display: none !important; }
 /* ----- SEARCH TOOLBAR ----- */
 .sales-search-toolbar {
   display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap;
 }
 .sales-search-bar {
   flex: 1; display: flex; align-items: center; gap: 8px;
@@ -1502,7 +1534,69 @@ body.user-mode td.hide-user { display: none !important; }
   box-shadow: 0 3px 10px rgba(var(--accent-rgb), 0.25);
 }
 
-/* ----- PRODUCT GRID ----- */
+/* ----- IN-CART STRIP ----- */
+.sales-in-cart-strip {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: linear-gradient(90deg, rgba(10,125,255,.10), rgba(10,125,255,.04));
+  border: 1px solid rgba(10,125,255,.25);
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--bmw-blue-1);
+}
+.sales-in-cart-strip.show { display: flex; }
+.sales-in-cart-strip-label { display: flex; align-items: center; gap: 6px; }
+.sales-in-cart-strip-items {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.sales-in-cart-strip-items::-webkit-scrollbar { display: none; }
+.sales-in-cart-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: #fff;
+  border: 1px solid rgba(10,125,255,.28);
+  border-radius: 999px;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--silver-800);
+}
+.sales-in-cart-chip-qty { font-family: 'ZMT Digits',monospace; color: var(--bmw-blue-1); }
+.sales-in-cart-chip-remove {
+  border: none;
+  background: transparent;
+  color: var(--silver-400);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+/* ----- PRODUCT GRID / LIST ----- */
+.sales-view-toggle { display: flex; align-items: center; gap: 4px; }
+.sales-view-btn {
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--silver-300);
+  background: #fff;
+  color: var(--silver-600);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.sales-view-btn.active {
+  background: var(--bmw-blue-1);
+  border-color: var(--bmw-blue-1);
+  color: #fff;
+}
+
 .sales-product-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(var(--sales-card-min, 240px), 1fr));
@@ -1512,6 +1606,12 @@ body.user-mode td.hide-user { display: none !important; }
   min-height: 0;
   padding: 4px;
   align-content: start;
+}
+.sales-product-grid.sales-list-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  grid-template-columns: none;
 }
 /* Product name font on the sales page has its own control (indep. of inventory). */
 .sales-product-grid .prod-card-title { font-size: var(--sales-name-size, 13px); }
@@ -1562,9 +1662,42 @@ body.user-mode td.hide-user { display: none !important; }
   transform: none; box-shadow: none;
   border-color: var(--silver-300);
 }
-.sp-card-oos:hover::after { opacity: 0; }
-
-.sp-card-top {
+/* ----- LIST ROW ----- */
+.sales-list-row {
+  display: grid;
+  grid-template-columns: minmax(0,2.2fr) 110px 130px 130px 90px 90px 90px 110px auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #fff;
+  border: 1px solid var(--silver-300);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+}
+.sales-list-row:hover {
+  border-color: rgba(var(--accent-rgb),0.5);
+  box-shadow: 0 2px 10px rgba(var(--accent-rgb),0.08);
+}
+.sales-list-row.oos { opacity: .45; cursor: not-allowed; }
+.sales-list-row-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sales-list-row-name { font-weight: 700; color: var(--silver-800); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+.sales-list-row-meta { font-size: 11px; color: var(--silver-500); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sales-list-row-cell { text-align: center; font-size: 13px; color: var(--silver-700); font-family: 'ZMT Digits',monospace; direction: ltr; }
+.sales-list-row-price { text-align: center; font-weight: 700; font-family: 'ZMT Digits',monospace; direction: ltr; }
+.sales-list-row-actions { display: flex; align-items: center; gap: 6px; }
+.sales-list-row-details {
+  grid-column: 1 / -1;
+  padding-top: 10px;
+  border-top: 1px dashed var(--silver-300);
+  display: none;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  font-size: 12px;
+  color: var(--silver-600);
+}
+.sales-list-row.open .sales-list-row-details { display: flex; }
+.sales-list-row-chevron { border: none; background: transparent; color: var(--silver-500); cursor: pointer; }
   display: flex; justify-content: space-between; align-items: flex-start;
 }
 .sp-card-name {
@@ -1622,8 +1755,19 @@ body.user-mode td.hide-user { display: none !important; }
   white-space: nowrap;
 }
 
-/* ----- RIGHT SIDE CARDS ----- */
-.sales-card {
+/* ----- CART LAYOUT ----- */
+.sales-right { display: flex; flex-direction: column; gap: 10px; min-width: 280px; max-width: 100%; position: relative; }
+.sales-cart-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.sales-cart-section .sales-cart-items-wrap { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.sales-cart-section .sales-totals,
+.sales-cart-section .sales-pay { flex: 0 0 auto; }
+.sales-pay { position: sticky; bottom: 0; background: #fff; z-index: 5; }
   background: white;
   border: 1px solid var(--silver-300);
   border-radius: 10px;
@@ -1775,8 +1919,32 @@ body.user-mode td.hide-user { display: none !important; }
   font-size: 13px; font-weight: 600;
 }
 
-/* ----- CART ITEMS ----- */
-.sales-cart-items {
+/* ----- CART ----- */
+.sales-cart-resizer {
+  position: absolute;
+  left: -9px;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  cursor: col-resize;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sales-cart-resizer::before {
+  content: '';
+  width: 4px;
+  height: 48px;
+  border-radius: 4px;
+  background: var(--silver-300);
+  transition: background .15s;
+}
+.sales-cart-resizer:hover::before,
+.sales-cart-resizer.active::before { background: var(--bmw-blue-1); }
+
+.sales-cart-flex { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.sales-cart-items-wrap { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   max-height: 280px;
   overflow-y: auto;
   display: flex;
@@ -1816,6 +1984,15 @@ body.user-mode td.hide-user { display: none !important; }
   padding: 1px 6px; border-radius: 10px;
   margin-left: 6px; vertical-align: middle; white-space: nowrap;
 }
+.sc-unit-badge {
+  font-size: 9px; font-weight: 700;
+  color: var(--bmw-blue-1);
+  background: rgba(10,125,255,0.08);
+  border: 1px solid rgba(10,125,255,0.22);
+  padding: 1px 6px; border-radius: 10px;
+  margin-left: 6px; vertical-align: middle; white-space: nowrap;
+}
+html[data-theme="dark"] .sc-unit-badge { color: #7ab8ff; background: rgba(10,125,255,.16); border-color: rgba(10,125,255,.35); }
 .sc-item-bar { font-size: 9px; color: var(--silver-400); direction: ltr; text-align: left; font-family: monospace; }
 
 .sc-mode-btn {
@@ -2069,6 +2246,13 @@ body.user-mode td.hide-user { display: none !important; }
 .sales-empty p { font-size: 12px; color: var(--silver-400); }
 
 /* ----- RESPONSIVE ----- */
+@media (max-width:1100px) {
+  .sales-layout { grid-template-columns: 1fr; height: auto; }
+  .sales-right { overflow: visible; }
+  .sales-cart-resizer { display: none; }
+  .sales-product-grid { max-height: 420px; }
+  .sales-cart-section { max-height: none; }
+}
 @media (max-width:1000px) {
   .sales-layout { grid-template-columns: 1fr; height: auto; }
   .sales-product-grid { max-height: 380px; }
@@ -4135,13 +4319,15 @@ html[data-theme="dark"] .ord-filter-active { background: var(--bmw-blue-1); colo
 .qe-hint { font-size: 11px; color: var(--silver-400); margin-inline-start: auto; }
 .qe-hint kbd, .qe-toolbar kbd { background: var(--silver-200); border-radius: 4px; padding: 1px 6px; font-size: 11px; }
 .qe-grid { border: 1px solid var(--silver-300); border-radius: var(--radius); overflow-x: auto; }
-.qe-grid-head, .qe-row { display: grid; grid-template-columns: 185px 90px 88px 88px 88px 114px 108px 124px 98px 98px 114px 120px 128px 34px; align-items: center; min-width: 1477px; }
+.qe-grid-head, .qe-row { display: grid; grid-template-columns: 185px 90px 96px 88px 88px 88px 114px 108px 124px 98px 98px 114px 120px 128px 34px; align-items: center; min-width: 1573px; }
 .qe-grid-head { background: var(--silver-100); font-size: 12px; font-weight: 600; color: var(--silver-600); }
 .qe-grid-head .qe-col { padding: 10px 12px; }
 .qe-row { border-top: 1px solid var(--silver-200); background: #fff; }
 .qe-row:nth-child(odd) { background: var(--silver-50); }
 .qe-cell { padding: 5px 7px; position: relative; }
 .qe-col-del { text-align: center; }
+.qe-col-unit { color: var(--silver-600); }
+.qe-unit-custom { margin-top: 4px; font-size: 12px; padding: 5px 7px; }
 .qe-col-family { color: var(--bmw-blue-1); }
 html[data-pharmacy] .qe-col-family { background: rgba(15,157,88,.10); border-radius: 6px 6px 0 0; }
 html[data-pharmacy] .qe-col-family::before { content: '\2726'; margin-left: 4px; font-size: 9px; color: #e53935; }

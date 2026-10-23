@@ -149,7 +149,7 @@
       uid: uid, mode: 'search', productId: null,
       name: prefillName || '', barcode: '', brandId: '',
       reference: '', countryOfOrigin: '', mark: '', storageLocation: '', family: '', expiryDate: '',
-      qty: 1, buy: 0, sell: 0, whole: 0
+      qty: 1, unit: Unit.DEFAULT, unitLabel: '', buy: 0, sell: 0, whole: 0
     };
     _qeRows.push(row);
     renderRow(row);
@@ -157,6 +157,46 @@
     var inp = document.querySelector('#qeRow_' + uid + ' .qe-prod-search');
     if (inp) { inp.focus(); if (prefillName) inp.select(); }
     updateTotal();
+  }
+
+  /* ---------- unit cell (built-in list or free text for "other") ---------- */
+  function unitCellHTML(row) {
+    if (Unit.isCustom(row.unit)) {
+      return '<input class="qe-input qe-unit-custom" type="text" data-col="unit" value="' + escHtml(row.unitLabel || '') + '" placeholder="' + escHtml(Unit.name('custom')) + '" oninput="QE.setUnitLabel(' + row.uid + ',this.value)" onblur="QE.unitBlur(' + row.uid + ')">';
+    }
+    return '<select class="qe-input" data-col="unit" id="qeUnit_' + row.uid + '" onchange="QE.setUnit(' + row.uid + ',this.value)">' + Unit.optionsHTML(row.unit) + '</select>';
+  }
+
+  function unitRedraw(row, focus) {
+    var cell = document.getElementById('qeUnitCell_' + row.uid);
+    if (!cell) return;
+    cell.innerHTML = unitCellHTML(row);
+    if (focus && Unit.isCustom(row.unit)) {
+      var inp = cell.querySelector('input');
+      if (inp) { inp.focus(); try { inp.select(); } catch (e) {} }
+    }
+  }
+
+  function setUnit(uid, val) {
+    var row = findRow(uid); if (!row) return;
+    row.unit = Unit.normalize(val);
+    if (row.unit === 'custom') { if (!row.unitLabel) row.unitLabel = Unit.name('custom'); }
+    else row.unitLabel = '';
+    unitRedraw(row, true);
+  }
+
+  function setUnitLabel(uid, val) {
+    var row = findRow(uid); if (row) row.unitLabel = String(val == null ? '' : val);
+  }
+
+  function unitBlur(uid) {
+    var row = findRow(uid);
+    if (!row || row.unit !== 'custom') return;
+    if (!String(row.unitLabel || '').trim()) {
+      row.unitLabel = Unit.name('custom');
+      var inp = document.querySelector('#qeUnitCell_' + uid + ' input');
+      if (inp) inp.value = row.unitLabel;
+    }
   }
 
   function renderRow(row) {
@@ -173,7 +213,8 @@
           'oninput="QE.onProductInput(' + row.uid + ', this.value)" onkeydown="QE.onProductKey(event, ' + row.uid + ')">' +
         '<div class="qe-prod-results" id="qeProdResults_' + row.uid + '"></div>' +
       '</div></div>' +
-      '<div class="qe-cell qe-col-num"><input class="qe-input qe-num num-input" type="text" inputmode="numeric" min="0" data-col="qty" value="' + row.qty + '" oninput="QE.setField(' + row.uid + ',\'qty\',this.value);QE.updateTotal()"></div>' +
+      '<div class="qe-cell qe-col-num"><input class="qe-input qe-num num-input" type="text" inputmode="decimal" min="0" step="any" data-col="qty" value="' + Unit.fmtQty(row.qty) + '" oninput="QE.setField(' + row.uid + ',\'qty\',this.value);QE.updateTotal()"></div>' +
+      '<div class="qe-cell qe-col-unit" id="qeUnitCell_' + row.uid + '">' + unitCellHTML(row) + '</div>' +
       '<div class="qe-cell qe-col-num"><input class="qe-input qe-num num-input" type="text" inputmode="decimal" min="0" data-col="buy" id="qeBuy_' + row.uid + '" value="' + row.buy + '" oninput="QE.setField(' + row.uid + ',\'buy\',this.value);QE.updateTotal()"></div>' +
       '<div class="qe-cell qe-col-num"><input class="qe-input qe-num num-input" type="text" inputmode="decimal" min="0" data-col="sell" id="qeSell_' + row.uid + '" value="' + row.sell + '" oninput="QE.setField(' + row.uid + ',\'sell\',this.value);QE.updateTotal()"></div>' +
       '<div class="qe-cell qe-col-num"><input class="qe-input qe-num num-input" type="text" inputmode="decimal" min="0" data-col="whole" id="qeWhole_' + row.uid + '" value="' + row.whole + '" oninput="QE.setField(' + row.uid + ',\'whole\',this.value);QE.updateTotal()"></div>' +
@@ -198,6 +239,9 @@
       inp.disabled = !!disabled;
       inp.classList.toggle('qe-locked', !!disabled);
     }
+    // A product that already exists keeps its stored unit — never rewrite it here.
+    var uEl = document.querySelector('#qeUnitCell_' + row.uid + ' [data-col="unit"]');
+    if (uEl) { uEl.disabled = !!disabled; uEl.classList.toggle('qe-locked', !!disabled); }
   }
 
   /* invoice-edit mode: prefilled rows (invoice lines / staged rows) keep the
@@ -217,6 +261,8 @@
     var row = findRow(uid); if (!row) return;
     row.mode = 'new';
     row.productId = null;
+    row.unit = Unit.DEFAULT; row.unitLabel = '';
+    unitRedraw(row, false);
     var box = document.getElementById('qeProdResults_' + uid);
     if (box) box.innerHTML = '';
     applyDetailInputs(row, false);
@@ -236,6 +282,8 @@
     row.name = val;
     if (row.mode === 'existing') {
       row.mode = 'search'; row.productId = null;
+      row.unit = Unit.DEFAULT; row.unitLabel = '';
+      unitRedraw(row, false);
       applyDetailInputs(row, false);
       var barInp = document.getElementById('qeBarcode_' + uid);
       if (barInp) { barInp.value = ''; row.barcode = ''; }
@@ -296,6 +344,8 @@ row.brandId = p.brandId || '';
     row.family = p.family || '';
     row.expiryDate = p.expiryDate || '';
     row.barcode = p.barcode || '';
+    row.unit = Unit.normalize(p.unit);
+    row.unitLabel = (row.unit === 'custom') ? (p.unitLabel || '') : '';
     refreshRowInputs(row);
     applyDetailInputs(row, true);
     document.getElementById('qeProdResults_' + uid).innerHTML = '';
@@ -312,6 +362,7 @@ row.brandId = p.brandId || '';
     setVal('country', row.countryOfOrigin); setVal('mark', row.mark); setVal('storage', row.storageLocation);
     setVal('family', row.family || '');
     setVal('expiry', row.expiryDate || '');
+    unitRedraw(row, false);
   }
 
   function deleteRow(uid) {
@@ -549,7 +600,7 @@ row.brandId = p.brandId || '';
 
     for (var j = 0; j < _qeRows.length; j++) {
       var row = _qeRows[j];
-      var qty = parseFloat(row.qty) || 0;
+      var qty = Unit.roundQty(Unit.parse(row.qty));
       var buy = parseFloat(row.buy) || 0;
       var sell = parseFloat(row.sell) || 0;
       var whole = parseFloat(row.whole) || 0;
@@ -570,6 +621,7 @@ row.brandId = p.brandId || '';
             brandId: row.brandId || '',
             buyPrice: buy, sellPrice: sell, wholesalePrice: whole,
             quantity: qty, supplierId: _qeSupplierId,
+            unit: row.unit, unitLabel: row.unitLabel,
             reference: row.reference || '',
             countryOfOrigin: row.countryOfOrigin || '',
             mark: row.mark || '',
@@ -594,6 +646,7 @@ row.brandId = p.brandId || '';
           brandId: row.brandId || '',
           buyPrice: buy, sellPrice: sell, wholesalePrice: whole,
           quantity: qty, supplierId: _qeSupplierId,
+          unit: row.unit, unitLabel: row.unitLabel,
           reference: row.reference || '',
           countryOfOrigin: row.countryOfOrigin || '',
           mark: row.mark || '',
@@ -606,7 +659,7 @@ row.brandId = p.brandId || '';
       }
       var itemTotal = qty * buy;
       totalAmount += itemTotal;
-      invoiceItems.push({ productId: prod.id, barcode: prod.barcode, name: prod.name, qty: qty, price: buy, total: itemTotal });
+      invoiceItems.push(Object.assign({ productId: prod.id, barcode: prod.barcode, name: prod.name, qty: qty, price: buy, total: itemTotal }, Unit.snapshot(prod || row)));
     }
 
     var timbreFiscal = 0;
@@ -674,7 +727,7 @@ if (typeof window.refreshFamilySuggestions === 'function') window.refreshFamilyS
 
     for (var j = 0; j < _qeRows.length; j++) {
       var row = _qeRows[j];
-      var qty = parseFloat(row.qty) || 0;
+      var qty = Unit.roundQty(Unit.parse(row.qty));
       if (row._src === 'item') {
         keptItemIdx[row._itemIdx] = true;
         if (qty !== row._origQty) itemQty[row._itemIdx] = qty;
@@ -683,13 +736,14 @@ if (typeof window.refreshFamilySuggestions === 'function') window.refreshFamilyS
         if (qty !== row._origQty) stagedUpdates.push({ idx: row._stagedIdx, qty: qty });
       } else if (row.mode === 'existing' && row.productId) {
         // Existing catalog product picked in this session → add it to the invoice.
-        additions.push({ productId: row.productId, barcode: row.barcode || '', name: row.name, qty: qty, price: parseFloat(row.buy) || 0 });
+        additions.push({ productId: row.productId, barcode: row.barcode || '', name: row.name, qty: qty, price: parseFloat(row.buy) || 0, unit: row.unit, unitLabel: row.unitLabel });
       } else {
         // Brand-new product: the payload is created at SAVE time on the edit
         // screen (no orphan product if the edit is abandoned).
         var payload = {
           name: (row.name || '').trim(), barcode: (row.barcode || '').trim(), brandId: row.brandId || '',
           buyPrice: parseFloat(row.buy) || 0, sellPrice: parseFloat(row.sell) || 0, wholesalePrice: parseFloat(row.whole) || 0,
+          unit: row.unit, unitLabel: row.unitLabel,
           reference: row.reference || '', countryOfOrigin: row.countryOfOrigin || '', mark: row.mark || '',
           storageLocation: row.storageLocation || '', family: row.family || '', expiryDate: row.expiryDate || ''
         };

@@ -47,7 +47,38 @@ if (!window._invLiveSyncBound) {
   });
 }
 
+// «إظهار الوحدة في الفاتورة» — one persisted switch that every printed
+// document reads through Unit.qtyUnit(). Default ON; old invoices still print
+// «قطعة» because Unit treats a missing unit as piece.
+function applyInvUnitButton() {
+  const btn = document.getElementById('btnInvShowUnit');
+  if (!btn) return;
+  const on = Unit.showInInvoice();
+  const dot = btn.querySelector('i');
+  btn.classList.toggle('inv-unit-on', on);
+  btn.style.background = on ? 'linear-gradient(135deg,#2e7d32,#1b5e20)' : 'linear-gradient(135deg,#6c757d,#495057)';
+  btn.style.color = '#fff';
+  btn.style.border = 'none';
+  btn.style.boxShadow = on ? '0 2px 8px rgba(46,125,50,.35)' : '0 2px 8px rgba(0,0,0,.18)';
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  btn.title = Unit.text('showUnit');
+  if (dot) dot.className = on ? 'fas fa-eye' : 'fas fa-eye-slash';
+}
+
+function toggleInvUnitVisibility() {
+  const on = Unit.toggleShowInInvoice();
+  applyInvUnitButton();
+  // Repaint the list so nothing on screen contradicts the new choice.
+  if (typeof refreshInvoiceList === 'function') refreshInvoiceList();
+  const lbl = document.querySelector('#btnInvShowUnit [data-i18n="invUnit.show"]');
+  if (lbl) lbl.textContent = Unit.text('showUnit');
+  if (typeof window.zmtToast === 'function') {
+    window.zmtToast(on ? Unit.text('showUnitOn') : Unit.text('showUnitOff'), on ? 'success' : 'info');
+  }
+}
+
 function init_invoices() {
+  applyInvUnitButton();
   // Quick-entry "add from scratch" (إضافة من العدم): returning from the
   // quick-entry page reopens the detail modal directly in edit mode with the
   // staged additions/removals applied. The detail modal is portaled to <body>
@@ -221,7 +252,7 @@ function _renderInvCardItems(inv, max = 8) {
     const lineTotal = unit * (it.qty || 0);
     return `<tr class="inv-card-row">
       <td class="inv-card-row-name">${escHtml(it.name || it.productName || '—')}</td>
-      <td class="inv-card-row-qty">${it.qty || 0}</td>
+      <td class="inv-card-row-qty">${Unit.qtyUnit(it.qty || 0, it)}</td>
       <td class="inv-card-row-price">${orig ? `<s class="inv-card-row-orig">${fmtMoney(orig)}</s> ` : ''}${fmtMoney(unit)}<span class="inv-card-row-cur"> DA</span></td>
       <td class="inv-card-row-disc">${disc > 0 ? `<span class="inv-card-row-disc-amt">-${fmtMoney(disc)}</span>` : '<span class="inv-card-row-none">&mdash;</span>'}</td>
       <td class="inv-card-row-total">${fmtMoney(lineTotal)}<span class="inv-card-row-cur"> DA</span></td>
@@ -1049,7 +1080,7 @@ function buildInvoiceDetailHTML(inv, typeLabel, paidAmount) {
         <thead>
           <tr style="background:#f2f2f2;border-bottom:2px solid #1a1a1a">
             <th style="padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd">Désignation</th>
-            <th style="padding:8px 10px;text-align:center;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:50px">Qté</th>
+            <th style="padding:8px 10px;text-align:center;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:90px">Qté</th>
             <th style="padding:8px 10px;text-align:right;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:90px">Prix unitaire</th>
             <th style="padding:8px 10px;text-align:right;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:90px">Total</th>
           </tr>
@@ -1058,7 +1089,7 @@ function buildInvoiceDetailHTML(inv, typeLabel, paidAmount) {
           ${(inv.items || []).map((item, i) => `
             <tr style="${i % 2 === 0 ? 'background:#fafafa' : ''}">
               <td style="padding:7px 10px;border:1px solid #eee;font-size:12px;color:#333">${escHtml(item.name)}</td>
-              <td style="padding:7px 10px;border:1px solid #eee;text-align:center;font-size:12px;color:#333">${item.qty}</td>
+              <td style="padding:7px 10px;border:1px solid #eee;text-align:center;font-size:12px;color:#333">${Unit.qtyUnit(item.qty, item)}</td>
               <td style="padding:7px 10px;border:1px solid #eee;text-align:right;font-size:12px;color:#333">
                 ${maskBuy ? '••••' : `${(inv.type !== 'waybill' && item.originalPrice && item.originalPrice !== item.price) ? `<span style="text-decoration:line-through;color:#999;font-size:10px">${fmtMoney(item.originalPrice)}</span> ` : ''}
                 ${fmtMoney(item.price)} DA`}
@@ -1317,7 +1348,7 @@ function buildEmployeePrintHTML(inv) {
         <td style="padding:7px 10px;border:1px solid #eee;font-size:12px;color:#333">${cell(pays)}</td>
         <td style="padding:7px 10px;border:1px solid #eee;font-size:12px;color:#333;direction:ltr;text-align:left">${cell(code)}</td>
         <td style="padding:7px 10px;border:1px solid #eee;font-size:12px;color:#333">${cell(emplacement)}</td>
-        <td style="padding:7px 10px;border:1px solid #eee;text-align:center;font-size:12px;color:#333">${qte}</td>
+        <td style="padding:7px 10px;border:1px solid #eee;text-align:center;font-size:12px;color:#333">${Unit.qtyUnit(qte, item)}</td>
       </tr>`;
   }).join('');
 
@@ -1348,7 +1379,7 @@ function buildEmployeePrintHTML(inv) {
               : `<div style="font-size:14px;color:#888">—</div>`}
           </td>
           <td style="vertical-align:top;text-align:right;width:50%">
-            <div style="font-size:12px;color:#555">Total quantité: <strong>${totalQty}</strong></div>
+            <div style="font-size:12px;color:#555">Total quantité: <strong>${Unit.fmtQty(totalQty)}</strong></div>
           </td>
         </tr>
       </table>
@@ -1362,7 +1393,7 @@ function buildEmployeePrintHTML(inv) {
             <th style="padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:90px">Pays</th>
             <th style="padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:120px">Code-barres</th>
             <th style="padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:110px">Emplacement</th>
-            <th style="padding:8px 10px;text-align:center;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:50px">Qté</th>
+            <th style="padding:8px 10px;text-align:center;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:90px">Qté</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -1538,9 +1569,9 @@ function showInvEditSection(keepStaged) {
           return `
           <tr${rem ? ' style="opacity:.55"' : ''}>
             <td${rem ? ' style="text-decoration:line-through"' : ''}>${escHtml(item.name)}${rem ? ` <button class="btn btn-sm" onclick="undoInvEditRemove(${i})" style="padding:1px 6px;font-size:10px;margin-right:6px"><i class="fas fa-undo"></i> ${t('invoices.qeUndoRemove')}</button>` : ''}</td>
-            <td style="text-align:center">${item.qty}</td>
+            <td style="text-align:center">${Unit.qtyUnit(item.qty, item)}</td>
             <td style="text-align:center">
-              <input type="text" class="no-spinner num-input" inputmode="numeric" id="editQty_${i}" value="${item.qty}" min="0" ${rem ? 'disabled ' : ''}oninput="updateInvEditTotals()" style="width:70px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
+              <input type="text" class="no-spinner num-input" inputmode="decimal" id="editQty_${i}" value="${Unit.fmtQty(item.qty)}" min="0" step="any" ${rem ? 'disabled ' : ''}oninput="updateInvEditTotals()" style="width:80px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
             </td>
             ${showPrices ? `
             <td style="text-align:center">
@@ -1600,8 +1631,8 @@ function updateInvEditTotals() {
     const priceInput = document.getElementById('editPrice_' + i);
     const discInput = document.getElementById('editDisc_' + i);
     if (!qtyInput) { newTotal += item.price * item.qty; continue; }
-    const qty = parseInt(qtyInput.value, 10);
-    const q = isNaN(qty) || qty < 0 ? item.qty : qty;
+    const qty = Unit.parse(qtyInput.value);
+    const q = Unit.roundQty(qty >= 0 ? qty : item.qty);
     const price = priceInput ? parseFloat(priceInput.value) : item.price;
     const p = priceInput && isFinite(price) && price >= 0 ? price : item.price;
     const disc = discInput ? parseFloat(discInput.value) : 0;
@@ -1617,8 +1648,8 @@ function updateInvEditTotals() {
     const qtyInput = document.getElementById('editNewQty_' + ni._idx);
     const priceInput = document.getElementById('editNewPrice_' + ni._idx);
     const discInput = document.getElementById('editNewDisc_' + ni._idx);
-    const qty = qtyInput ? parseInt(qtyInput.value, 10) : NaN;
-    const q = isNaN(qty) || qty < 1 ? 1 : qty;
+    const qty = qtyInput ? Unit.parse(qtyInput.value) : NaN;
+    const q = Unit.roundQty(qty > 0 ? qty : 1);
     const price = priceInput ? parseFloat(priceInput.value) : (ni.price || 0);
     const p = priceInput && isFinite(price) && price >= 0 ? price : (ni.price || 0);
     const disc = discInput ? parseFloat(discInput.value) : 0;
@@ -1698,7 +1729,7 @@ function renderEditNewItemRow(ni, showPrices) {
     <td>${escHtml(ni.name)} <span style="font-size:10px;color:${badgeColor};font-weight:600">(${t('invoices.badgeNew')})</span>${priceNote}</td>
     <td style="text-align:center">—</td>
     <td style="text-align:center">
-      <input type="text" class="no-spinner num-input" inputmode="decimal" id="editNewQty_${idx}" value="${ni.qty}" min="0" oninput="updateInvEditTotals()" style="width:60px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
+      <input type="text" class="no-spinner num-input" inputmode="decimal" id="editNewQty_${idx}" value="${Unit.fmtQty(ni.qty)}" min="0" step="any" oninput="updateInvEditTotals()" style="width:70px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
       <button class="btn btn-sm btn-danger" onclick="removeEditNewItem(${idx})" style="margin-right:4px;padding:2px 6px;font-size:10px"><i class="fas fa-times"></i></button>
     </td>
     ${showPrices ? `
@@ -1905,7 +1936,7 @@ function saveInvEdit() {
         targetQty = 0;
       } else {
         const input = document.getElementById('editQty_' + i);
-        if (input) { const v = parseInt(input.value, 10); if (!isNaN(v) && v >= 0) targetQty = v; }
+        if (input && String(input.value).trim() !== '') { const v = Unit.parse(input.value); if (v >= 0) targetQty = Unit.roundQty(v); }
       }
       const diff = targetQty - item.qty;
       if (diff < 0) {
@@ -1935,8 +1966,8 @@ function saveInvEdit() {
     }
     const input = document.getElementById('editQty_' + i);
     if (!input) { updatedItems.push(item); newTotalAmount += item.price * item.qty; continue; }
-    let newQty = parseInt(input.value);
-    if (isNaN(newQty) || newQty < 0) newQty = item.qty;
+    let newQty = String(input.value).trim() === '' ? item.qty : Unit.roundQty(Unit.parse(input.value));
+    if (!(newQty >= 0)) newQty = item.qty;
     const diff = newQty - item.qty;
 
     if (diff !== 0 && !isProvisional) {
@@ -1945,9 +1976,9 @@ function saveInvEdit() {
 
       if (inv.type === 'supplier' || inv.type === 'purchase') {
         if (diff > 0) {
-          DB.updateProduct(item.productId, { quantity: (prod.quantity || 0) + diff });
+          DB.updateProduct(item.productId, { quantity: Unit.roundQty((prod.quantity || 0) + diff) });
         } else {
-          const newQty = (prod.quantity || 0) - Math.abs(diff);
+          const newQty = Unit.roundQty((prod.quantity || 0) - Math.abs(diff));
           if (newQty < 0) {
             alert(t('invoices.cannotBelowZero').replace('...', item.name));
             return;
@@ -1960,9 +1991,9 @@ function saveInvEdit() {
             alert(t('invoices.insufficientStock').replace('...', item.name));
             return;
           }
-          DB.updateProduct(item.productId, { quantity: prod.quantity - diff });
+          DB.updateProduct(item.productId, { quantity: Unit.roundQty(prod.quantity - diff) });
         } else {
-          DB.updateProduct(item.productId, { quantity: prod.quantity + Math.abs(diff) });
+          DB.updateProduct(item.productId, { quantity: Unit.roundQty(prod.quantity + Math.abs(diff)) });
           DB.addReturn({
             invoiceId: _invDetailId,
             productId: item.productId,
@@ -2001,7 +2032,7 @@ function saveInvEdit() {
   // Process new items added during edit
   for (const newItem of _invEditNewItems) {
     const qtyInput = document.getElementById('editNewQty_' + newItem._idx);
-    const qty = qtyInput ? (parseInt(qtyInput.value) || 1) : newItem.qty;
+    const qty = qtyInput ? (Unit.roundQty(Unit.parse(qtyInput.value)) || 1) : newItem.qty;
 
     // New product staged by the "add from scratch" quick-entry: created NOW
     // (save time only) so abandoning the edit leaves no orphan product. Stock
@@ -2022,10 +2053,10 @@ function saveInvEdit() {
       newItem.productId = nprod.id; newItem.barcode = nprod.barcode; newItem.name = nprod.name;
       const buyPrice = parseFloat(payload.buyPrice) || 0;
       const total = buyPrice * qty;
-      updatedItems.push({
+      updatedItems.push(Object.assign({
         productId: nprod.id, barcode: nprod.barcode, name: nprod.name, qty,
         price: buyPrice, total, originalPrice: buyPrice, lineDiscount: 0, discount: 0
-      });
+      }, Unit.snapshot(nprod)));
       newTotalAmount += total;
       changes.push({ name: nprod.name, oldQty: 0, newQty: qty, diff: qty });
       totalChanged = true;
@@ -2037,13 +2068,13 @@ function saveInvEdit() {
 
     if (!isProvisional) {
       if (inv.type === 'supplier' || inv.type === 'purchase') {
-        DB.updateProduct(newItem.productId, { quantity: (prod.quantity || 0) + qty });
+        DB.updateProduct(newItem.productId, { quantity: Unit.roundQty((prod.quantity || 0) + qty) });
       } else {
         if (prod.quantity < qty) {
           alert(t('invoices.insufficientStock').replace('...', newItem.name));
           return;
         }
-        DB.updateProduct(newItem.productId, { quantity: prod.quantity - qty });
+        DB.updateProduct(newItem.productId, { quantity: Unit.roundQty(prod.quantity - qty) });
       }
     }
 
@@ -2063,7 +2094,7 @@ function saveInvEdit() {
       }
     }
     const total = (price * qty) - discount;
-    updatedItems.push({
+    updatedItems.push(Object.assign({
       productId: newItem.productId,
       barcode: newItem.barcode,
       name: newItem.name,
@@ -2073,7 +2104,7 @@ function saveInvEdit() {
       originalPrice: newItem.originalPrice || fallbackPrice,
       lineDiscount: discount,
       discount,
-    });
+    }, Unit.snapshot(prod || newItem)));
     newTotalAmount += total;
     changes.push({ name: newItem.name, oldQty: 0, newQty: qty, diff: qty });
     totalChanged = true;
@@ -2619,9 +2650,9 @@ function showTransferEditSection(inv) {
           const brand = brands.find(b => b.name === item.name || b.id === item.brandId);
           return `<tr>
             <td>${escHtml(item.name)}</td>
-            <td style="text-align:center"><strong>${item.qty}</strong></td>
+            <td style="text-align:center"><strong>${Unit.qtyUnit(item.qty, item)}</strong></td>
             <td style="text-align:center">
-              <input type="text" class="no-spinner num-input" inputmode="numeric" id="editQty_${i}" value="${item.qty}" min="0" style="width:70px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px" onchange="updateTransferEditTotal()">
+              <input type="text" class="no-spinner num-input" inputmode="decimal" id="editQty_${i}" value="${Unit.fmtQty(item.qty)}" min="0" step="any" style="width:80px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px" onchange="updateTransferEditTotal()">
             </td>
             <td style="text-align:center">DA${fmtMoney(item.price)}</td>
           </tr>`;
@@ -2654,7 +2685,7 @@ function updateTransferEditTotal() {
   let newTotal = 0;
   inv.items.forEach((item, i) => {
     const input = document.getElementById('editQty_' + i);
-    const qty = input ? (parseInt(input.value) || 0) : item.qty;
+    const qty = input ? Unit.parse(input.value) : item.qty;
     newTotal += qty * item.price;
   });
   const diff = newTotal - (inv.totalAmount || 0);
@@ -2686,7 +2717,7 @@ function saveTransferEdit() {
   for (let i = 0; i < inv.items.length; i++) {
     const item = inv.items[i];
     const input = document.getElementById('editQty_' + i);
-    const newQty = input ? Math.max(0, parseInt(input.value) || 0) : item.qty;
+    const newQty = input ? Math.max(0, Unit.roundQty(Unit.parse(input.value))) : item.qty;
     const diff = newQty - item.qty;
 
     if (diff !== 0) {
@@ -2934,10 +2965,11 @@ function addToWbCart(productId) {
   if (!prod || prod.quantity <= 0) return;
   const existing = _wbCart.findIndex(i => i.productId === productId);
   if (existing !== -1) {
-    _wbCart[existing].qty++;
-    _wbCart[existing].total = _wbCart[existing].qty * _wbCart[existing].price;
+    const it = _wbCart[existing];
+    it.qty = Unit.roundQty(it.qty + Unit.step(it.qty));
+    it.total = it.qty * it.price;
   } else {
-    _wbCart.push({
+    _wbCart.push(Object.assign({
       productId: prod.id,
       name: prod.name,
       barcode: prod.barcode,
@@ -2945,7 +2977,7 @@ function addToWbCart(productId) {
       price: prod.sellPrice,
       total: prod.sellPrice,
       originalPrice: prod.sellPrice,
-    });
+    }, Unit.snapshot(prod)));
   }
   renderWbCart();
   updateWbTotals();
@@ -2979,8 +3011,8 @@ function renderWbCart() {
         <div class="wb-cart-item-bar">${item.barcode}</div>
       </div>
       <div style="display:flex;align-items:center;gap:6px">
-        <button class="sc-qty-btn" onclick="decWbCartQty(${i})" ${item.qty <= 1 ? 'disabled' : ''}>−</button>
-        <input type="text" class="no-spinner num-input" inputmode="numeric" value="${item.qty}" min="1" style="width:40px;text-align:center;padding:2px 4px;border:1px solid var(--silver-300);border-radius:4px;font-size:13px;font-weight:600" onchange="updateWbCartQty(${i},this.value)">
+        <button class="sc-qty-btn" onclick="decWbCartQty(${i})" ${item.qty <= Unit.step(item.qty) ? 'disabled' : ''}>−</button>
+        <input type="text" class="no-spinner num-input" inputmode="decimal" value="${Unit.fmtQty(item.qty)}" min="0.000001" step="any" style="width:60px;text-align:center;padding:2px 4px;border:1px solid var(--silver-300);border-radius:4px;font-size:13px;font-weight:600" onchange="updateWbCartQty(${i},this.value)">
         <button class="sc-qty-btn" onclick="incWbCartQty(${i})">+</button>
         <input type="text" class="no-spinner num-input" inputmode="decimal" value="${item.price.toFixed(2)}" min="0" step="0.01" style="width:80px;text-align:center;padding:2px 4px;border:1px solid var(--silver-300);border-radius:4px;font-size:12px;font-weight:600" onchange="updateWbCartPrice(${i},this.value)">
         <span style="font-size:11px;color:var(--silver-500)">DA</span>
@@ -2994,24 +3026,27 @@ function renderWbCart() {
 }
 
 function incWbCartQty(idx) {
-  _wbCart[idx].qty++;
-  _wbCart[idx].total = _wbCart[idx].qty * _wbCart[idx].price;
+  const it = _wbCart[idx];
+  it.qty = Unit.roundQty(it.qty + Unit.step(it.qty));
+  it.total = it.qty * it.price;
   renderWbCart();
   updateWbTotals();
 }
 
 function decWbCartQty(idx) {
-  if (_wbCart[idx].qty > 1) {
-    _wbCart[idx].qty--;
-    _wbCart[idx].total = _wbCart[idx].qty * _wbCart[idx].price;
+  const it = _wbCart[idx];
+  const step = Unit.step(it.qty);
+  if (it.qty > step) {
+    it.qty = Unit.roundQty(it.qty - step);
+    it.total = it.qty * it.price;
     renderWbCart();
     updateWbTotals();
   }
 }
 
 function updateWbCartQty(idx, val) {
-  const qty = parseInt(val) || 1;
-  _wbCart[idx].qty = Math.max(1, qty);
+  const qty = Unit.roundQty(Unit.parse(val));
+  _wbCart[idx].qty = qty > 0 ? qty : 1;
   _wbCart[idx].total = _wbCart[idx].qty * _wbCart[idx].price;
   renderWbCart();
   updateWbTotals();
@@ -3134,16 +3169,16 @@ function confirmWaybill() {
   }
 
   // Build items
-  const items = _wbCart.map(item => ({
+  const items = _wbCart.map(item => Object.assign({
     productId: item.productId,
     barcode: item.barcode,
     name: item.name,
-    qty: item.qty,
+    qty: Unit.roundQty(item.qty),
     price: item.price,
     total: item.qty * item.price,
     originalPrice: item.originalPrice || item.price,
     discount: 0,
-  }));
+  }, Unit.snapshot(item)));
 
   // Check stock & deduct inventory only if REAL
   if (!isProvisional) {
@@ -3590,6 +3625,7 @@ function resetPurForm() {
   document.getElementById('purProdName').value = '';
   document.getElementById('purProdBar').value = '';
   document.getElementById('purQty').value = '1';
+  Unit.fillSelect('purUnit', Unit.DEFAULT, 'purUnitCustom');
   document.getElementById('purBuyPrice').value = '0';
   document.getElementById('purSellPrice').value = '0';
   document.getElementById('purWholePrice').value = '0';
@@ -3729,7 +3765,8 @@ function purAddToCart() {
   const name = document.getElementById('purProdName').value.trim();
   const barcode = document.getElementById('purProdBar').value.trim();
   const brandId = document.getElementById('purBrand').value;
-  const qty = parseInt(document.getElementById('purQty').value) || 1;
+  const qty = Unit.parse(document.getElementById('purQty').value);
+  const unitSnap = Unit.readSelect('purUnit', 'purUnitCustom');
   const buyPrice = parseFloat(document.getElementById('purBuyPrice').value) || 0;
   const sellPrice = parseFloat(document.getElementById('purSellPrice').value) || 0;
   const wholesalePrice = parseFloat(document.getElementById('purWholePrice').value) || 0;
@@ -3739,6 +3776,7 @@ function purAddToCart() {
 
   if (!name) { alert('الرجاء إدخال اسم المنتج'); return; }
   if (!barcode) { alert('الرجاء إدخال الباركود'); return; }
+  if (!(qty > 0)) { alert(t('inventory.qtyInvalid') || 'الكمية يجب أن تكون أكبر من صفر'); return; }
   if (window.getPharmacyMode() && !family) { alert(t('inventory.familyRequired')); return; }
 
   const expSettings = getExpirySettings();
@@ -3750,7 +3788,7 @@ function purAddToCart() {
     return;
   }
 
-  _purCart.push({ name, barcode, brandId, qty, buyPrice, sellPrice, wholesalePrice, family, expiryDate });
+  _purCart.push({ name, barcode, brandId, qty: Unit.roundQty(qty), unit: unitSnap.unit, unitLabel: unitSnap.unitLabel, buyPrice, sellPrice, wholesalePrice, family, expiryDate });
   renderPurCart();
   resetPurForm();
   setTimeout(() => document.getElementById('purBarcodeScanner').focus(), 200);
@@ -3779,7 +3817,7 @@ function renderPurCart() {
         <span class="text-muted">${item.barcode}</span>
       </div>
       <div class="cart-item-details">
-        <span>${item.qty} × DA${Auth.isManager() ? fmtMoney(item.buyPrice) : fmtMoney(item.price)}</span>
+        <span>${Unit.qtyUnit(item.qty, item)} × DA${Auth.isManager() ? fmtMoney(item.buyPrice) : fmtMoney(item.price)}</span>
         <span class="cart-item-total">DA${fmtMoney((item.qty * (Auth.isManager() ? item.buyPrice : item.price)))}</span>
       </div>
       <button class="btn btn-sm btn-danger" onclick="purRemoveFromCart(${i})"><i class="fas fa-times"></i></button>
@@ -3854,6 +3892,7 @@ function purConfirmInvoice() {
       buyPrice: item.buyPrice, sellPrice: item.sellPrice,
       wholesalePrice: item.wholesalePrice || 0,
       quantity: item.qty, supplierId,
+      unit: item.unit, unitLabel: item.unitLabel,
       family: item.family || '',
       expiryDate: item.expiryDate || '',
     });
@@ -3867,11 +3906,11 @@ function purConfirmInvoice() {
     }
 
     const prod = res.product;
-    invoiceItems.push({
+    invoiceItems.push(Object.assign({
       productId: prod.id, barcode: prod.barcode,
-      name: item.name, qty: item.qty,
+      name: item.name, qty: Unit.roundQty(item.qty),
       price: item.buyPrice, total: itemTotal,
-    });
+    }, Unit.snapshot(prod || item)));
   });
 
   const timbreEnabled = document.getElementById('purTimbreCheck').checked;
@@ -3905,7 +3944,7 @@ function purConfirmInvoice() {
   const totalQty = invoiceItems.reduce((s, it) => s + it.qty, 0);
   let msg = `تم تسجيل فاتورة بقيمة DA${fmtMoney(totalAmount)}`;
   if (timbreFiscal > 0) msg += ` + طابع جبائي DA${fmtMoney(timbreFiscal)}`;
-  msg += ` تشمل ${cnt} منتج (${totalQty} قطعة)`;
+  msg += ` تشمل ${cnt} منتج (${Unit.fmtQty(totalQty)} قطعة)`;
   alert(msg);
 
   refreshInvoiceList();

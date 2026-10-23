@@ -89,7 +89,7 @@ function renderSdInvoices(filter) {
           ${inv.type === 'payment'
             ? `<span class="sd-inv-item"><i class="fas fa-money-bill-wave"></i> سند دين لمورد</span>`
             : inv.items.slice(0, 3).map(it =>
-            `<span class="sd-inv-item">${escHtml(it.name)} x${it.qty}</span>`
+            `<span class="sd-inv-item">${escHtml(it.name)} x${Unit.fmtQty(it.qty)}</span>`
           ).join('')}
           ${inv.type !== 'payment' && inv.items.length > 3 ? `<span class="sd-inv-more">+${inv.items.length - 3}</span>` : ''}
         </div>
@@ -143,7 +143,7 @@ function showSdInvoiceDetail(id) {
             <td>${i + 1}</td>
             <td>${escHtml(item.name)}</td>
             <td dir="ltr">${item.barcode}</td>
-            <td>${item.qty}</td>
+            <td>${Unit.qtyUnit(item.qty, item)}</td>
             <td>DA${fmtMoney(item.price)}</td>
             <td>DA${fmtMoney(item.total)}</td>
           </tr>`).join('')}
@@ -408,7 +408,7 @@ function renderSdRecords() {
         <div class="rec-row-main">
           <div class="rec-row-name">${escHtml(r.productName || 'منتج')}</div>
           <div class="rec-row-meta">
-            <span><strong>${r.qty ?? 0}</strong> قطعة</span>
+            <span><strong>${Unit.qtyUnit(r.qty ?? 0, r)}</strong></span>
             <span class="rec-date"><i class="far fa-calendar-alt"></i> ${dateStr} ${timeStr}</span>
             <span class="rec-id"><i class="fas fa-file-invoice"></i> ${escHtml(r.invoiceNumber || r.invoiceId || '—')}</span>
             ${r.note ? `<span class="rec-note"><i class="fas fa-sticky-note"></i> ${escHtml(r.note)}</span>` : ''}

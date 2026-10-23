@@ -7241,6 +7241,57 @@ const LANG_ORDER = ['ar', 'en', 'fr', 'zh'];
   }
 })();
 
+// Measurement units + dense-POS labels. Merged into LANG with the same
+// Object.assign pattern as the thermal / cash-drawer blocks above, so the four
+// large language literals stay untouched and nothing can break them.
+(function unitsAndPosI18n() {
+  const sets = {
+    ar: {
+      units: { label: 'الوحدة', customPlaceholder: 'اسم الوحدة', piece: 'قطعة', kg: 'كيلوغرام', g: 'غرام', m: 'متر', cm: 'سنتيمتر', L: 'لتر', custom: 'أخرى' },
+      invUnit: { show: 'إظهار الوحدة في الفاتورة', on: 'الوحدة ظاهرة في الفواتير', off: 'الوحدة مخفية من الفواتير' },
+      salesDense: {
+        cards: 'بطاقات', list: 'قائمة', allColumns: 'كل الأعمدة', details: 'تفاصيل',
+        inCart: 'في السلة', cartWidth: 'عرض السلة', stripOn: 'شريط السلة مفعّل',
+        stripOff: 'شريط السلة مخفي', noCartItems: 'السلة فارغة'
+      }
+    },
+    en: {
+      units: { label: 'Unit', customPlaceholder: 'Unit name', piece: 'Piece', kg: 'Kilogram', g: 'Gram', m: 'Metre', cm: 'Centimetre', L: 'Litre', custom: 'Other' },
+      invUnit: { show: 'Show the unit on invoices', on: 'Unit shown on invoices', off: 'Unit hidden from invoices' },
+      salesDense: {
+        cards: 'Cards', list: 'List', allColumns: 'All columns', details: 'Details',
+        inCart: 'In cart', cartWidth: 'Cart width', stripOn: 'Cart strip enabled',
+        stripOff: 'Cart strip hidden', noCartItems: 'Cart is empty'
+      }
+    },
+    fr: {
+      units: { label: 'Unité', customPlaceholder: "Nom de l'unité", piece: 'Pièce', kg: 'Kilogramme', g: 'Gramme', m: 'Mètre', cm: 'Centimètre', L: 'Litre', custom: 'Autre' },
+      invUnit: { show: "Afficher l'unité sur la facture", on: 'Unité affichée sur les factures', off: 'Unité masquée des factures' },
+      salesDense: {
+        cards: 'Cartes', list: 'Liste', allColumns: 'Toutes les colonnes', details: 'Détails',
+        inCart: 'Au panier', cartWidth: 'Largeur du panier', stripOn: 'Bandeau panier activé',
+        stripOff: 'Bandeau panier masqué', noCartItems: 'Panier vide'
+      }
+    },
+    zh: {
+      units: { label: '单位', customPlaceholder: '单位名称', piece: '件', kg: '千克', g: '克', m: '米', cm: '厘米', L: '升', custom: '其他' },
+      invUnit: { show: '在发票上显示单位', on: '单位已在发票上显示', off: '单位已从发票上隐藏' },
+      salesDense: {
+        cards: '卡片', list: '列表', allColumns: '所有列', details: '详情',
+        inCart: '购物车中', cartWidth: '购物车宽度', stripOn: '购物车栏已启用',
+        stripOff: '购物车栏已隐藏', noCartItems: '购物车为空'
+      }
+    }
+  };
+  for (const lang in sets) {
+    const base = LANG[lang];
+    if (!base) continue;
+    base.units = Object.assign({}, base.units || {}, sets[lang].units || {});
+    base.invUnit = Object.assign({}, base.invUnit || {}, sets[lang].invUnit || {});
+    base.salesDense = Object.assign({}, base.salesDense || {}, sets[lang].salesDense || {});
+  }
+})();
+
 const LANG_LABELS = { ar: 'AR', en: 'EN', fr: 'FR', zh: '中文' };
 let __lang = 'ar';
 

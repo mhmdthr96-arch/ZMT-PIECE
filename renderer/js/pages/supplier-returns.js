@@ -196,7 +196,7 @@ function renderSupplierReturns() {
       </div>
       <div class="prod-card-fields">
         <div class="prod-field"><span class="prod-field-label">${t('supplierReturns.colSupplier')}</span><span class="prod-field-value">${_srEsc(r.supplierName || '-')}</span></div>
-        <div class="prod-field"><span class="prod-field-label">${t('supplierReturns.colQty')}</span><span class="prod-field-value">${r.qty}</span></div>
+        <div class="prod-field"><span class="prod-field-label">${t('supplierReturns.colQty')}</span><span class="prod-field-value">${Unit.qtyUnit(r.qty, r)}</span></div>
         <div class="prod-field"><span class="prod-field-label">${t('supplierReturns.colAmount')}</span><span class="prod-field-value">DA${fmtMoney(Number(r.amount || 0))}</span></div>
         <div class="prod-field"><span class="prod-field-label">${t('supplierReturns.colInvoice')}</span><span class="prod-field-value mono">${_srEsc(r.invoiceNumber || (r.invoiceId || '').slice(0, 8))}</span></div>
         <div class="prod-field full"><span class="prod-field-label">${t('supplierReturns.colDate')}</span><span class="prod-field-value">${dateStr} ${timeStr}</span></div>
@@ -257,7 +257,7 @@ function openSupplierReturnModal(productId) {
         </div>
       </div>
       <label style="font-size:12px;color:var(--silver-600)">${t('supplierReturns.qty')}
-        <input type="text" inputmode="numeric" id="srQty" min="1" max="${prod.quantity}" value="1" class="form-input num-input" style="width:100%;margin-top:6px">
+        <input type="text" inputmode="decimal" id="srQty" min="0.000001" max="${prod.quantity}" value="1" class="form-input num-input" style="width:100%;margin-top:6px">
       </label>
       <label style="font-size:12px;color:var(--silver-600)">${t('supplierReturns.invoice')}
         <select id="srInvoice" class="form-input" style="width:100%;margin-top:6px">${opts}</select>
@@ -272,9 +272,9 @@ function openSupplierReturnModal(productId) {
     const invEl = document.getElementById('srInvoice');
     const noteEl = document.getElementById('srNote');
     if (!qtyEl || !invEl) return false;
-    const qty = parseInt(qtyEl.value, 10);
+    const qty = Unit.parse(qtyEl.value);
     const sel = candidates[parseInt(invEl.value, 10)];
-    if (!sel || !qty || qty < 1) { alert(t('supplierReturns.invalidQty')); return false; }
+    if (!sel || !(qty > 0)) { alert(t('supplierReturns.invalidQty')); return false; }
     if (qty > prod.quantity) { alert(t('supplierReturns.qtyExceedsStock')); return false; }
     if (qty > sel.remaining) { alert(t('supplierReturns.qtyExceedsInvoice')); return false; }
 

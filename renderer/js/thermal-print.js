@@ -96,7 +96,10 @@
       var qty = num(it.qty);
       var unit = num(it.price);
       var line = (it.total != null) ? num(it.total) : unit * qty;
-      return { name: it.name || '', qty: qty, unit: unit, line: line, orig: num(it.originalPrice != null ? it.originalPrice : it.price) };
+      var qtyText = (typeof window.Unit !== 'undefined' && window.Unit.qtyUnit)
+        ? window.Unit.qtyUnit(qty, it)
+        : String(qty);
+      return { name: it.name || '', qty: qty, qtyText: qtyText, unit: unit, line: line, orig: num(it.originalPrice != null ? it.originalPrice : it.price) };
     });
   }
 
@@ -127,7 +130,7 @@
     var rows = items.map(function (it) {
       return '<tr>' +
         '<td class="tp-c-name">' + esc(it.name || '—') + '</td>' +
-        '<td class="tp-c-qty">' + it.qty + '</td>' +
+        '<td class="tp-c-qty">' + it.qtyText + '</td>' +
         '<td class="tp-c-price">' + money(it.unit) + '</td>' +
         '<td class="tp-c-total">' + money(it.line) + '</td>' +
         '</tr>';

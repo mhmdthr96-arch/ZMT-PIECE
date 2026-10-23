@@ -6,6 +6,11 @@
         <p><span data-i18n="invoices.sub">إدارة جميع فواتير البيع والمشتريات</span></p>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
+        <button class="btn" id="btnInvShowUnit" onclick="toggleInvUnitVisibility()"
+          style="display:flex;align-items:center;gap:8px;padding:10px 16px;font-size:13px;font-weight:600;border-radius:10px"
+          title="إظهار الوحدة في الفاتورة">
+          <i class="fas fa-ruler-combined"></i> <span data-i18n="invUnit.show">إظهار الوحدة في الفاتورة</span>
+        </button>
         <button class="btn-icon-btn" id="btnQuickEntry" onclick="openQuickEntryPage()" title="F1"
           style="display:flex;align-items:center;gap:8px;padding:10px 18px;font-size:14px;font-weight:600;border:none;border-radius:10px;background:linear-gradient(135deg,#17a2b8,#0f7c8c);color:#fff;cursor:pointer;box-shadow:0 2px 8px rgba(23,162,184,0.35);transition:transform .15s ease,box-shadow .15s ease">
           <i class="fas fa-bolt"></i> <span data-i18n="invoices.quickEntry">إدخال سريع</span>
@@ -536,7 +541,12 @@
       <div class="form-row">
         <div class="form-group">
           <label data-i18n="common.qty">الكمية <span class="required">*</span></label>
-          <input type="number" class="form-input no-spinner" id="purQty" value="1" min="1">
+          <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="purQty" value="1" min="0.000001" step="any">
+        </div>
+        <div class="form-group">
+          <label data-i18n="units.label">الوحدة</label>
+          <select class="form-input" id="purUnit" onchange="Unit.syncCustom('purUnit','purUnitCustom')"></select>
+          <input type="text" class="form-input" id="purUnitCustom" style="display:none;margin-top:6px" data-i18n-placeholder="units.customPlaceholder" placeholder="اسم الوحدة">
         </div>
         <div class="form-group">
           <label data-i18n="inventory.col5">سعر الشراء <span class="required">*</span></label>

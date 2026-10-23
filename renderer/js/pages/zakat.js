@@ -372,7 +372,7 @@ function zkRenderInventory(rows) {
     total += r.value;
     return `<tr>
       <td style="font-size:12px">${zkEsc(r.name)}</td>
-      <td style="font-size:12px;text-align:center">${r.qty}</td>
+      <td style="font-size:12px;text-align:center">${Unit.qtyUnit(r.qty, r)}</td>
       <td style="font-size:12px"><span class="badge badge-info" style="font-size:11px">${zkEsc(t('zakat.invBasisRetail'))}</span></td>
       <td style="font-size:12px;text-align:left;direction:ltr">${zkDA(r.price)}</td>
       <td style="font-size:12px;text-align:left;direction:ltr;font-weight:600">${zkDA(r.value)}</td>
@@ -427,7 +427,7 @@ function zkBuildReportHtml() {
   let invRows = '';
   if (inventory.rows.length) {
     inventory.rows.slice(0, 200).forEach(r => {
-      invRows += `<tr><td style="padding:4px 8px">${zkEsc(r.name)}</td><td style="padding:4px 8px;text-align:center">${r.qty}</td><td style="padding:4px 8px">${zkEsc(t('zakat.invBasisRetail'))}</td><td style="padding:4px 8px;text-align:left;direction:ltr">${zkDA(r.price)}</td><td style="padding:4px 8px;text-align:left;direction:ltr">${zkDA(r.value)}</td></tr>`;
+      invRows += `<tr><td style="padding:4px 8px">${zkEsc(r.name)}</td><td style="padding:4px 8px;text-align:center">${Unit.qtyUnit(r.qty, r)}</td><td style="padding:4px 8px">${zkEsc(t('zakat.invBasisRetail'))}</td><td style="padding:4px 8px;text-align:left;direction:ltr">${zkDA(r.price)}</td><td style="padding:4px 8px;text-align:left;direction:ltr">${zkDA(r.value)}</td></tr>`;
     });
     if (inventory.rows.length > 200) invRows += `<tr><td colspan="5" style="padding:4px 8px;color:#888">… (+${inventory.rows.length - 200})</td></tr>`;
   } else {

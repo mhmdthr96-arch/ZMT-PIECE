@@ -226,8 +226,8 @@ function addTransferItem() {
   if (!destCode) { alert(t('transfer.selectDestFirst')); return; }
 
   const name = document.getElementById('transferItemName').value.trim();
-  const avail = parseInt(document.getElementById('transferItemAvail').value) || 0;
-  const qty = parseInt(document.getElementById('transferItemQty').value) || 0;
+  const avail = Unit.parse(document.getElementById('transferItemAvail').value);
+  const qty = Unit.parse(document.getElementById('transferItemQty').value);
   let buyPrice = parseFloat(document.getElementById('transferItemBuyPrice').value) || 0;
   const sellPrice = parseFloat(document.getElementById('transferItemSellPrice').value) || 0;
   const brandId = document.getElementById('transferItemBrand').value;
@@ -285,7 +285,7 @@ function renderTransferCart() {
         <span class="text-muted">${brand ? brand.name : item.brandId} | ${t('transfer.available')} ${item.availQty}</span>
       </div>
       <div class="cart-item-details">
-        <span>${item.qty} × DA${fmtMoney(item.buyPrice)}</span>
+        <span>${Unit.qtyUnit(item.qty, item)} × DA${fmtMoney(item.buyPrice)}</span>
         <span class="cart-item-total">DA${fmtMoney((item.qty * item.buyPrice))}</span>
       </div>
       <button class="btn btn-sm btn-danger" onclick="removeTransferItem(${i})"><i class="fas fa-times"></i></button>
@@ -547,7 +547,7 @@ async function executeTransfer() {
     }
 
     // Success
-    const itemSummary = _transferCart.map(it => `${it.name} (${it.qty})`).join(', ');
+    const itemSummary = _transferCart.map(it => `${it.name} (${Unit.fmtQty(it.qty)})`).join(', ');
     let successMsg = `${t('transfer.transferSuccess')}\n\n`;
     successMsg += `${t('transfer.transferredProducts')} ${itemSummary}\n`;
     successMsg += `${t('transfer.transferTotal')} DA${fmtMoney(total)}\n`;

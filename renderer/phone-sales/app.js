@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // ZMT PIECE — PHONE POS PWA («البيع»): runs in the phone's browser on the same
 // LAN as the desktop app. Every action is sent as { type:'req' } over WSS and
 // EXECUTED BY THE DESKTOP (single writer). The phone only renders results.
@@ -17,6 +17,24 @@
     return (n && n.trim()) ? n.trim() : 'Phone POS';
   })();
   var token = localStorage.getItem('zmt_ph_token') || null;
+
+  // ---- quantity helpers (decimals, up to 6 places) ---------------------------
+  // The phone page is a standalone bundle, so it keeps a tiny local copy of the
+  // unit/decimal rules instead of loading renderer/js/lib/units.js.
+  var UNIT_AR = { piece: 'قطعة', kg: 'كغ', g: 'غ', m: 'م', cm: 'سم', L: 'ل', custom: '' };
+  function rq(n) { var v = Number(n); if (!isFinite(v)) return 0; return Math.round(v * 1e6) / 1e6; }
+  function qFmt(n) { var s = rq(n).toFixed(6).replace(/\.?0+$/, ''); return (s === '' || s === '-0') ? '0' : s; }
+  function qStep(n) {
+    var s = qFmt(Math.abs(n));
+    var i = s.indexOf('.');
+    if (i === -1) return 1;
+    var d = s.length - i - 1;
+    if (d < 1) return 1;
+    if (d > 6) d = 6;
+    return Math.pow(10, -d);
+  }
+  function unitOf(l) { return (l && l.unitLabel) || UNIT_AR[(l && l.unit) || ''] || ''; }
+  function qtyText(l) { var u = unitOf(l); return qFmt(l.qty) + (u ? ' ' + u : ''); }
 
   // ---- state -----------------------------------------------------------------
   var ws = null, wsReady = false, heartbeat = null, reqSeq = 0;
@@ -331,10 +349,10 @@
     }
     if (line) {
       if (!p.fixed && line.qty + 1 > p.available) { toast('الكمية المتوفرة: ' + p.available + ' فقط', 'err'); return; }
-      line.qty += 1;
+      line.qty = rq(line.qty + 1);
     } else {
       var price = priceOf(p);
-      state.cart.push({ key: key, name: p.name, barcode: p.barcode || '', productId: p.id, price: price, qty: 1, discount: 0 });
+      state.cart.push({ key: key, name: p.name, barcode: p.barcode || '', productId: p.id, price: price, qty: 1, discount: 0, unit: p.unit || '', unitLabel: p.unitLabel || '' });
     }
     if (!p.fixed && state.mode === 'manual') {
       // hint the cashier to type the agreed price
@@ -347,19 +365,21 @@
     var line = state.cart.filter(function (l) { return l.key === key; })[0];
     if (!line) return;
     var p = findProduct(line);
-    var qty = line.qty + delta;
-    if (!p || (p && p.fixed)) { line.qty = Math.max(1, qty); }
+    var st = qStep(line.qty);
+    var qty = rq(line.qty + delta * st);
+    if (!p || (p && p.fixed)) { line.qty = Math.max(st, qty); }
     else {
-      if (qty > p.available) { toast('الكمية المتوفرة: ' + p.available + ' فقط', 'err'); qty = p.available; }
-      if (qty < 1) qty = 1;
-      line.qty = qty;
+      if (qty > p.available) { toast('الكمية المتوفرة: ' + qFmt(p.available) + ' فقط', 'err'); qty = p.available; }
+      if (qty < st) qty = st;
+      line.qty = rq(qty);
     }
     renderCart();
   }
   function setQtyVal(key, val) {
     var line = state.cart.filter(function (l) { return l.key === key; })[0];
     if (!line) return;
-    var q = Math.max(1, Math.round(Number(val) || 1));
+    var q = rq(val);
+    if (!(q > 0)) q = 1;
     var p = findProduct(line);
     if (p && p.fixed) line.qty = q;
     else line.qty = Math.min(q, p ? p.available : q);
@@ -397,11 +417,12 @@
       var disc = Math.min(l.discount, base);
       html += '<div class="cart-item">' +
         '<div class="row1"><span class="name">' + esc(l.name) + '</span>' +
+          (unitOf(l) ? '<span class="unit-badge">' + esc(unitOf(l)) + '</span>' : '') +
           '<button class="del" onclick="__PS.removeLine(' + JSON.stringify(l.key).replace(/"/g, '&quot;') + ')">✕</button></div>' +
         '<div class="row2">' +
           '<div class="qty">' +
             '<button onclick="__PS.setQty(' + JSON.stringify(l.key).replace(/"/g, '&quot;') + ',-1)">−</button>' +
-            '<input type="text" inputmode="numeric" class="num-input" dir="ltr" value="' + l.qty + '" onchange="__PS.setQtyVal(' + JSON.stringify(l.key).replace(/"/g, '&quot;') + ',this.value)">' +
+            '<input type="text" inputmode="decimal" class="num-input" dir="ltr" value="' + qFmt(l.qty) + '" onchange="__PS.setQtyVal(' + JSON.stringify(l.key).replace(/"/g, '&quot;') + ',this.value)">' +
             '<button onclick="__PS.setQty(' + JSON.stringify(l.key).replace(/"/g, '&quot;') + ',1)">+</button>' +
           '</div>' +
           '<div class="field"><label>السعر</label><input type="text" inputmode="decimal" class="num-input" dir="ltr" value="' + l.price + '" onchange="__PS.setPrice(' + JSON.stringify(l.key).replace(/"/g, '&quot;') + ',this.value)"></div>' +
@@ -430,11 +451,11 @@
   function buildCoLines() {
     var rows = state.cart.map(function (l) {
       var base = l.price * l.qty;
-      return '<div class="co-line"><span class="n">' + esc(l.name) + '</span><span class="q">×' + l.qty + '</span><span class="p">' + fmt(base) + '</span></div>';
+      return '<div class="co-line"><span class="n">' + esc(l.name) + '</span><span class="q">×' + esc(qtyText(l)) + '</span><span class="p">' + fmt(base) + '</span></div>';
     });
     var items = state.cart.reduce(function (s, l) { return s + l.qty; }, 0);
     els.coLines.innerHTML = rows.join('');
-    els.checkoutInfo.textContent = '(' + state.cart.length + ' منتج، ' + items + ' قطعة)';
+    els.checkoutInfo.textContent = '(' + state.cart.length + ' منتج، ' + qFmt(items) + ' قطعة)';
   }
   function emptyCart() {
     state.cart = [];
@@ -716,7 +737,7 @@
         (res.creditUsed ? ' + رصيد ' + fmt(res.creditUsed) : '') + '</div>' : '') +
       (res.remaining > 0 ? '<div style="color:var(--warn);font-size:13px;margin-top:2px;">متبقي: ' + fmt(res.remaining) + '</div>' : '') +
       '<div class="items">' + (res.items || []).map(function (it) {
-        return '<div class="srow"><span>' + esc(it.name) + ' × ' + it.qty + '</span><b>' + fmt(it.price) + '</b></div>';
+        return '<div class="srow"><span>' + esc(it.name) + ' × ' + esc(qtyText(it)) + '</span><b>' + fmt(it.price) + '</b></div>';
       }).join('') + '</div>' +
       '<button class="sbtn" onclick="__PS.newSale()">فاتورة جديدة</button>' +
       '<button class="sbtn ghost" onclick="__PS.seeInvoices()">عرض الفواتير</button>';
@@ -784,7 +805,7 @@
         '</div>' +
         '<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:8px;">' +
           (iv.items || []).map(function (it) {
-            return '<div class="srow"><span>' + esc(it.name) + ' × ' + it.qty + '</span><b>' + fmt(it.price) + '</b></div>';
+            return '<div class="srow"><span>' + esc(it.name) + ' × ' + esc(qtyText(it)) + '</span><b>' + fmt(it.price) + '</b></div>';
           }).join('') +
         '</div>';
       var ov = document.createElement('div');

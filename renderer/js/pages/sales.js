@@ -1,4 +1,4 @@
-var _salesCart = [];
+﻿var _salesCart = [];
 var _salesCustomerId = null;
 var _salesProducts = [];
 var _salesSearchQuery = '';
@@ -7,6 +7,11 @@ var _salesDefaultMode = 'unit';
 var _salesPaidTouched = false;
 var _salesPayMethod = 'cash';
 var _salesHideUntilSearch = false;
+var _salesViewMode = 'grid';
+var _salesListAllCols = false;
+var _salesInCartStrip = false;
+var _salesCartWidth = 420;
+var _salesCartDragging = false;
 var _salesSuppId = null;
 var _salesSupMode = false;
 var _salesCreditUsed = 0;      // رصيد العميل الخاضع للخصم في البيع الحالي
@@ -83,6 +88,10 @@ function init_sales() {
   _salesSearchQuery = '';
   _salesDefaultMode = 'unit';
   _salesHideUntilSearch = (function () { try { return localStorage.getItem('zmt_sales_hide_until_search') === '1'; } catch (e) { return false; } })();
+  _salesViewMode = (function () { try { return localStorage.getItem('zmt_sales_view_mode') === 'list' ? 'list' : 'grid'; } catch (e) { return 'grid'; } })();
+  _salesListAllCols = (function () { try { return localStorage.getItem('zmt_sales_list_allcols') === '1'; } catch (e) { return false; } })();
+  _salesInCartStrip = (function () { try { return localStorage.getItem('zmt_sales_incart_strip') === '1'; } catch (e) { return false; } })();
+  _salesCartWidth = (function () { try { var v = parseInt(localStorage.getItem('zmt_sales_cart_width'), 10); if (isNaN(v)) return 420; return Math.max(300, Math.min(700, v)); } catch (e) { return 420; } })();
   renderSalesProducts();
   _syncSalesHideBtn();
   setupSalesBarcode();
@@ -96,6 +105,11 @@ function init_sales() {
   const staleQk = document.getElementById('salesQkModal');
   if (staleQk) staleQk.remove();
   trackPageListener('keydown', _qkHandler);
+  _syncSalesViewUI();
+  setSalesView(_salesViewMode);
+  if (document.getElementById('salesListAllCols')) document.getElementById('salesListAllCols').checked = !!_salesListAllCols;
+  toggleSalesInCartStrip();
+  initSalesCartWidth();
   const qkBtn = document.getElementById('salesQkOpenBtn');
   if (qkBtn) {
     qkBtn.disabled = true;
@@ -482,7 +496,7 @@ function allocateSalesLine(line, key) {
     return;
   }
   const entries = [];
-  let remaining = line.qty;
+  let remaining = Unit.roundQty(line.qty);
   let latestPrice = 0;
   const wholesale = line.mode === 'wholesale';
   const pharm = salesPharmacyOn();
@@ -494,17 +508,17 @@ function allocateSalesLine(line, key) {
       blockedExpired += (r.quantity || 0);
       continue;
     }
-    const take = isFixedRecord(r) ? remaining : Math.min(r.quantity || 0, remaining);
+    const take = Unit.roundQty(isFixedRecord(r) ? remaining : Math.min(r.quantity || 0, remaining));
     if (take > 0) {
       const price = wholesale ? (r.wholesalePrice || r.sellPrice || 0) : (r.sellPrice || 0);
       entries.push({ productId: r.id, qty: take, price, total: take * price });
       latestPrice = price;
-      remaining -= take;
+      remaining = Unit.roundQty(remaining - take);
     }
   }
   // Surface to the UI how much expired stock was skipped / could not be filled.
   line.blockedExpired = blockedExpired;
-  line.shortQty = Math.max(0, remaining);
+  line.shortQty = Math.max(0, Unit.roundQty(remaining));
   // Apply a manual per-line unit price override (kept across re-allocation)
   if (line.manualPrice != null && !isNaN(line.manualPrice)) {
     const mp = Math.max(0, line.manualPrice);
@@ -581,7 +595,7 @@ function salesCardHTML(g, i) {
           ${multi ? `<span class="prod-meta"><i class="fas fa-layer-group"></i> ${g.records.length} ${t('sales.multiBatches')}</span>` : ''}
         </div>
       </div>
-      <span class="prod-card-badge ${qtyBadge}" ${fixed ? `title="${t('sales.unlimited')}"` : ''}>${fixed ? '\u221E' : totalQty} ${fixed ? '' : t('inventory.col4')}</span>
+      <span class="prod-card-badge ${qtyBadge}" ${fixed ? `title="${t('sales.unlimited')}"` : ''}>${fixed ? '\u221E' : Unit.fmtQty(totalQty)} ${fixed ? '' : t('inventory.col4')}</span>
     </div>
     ${chips}
     ${expiredNote}
@@ -592,7 +606,7 @@ function salesCardHTML(g, i) {
       <div class="prod-field"><span class="prod-field-label"><i class="fas fa-trademark"></i> ${t('inventory.col3')}</span><span class="prod-field-value">${escHtml(brand ? brand.name : (rep.brandId || '-'))}</span></div>
     </div>
     <div class="prod-card-pricerow ${wholeVisible ? '' : 'single'}">
-      <div class="price-pill price-unit"><span>${t('inventory.col6')}</span><b>DA${fmtMoney(price)}</b></div>
+      <div class="price-pill price-unit"><span>${t('inventory.col6')}${rep ? ' / ' + Unit.esc(Unit.label(rep)) : ''}</span><b>DA${fmtMoney(price)}</b></div>
       ${wholeVisible ? `<div class="price-pill price-whole"><span>${t('quickEntry.wholesalePrice')}</span><b>DA${fmtMoney(whole)}</b></div>` : ''}
     </div>
     ${substituteAvailable ? `<button type="button" class="prod-card-oos-btn" onclick="event.stopPropagation();openSalesSubstitutes(${i})"><i class="fas fa-pills"></i> ${t('sales.findSubstitute')}</button>` : ''}
@@ -661,8 +675,14 @@ function renderSalesProducts(filter) {
     const from = _salesRenderedCount;
     const to = Math.min(from + SALES_GRID_PAGE_SIZE, groups.length);
     let html = '';
-    for (let i = from; i < to; i++) {
-      html += salesCardHTML(groups[i], i);
+    if (_salesViewMode === 'list') {
+      for (let i = from; i < to; i++) {
+        html += salesListRowHTML(groups[i], i);
+      }
+    } else {
+      for (let i = from; i < to; i++) {
+        html += salesCardHTML(groups[i], i);
+      }
     }
     _salesRenderedCount = to;
     grid.insertAdjacentHTML('beforeend', html);
@@ -671,27 +691,71 @@ function renderSalesProducts(filter) {
   _salesRenderRAF = requestAnimationFrame(renderNextPage);
 }
 
-function loadMoreSalesProducts() {
-  if (_salesGridLoadingMore || _salesRenderRAF) return;
-  _salesGridLoadingMore = true;
-  const grid = document.getElementById('salesProductGrid');
-  if (!grid || !grid.isConnected) { _salesGridLoadingMore = false; return; }
-  const t0 = performance.now();
-  let html = '';
-  const groups = _salesGroupList;
-  while (_salesRenderedCount < groups.length) {
-    html += salesCardHTML(groups[_salesRenderedCount], _salesRenderedCount);
-    _salesRenderedCount++;
-    if ((performance.now() - t0) > 15) break;
-  }
-  grid.insertAdjacentHTML('beforeend', html);
-  _trimSalesGrid();
-  _salesGridLoadingMore = false;
+function salesListRowHTML(g, i) {
+  const ctx = _salesCardCtx || (_salesCardCtx = _buildSalesCardCtx());
+  const fixed = isGroupFixed(g);
+  const totalQty = getGroupAvailableQty(g);
+  const price = getGroupActivePrice(g);
+  const whole = getGroupWholesalePrice(g);
+  const buy = getGroupBuyPrice ? getGroupBuyPrice(g) : (groupViableRecords(g)[0] && groupViableRecords(g)[0].buyPrice);
+  const outOfStock = !fixed && totalQty <= 0;
+  const multi = g.records.length > 1;
+  const rep = groupViableRecords(g)[0] || g.records[0] || {};
+  const brands = ctx.brands;
+  const brand = brands.find(b => b.id === rep.brandId);
+  const unitName = rep.unit ? Unit.name(rep.unit) : Unit.name('piece');
+  const unitLabel = rep.unit === 'custom' ? (rep.unitLabel || unitName) : unitName;
+  return `<div class="sales-list-row ${outOfStock ? 'oos' : ''}" onclick="${outOfStock ? '' : `addSalesGroupToCart(${i})`}" data-idx="${i}">
+    <div class="sales-list-row-main">
+      <div class="sales-list-row-name">${escHtml(g.name)}${unitLabel && unitLabel !== Unit.name('piece') ? ` <span class="sc-unit-badge">${Unit.esc(unitLabel)}</span>` : ''}</div>
+      <div class="sales-list-row-meta">${escHtml(g.barcode || '-')} • ${escHtml(rep.mark || '-')} • ${escHtml(brand ? brand.name : (rep.brandId || '-'))}</div>
+    </div>
+    <div class="sales-list-row-cell">${multi ? g.records.length : 1}</div>
+    <div class="sales-list-row-cell">${fixed ? '∞' : Unit.fmtQty(totalQty)}</div>
+    <div class="sales-list-row-price">DA${fmtMoney(price)}</div>
+    <div class="sales-list-row-price">${whole > 0 ? 'DA' + fmtMoney(whole) : '-'}</div>
+    <div class="sales-list-row-cell">${buy ? 'DA' + fmtMoney(buy) : '-'}</div>
+    <div class="sales-list-row-cell">${escHtml(rep.reference || '-')}</div>
+    <div class="sales-list-row-cell">${escHtml(rep.countryOfOrigin || '-')}</div>
+    <div class="sales-list-row-actions">
+      <button type="button" class="sales-list-row-chevron" onclick="event.stopPropagation();toggleSalesListDetails(this)"><i class="fas fa-chevron-down"></i></button>
+      ${hasSalesSubstitutes(g) ? `<button type="button" class="btn btn-sm" onclick="event.stopPropagation();openSalesSubstitutes(${i})"><i class="fas fa-pills"></i> ${t('sales.findSubstitute')}</button>` : ''}
+    </div>
+    <div class="sales-list-row-details">
+      <span><b>${t('quickEntry.storageLocation')}:</b> ${escHtml(rep.storageLocation || '-')}</span>
+      <span><b>${t('units.label')}:</b> ${escHtml(unitLabel)}</span>
+      ${rep.family ? `<span><b>${t('quickEntry.family')}:</b> ${escHtml(rep.family)}</span>` : ''}
+    </div>
+  </div>`;
+}
+
+function toggleSalesListDetails(btn) {
+  const row = btn.closest('.sales-list-row');
+  if (!row) return;
+  row.classList.toggle('open');
+  const icon = btn.querySelector('i');
+  if (icon) icon.classList.toggle('fa-chevron-down');
+  if (icon) icon.classList.toggle('fa-chevron-up');
 }
 
 const _debouncedSalesSearch = debounce((q) => { renderSalesProducts(q); }, 200);
 function filterSalesProducts(q) {
   _debouncedSalesSearch(q);
+}
+
+function _syncSalesViewUI() {
+  const g = document.getElementById('salesProductGrid');
+  const gb = document.getElementById('salesViewGridBtn');
+  const lb = document.getElementById('salesViewListBtn');
+  const ac = document.getElementById('salesListAllCols');
+  if (g) g.classList.toggle('sales-list-view', _salesViewMode === 'list');
+  if (gb) gb.classList.toggle('active', _salesViewMode === 'grid');
+  if (lb) lb.classList.toggle('active', _salesViewMode === 'list');
+  if (ac) ac.checked = !!_salesListAllCols;
+  const st = document.getElementById('salesInCartToggleBtn');
+  if (st) st.classList.toggle('active', _salesInCartStrip);
+  const strip = document.getElementById('salesInCartStrip');
+  if (strip) strip.classList.toggle('show', _salesInCartStrip && _salesCart && _salesCart.length > 0);
 }
 
 function _syncSalesHideBtn() {
@@ -717,6 +781,97 @@ function toggleSalesHideUntilSearch() {
     if (input) setTimeout(function () { input.focus(); }, 60);
   }
   renderSalesProducts();
+}
+
+function setSalesView(mode) {
+  _salesViewMode = (mode === 'list') ? 'list' : 'grid';
+  try { localStorage.setItem('zmt_sales_view_mode', _salesViewMode); } catch (e) {}
+  const g = document.getElementById('salesProductGrid');
+  const gb = document.getElementById('salesViewGridBtn');
+  const lb = document.getElementById('salesViewListBtn');
+  if (g) g.classList.toggle('sales-list-view', _salesViewMode === 'list');
+  if (gb) gb.classList.toggle('active', _salesViewMode === 'grid');
+  if (lb) lb.classList.toggle('active', _salesViewMode === 'list');
+  renderSalesProducts();
+}
+
+function toggleSalesListAllCols(on) {
+  _salesListAllCols = !!on;
+  try { localStorage.setItem('zmt_sales_list_allcols', _salesListAllCols ? '1' : '0'); } catch (e) {}
+  renderSalesProducts();
+}
+
+function toggleSalesInCartStrip() {
+  _salesInCartStrip = !_salesInCartStrip;
+  try { localStorage.setItem('zmt_sales_incart_strip', _salesInCartStrip ? '1' : '0'); } catch (e) {}
+  const btn = document.getElementById('salesInCartToggleBtn');
+  if (btn) btn.classList.toggle('active', _salesInCartStrip);
+  const strip = document.getElementById('salesInCartStrip');
+  if (strip) strip.classList.toggle('show', _salesInCartStrip && _salesCart.length > 0);
+  renderSalesInCartStrip();
+}
+
+function renderSalesInCartStrip() {
+  const strip = document.getElementById('salesInCartStrip');
+  const items = document.getElementById('salesInCartStripItems');
+  if (!strip || !items) return;
+  if (!_salesInCartStrip || _salesCart.length === 0) {
+    strip.classList.remove('show');
+    items.innerHTML = '';
+    return;
+  }
+  strip.classList.add('show');
+  items.innerHTML = _salesCart.map((line, i) => {
+    const name = escHtml(line.name || '');
+    const qty = Unit.fmtQty ? Unit.fmtQty(line.qty) : line.qty;
+    return `<span class="sales-in-cart-chip"><span>${name}</span> <span class="sales-in-cart-chip-qty">${qty}</span> <button class="sales-in-cart-chip-remove" onclick="event.stopPropagation();removeSalesCartItem(${i});renderSalesInCartStrip();"><i class="fas fa-times"></i></button></span>`;
+  }).join('');
+}
+
+function initSalesCartWidth() {
+  const right = document.getElementById('salesRight');
+  const layout = document.querySelector('.sales-layout');
+  const resizer = document.getElementById('salesCartResizer');
+  if (!right || !layout) return;
+  // apply saved width (300-700)
+  if (_salesCartWidth < 300) _salesCartWidth = 300;
+  if (_salesCartWidth > 700) _salesCartWidth = 700;
+  right.style.width = _salesCartWidth + 'px';
+  right.style.flex = '0 0 ' + _salesCartWidth + 'px';
+  layout.style.gridTemplateColumns = '1fr ' + _salesCartWidth + 'px';
+  if (resizer) {
+    resizer.onmousedown = function (e) {
+      _salesCartDragging = true;
+      resizer.classList.add('active');
+      document.body.style.cursor = 'col-resize';
+      e.preventDefault();
+    };
+  }
+  if (!document._salesCartResizeBound) {
+    document._salesCartResizeBound = true;
+    document.addEventListener('mousemove', function (e) {
+      if (!_salesCartDragging) return;
+      const layoutEl = document.querySelector('.sales-layout');
+      const rightEl = document.getElementById('salesRight');
+      if (!layoutEl || !rightEl) return;
+      const rect = layoutEl.getBoundingClientRect();
+      let w = rect.right - e.clientX;
+      if (w < 300) w = 300;
+      if (w > 700) w = 700;
+      _salesCartWidth = Math.round(w);
+      rightEl.style.width = _salesCartWidth + 'px';
+      rightEl.style.flex = '0 0 ' + _salesCartWidth + 'px';
+      layoutEl.style.gridTemplateColumns = '1fr ' + _salesCartWidth + 'px';
+    });
+    document.addEventListener('mouseup', function () {
+      if (!_salesCartDragging) return;
+      _salesCartDragging = false;
+      const resizerEl = document.getElementById('salesCartResizer');
+      if (resizerEl) resizerEl.classList.remove('active');
+      document.body.style.cursor = '';
+      try { localStorage.setItem('zmt_sales_cart_width', String(_salesCartWidth)); } catch (e) {}
+    });
+  }
 }
 
 // ===== BARCODE SCANNER =====
@@ -1247,9 +1402,13 @@ function addSalesLine(key) {
   if (line) {
     const cap = isGroupFixed(g) ? 999 : getGroupAvailableQty(g);
     if (line.qty >= cap) return;
-    line.qty++;
+    // The + button follows the last decimal place of the current quantity:
+    // 1 -> 2, 0.25 -> 0.26, 0.001 -> 0.002.
+    line.qty = Math.min(cap, Unit.roundQty(line.qty + Unit.step(line.qty)));
     allocateSalesLine(line, key);
   } else {
+    // Every new line starts at exactly 1, whatever the product's unit; the
+    // cashier types any decimal value by hand.
     line = { key, name: g.name, barcode: g.barcode, qty: 1, mode: _salesDefaultMode, price: 0, total: 0, baseTotal: 0, manualPrice: null, discount: 0, entries: [] };
     allocateSalesLine(line, key);
     _salesCart.push(line);
@@ -1271,6 +1430,7 @@ function renderSalesCart() {
     document.getElementById('salesPaySection').style.display = 'none';
     const emptyQkBtn = document.getElementById('salesQkOpenBtn');
     if (emptyQkBtn) emptyQkBtn.disabled = true;
+    renderSalesInCartStrip();
     return;
   }
   section.style.display = '';
@@ -1288,9 +1448,11 @@ function renderSalesCart() {
       ? `<div class="sc-warn-note"><i class="fas fa-ban"></i> ${t('sales.batchExpiredPartial')} (${line.blockedExpired})</div>` : '';
     const shortWarn = shortQty > 0
       ? `<div class="sc-warn-note short"><i class="fas fa-exclamation-circle"></i> ${t('sales.subShortage')} ${Math.max(0, line.qty - shortQty)} / ${line.qty}</div>` : '';
+    const unitName = (g && g.records && g.records[0])
+      ? Unit.label(g.records[0]) : '';
     return `<div class="sc-item">
       <div class="sc-item-info">
-        <div class="sc-item-name">${escHtml(line.name)}${mixed ? `<span class="sc-mixed-badge" title="${t('sales.mixedPrice')}"><i class="fas fa-layer-group"></i> ${t('sales.mixedPrice')}</span>` : ''}</div>
+        <div class="sc-item-name">${escHtml(line.name)}${unitName ? `<span class="sc-unit-badge">${Unit.esc(unitName)}</span>` : ''}${mixed ? `<span class="sc-mixed-badge" title="${t('sales.mixedPrice')}"><i class="fas fa-layer-group"></i> ${t('sales.mixedPrice')}</span>` : ''}</div>
         <div class="sc-item-bar" dir="ltr">${escHtml(line.barcode)}</div>
         ${expiredWarn}
         ${shortWarn}
@@ -1299,9 +1461,9 @@ function renderSalesCart() {
         </div>
       </div>
       <div class="sc-item-controls">
-        <button class="sc-qty-btn" onclick="decSalesCartQty(${i})" ${line.qty <= getSalesQtyStep() ? 'disabled' : ''}>−</button>
+        <button class="sc-qty-btn" onclick="decSalesCartQty(${i})" ${line.qty <= Unit.step(line.qty) ? 'disabled' : ''}>−</button>
         <input type="text" class="no-spinner sc-qty-input num-input" inputmode="decimal" id="scqty_${i}"
-          value="${line.qty}" min="0.5" step="0.5"
+          value="${Unit.fmtQty(line.qty)}" min="0.000001" step="any"
           onchange="updateSalesCartQty(${i}, this.value)">
         <button class="sc-qty-btn" onclick="incSalesCartQty(${i})" ${line.qty >= maxQty ? 'disabled' : ''}>+</button>
         <div style="display:flex;flex-direction:column;gap:3px;margin-top:4px">
@@ -1335,9 +1497,9 @@ function incSalesCartQty(idx) {
   if (!line) return;
   const g = getSalesGroupByKey(line.key);
   const maxQty = g ? getGroupMaxQty(g) : 999999;
-  const step = getSalesQtyStep();
+  const step = Unit.step(line.qty);
   if (line.qty < maxQty) {
-    line.qty = Math.min(maxQty, +(line.qty + step).toFixed(3));
+    line.qty = Math.min(maxQty, Unit.roundQty(line.qty + step));
     allocateSalesLine(line, line.key);
     renderSalesCart();
   }
@@ -1346,9 +1508,9 @@ function incSalesCartQty(idx) {
 function decSalesCartQty(idx) {
   const line = _salesCart[idx];
   if (!line) return;
-  if (line.qty > 0.5 || line.qty > 0) {
-    const step = getSalesQtyStep();
-    line.qty = Math.max(step, +(line.qty - step).toFixed(3));
+  const step = Unit.step(line.qty);
+  if (line.qty > step) {
+    line.qty = Math.max(step, Unit.roundQty(line.qty - step));
     allocateSalesLine(line, line.key);
     renderSalesCart();
   }
@@ -1357,16 +1519,12 @@ function decSalesCartQty(idx) {
 function updateSalesCartQty(idx, val) {
   const line = _salesCart[idx];
   if (!line) return;
-  let qty = parseFloat(val);
-  if (isNaN(qty)) qty = getSalesQtyStep();
+  let qty = Unit.parse(val);
+  if (!(qty > 0)) qty = 1;
   const g = getSalesGroupByKey(line.key);
   const maxQty = g ? getGroupMaxQty(g) : 999999;
-  const step = getSalesQtyStep();
-  qty = Math.min(Math.max(step, +(qty).toFixed(3)));
-  if (qty % step !== 0 && step > 0.0001) {
-    qty = Math.max(step, Math.round(qty / step) * step);
-  }
-  line.qty = Math.min(maxQty, qty);
+  // No fixed 0.5 grid any more: any decimal up to 6 places is accepted.
+  line.qty = Math.min(maxQty, Unit.roundQty(qty));
   allocateSalesLine(line, line.key);
   renderSalesCart();
 }
@@ -1374,6 +1532,7 @@ function updateSalesCartQty(idx, val) {
 function removeFromSalesCart(idx) {
   _salesCart.splice(idx, 1);
   renderSalesCart();
+  renderSalesInCartStrip();
   if (_salesCart.length === 0) {
     document.getElementById('salesPaySection').style.display = 'none';
     document.getElementById('salesBarcodeScan').focus();
@@ -1496,16 +1655,17 @@ function _qkRowsHtml() {
     const atCap = line.qty >= maxQty;
     const active = i === _qkIndex;
     const unitLabel = t('sales.unitPrice') || 'Prix';
+    const uName = (g && g.records && g.records[0]) ? Unit.label(g.records[0]) : '';
     return `<div class="qk-row${active ? ' active' : ''}" onclick="_qkSelect(${i})">
       <div class="qk-pos">${i + 1}</div>
       <div class="qk-info">
-        <div class="qk-name">${escHtml(line.name)}${atCap ? `<span class="qk-full">${t('sales.qtyModalFull')}</span>` : ''}</div>
+        <div class="qk-name">${escHtml(line.name)}${uName ? `<span class="sc-unit-badge">${Unit.esc(uName)}</span>` : ''}${atCap ? `<span class="qk-full">${t('sales.qtyModalFull')}</span>` : ''}</div>
         <div class="qk-bar" dir="ltr">${escHtml(line.barcode || '')}</div>
         <div class="qk-price">${unitLabel} <span dir="ltr">${Number(line.price || 0).toFixed(2)}</span> DA</div>
       </div>
       <div class="qk-qty-wrap">
         <span class="qk-qty-label">${t('sales.qtyModalQty')}</span>
-        <span class="qk-qty${atCap ? ' qk-max' : ''}" dir="ltr">${line.qty}</span>
+        <span class="qk-qty${atCap ? ' qk-max' : ''}" dir="ltr">${Unit.fmtQty(line.qty)}</span>
       </div>
       <div class="qk-total" dir="ltr">DA${fmtMoney(line.total)}</div>
     </div>`;
@@ -1517,7 +1677,7 @@ function _qkRender() {
   if (!_qkOpen || !overlay) return;
   if (_salesCart.length === 0) { closeSalesQtyQuick(); return; }
   if (_qkIndex >= _salesCart.length) _qkIndex = _salesCart.length - 1;
-  const pieces = _salesCart.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
+  const pieces = Unit.roundQty(_salesCart.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0));
   overlay.innerHTML = `<div class="modal qk-modal">
     <div class="qk-head">
       <div class="qk-head-title"><i class="fas fa-keyboard" style="color:var(--bmw-blue-1)"></i> ${t('sales.qtyModalTitle')} <span class="qk-head-count">${_salesCart.length} ${t('sales.qtyModalItems')}</span></div>
@@ -1528,7 +1688,7 @@ function _qkRender() {
       <div class="qk-foot-total">
         <span class="qk-foot-total-label">${t('common.total')}</span>
         <span class="qk-foot-total-val" dir="ltr">DA${fmtMoney(_salesComputedTotal || 0)}</span>
-        <span class="qk-foot-total-label">(${pieces} ${t('sales.qtyModalItems')})</span>
+        <span class="qk-foot-total-label">(${Unit.fmtQty(pieces)} ${t('sales.qtyModalItems')})</span>
       </div>
       <div class="qk-keys"><span class="qk-hint">${t('sales.qtyModalKeys')}</span></div>
     </div>
@@ -1597,21 +1757,20 @@ function _qkHandler(e) {
     return;
   }
   if (e.key === 'Enter' || e.key === 'Escape' || e.key === 'Esc') { closeSalesQtyQuick(); return; }
-  if (/^[0-9]$/.test(e.key)) {
+  if (/^[0-9]$/.test(e.key) || e.key === '.' || e.key === ',' || e.code === 'NumpadDecimal') {
     const line = _salesCart[_qkIndex];
     if (!line) return;
     const g = getSalesGroupByKey(line.key);
     const maxQty = g ? getGroupMaxQty(g) : 99;
     const base = _qkBuffer === null ? '' : _qkBuffer;
-    const next = (base + e.key).slice(-5);
-    const parsed = parseFloat(next) || getSalesQtyStep();
-    const step = getSalesQtyStep();
-    let valQty = Math.min(Math.max(step, parsed), maxQty);
-    if (step > 0.0001 && valQty % step !== 0) valQty = Math.round(valQty / step) * step;
-    valQty = +valQty.toFixed(3);
+    // 12 chars is enough for 0.000001 and still bounded.
+    const next = (base + (e.code === 'NumpadDecimal' ? '.' : e.key)).slice(-12);
+    const parsed = Unit.parse(next);
+    let valQty = Math.min(parsed > 0 ? parsed : 1, maxQty);
+    valQty = Unit.roundQty(valQty);
     line.qty = valQty;
     allocateSalesLine(line, line.key);
-    _qkBuffer = parsed === valQty ? next : String(valQty);
+    _qkBuffer = next;
     renderSalesCart();
     _qkRender();
   }
@@ -1675,8 +1834,10 @@ function updateSalesTotals() {
   updateSalesLed();
 }
 
+// Legacy helper: a fresh line starts at 1 and the + / − buttons follow each
+// line's own decimal places (Unit.step). Kept so old call sites never break.
 function getSalesQtyStep() {
-  return 0.5;
+  return Unit.step(1);
 }
 
 // Top-of-page LED grand-total (digital display).
@@ -1685,8 +1846,8 @@ function updateSalesLed() {
   if (totalEl) totalEl.textContent = 'DA' + fmtMoney(_salesComputedTotal || 0);
   const itemsEl = document.getElementById('salesLedItems');
   if (itemsEl) {
-    const pieces = _salesCart.reduce((s, l) => s + (Number(l.qty) || 0), 0);
-    itemsEl.textContent = String(pieces);
+    const pieces = Unit.roundQty(_salesCart.reduce((s, l) => s + (Number(l.qty) || 0), 0));
+    itemsEl.textContent = Unit.fmtQty(pieces);
   }
 }
 
@@ -1920,7 +2081,7 @@ function showInvoicePreview(inv) {
             ${inv.items.map((item, i) => `
               <tr style="${i % 2 === 0 ? 'background:#fafafa' : ''}">
                 <td style="padding:7px 10px;border:1px solid #eee;font-size:12px;color:#333">${escHtml(item.name)}</td>
-                <td style="padding:7px 10px;border:1px solid #eee;text-align:center;font-size:12px;color:#333">${item.qty}</td>
+                <td style="padding:7px 10px;border:1px solid #eee;text-align:center;font-size:12px;color:#333">${Unit.qtyUnit(item.qty, item)}</td>
                 <td style="padding:7px 10px;border:1px solid #eee;text-align:right;font-size:12px;color:#333">
                   ${(item.originalPrice && item.originalPrice !== item.price) ? `<span style="text-decoration:line-through;color:#999;font-size:10px">${fmtMoney(item.originalPrice)}</span> ` : ''}
                   ${fmtMoney(item.price)} DA</td>
@@ -2250,7 +2411,8 @@ function clearSalesCart() {
   _salesDefaultMode = 'unit';
   _salesPaidTouched = false;
   _salesComputedTotal = 0;
-  document.getElementById('salesSelectedCust').style.display = 'none';
+  const sb2 = document.getElementById('salesSelectedCust');
+  if (sb2) sb2.style.display = 'none';
   document.getElementById('salesWalkinLabel').style.display = 'none';
   document.getElementById('salesCustSearch').value = '';
   const _supResetBanner = document.getElementById('salesSupBanner');
@@ -2261,7 +2423,11 @@ function clearSalesCart() {
   document.getElementById('salesExtraDisc').value = '0';
   resetSalesPaymentUI();
   resetSupSalePayUI();
-  renderSalesCart();
+  document.getElementById('salesCartSection').style.display = 'none';
+  document.getElementById('salesEmptyCart').style.display = '';
+  const emptyQkBtn2 = document.getElementById('salesQkOpenBtn');
+  if (emptyQkBtn2) emptyQkBtn2.disabled = true;
+  renderSalesInCartStrip();
   renderSalesProducts();
   updateSalesLed();
   document.getElementById('salesBarcodeScan').focus();

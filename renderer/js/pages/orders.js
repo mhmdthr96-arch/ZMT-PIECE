@@ -63,14 +63,14 @@ function renderOrdersSuggestions() {
         <div class="ord-suggestion-name">${escHtml(g.name)}</div>
         <div class="ord-suggestion-meta" dir="ltr">${escHtml(g.barcode)}</div>
       </div>
-      <span class="ord-suggestion-qty ${g.qty <= 0 ? 'ord-qty-oos' : 'ord-qty-low'}">${g.qty <= 0 ? t('orders.statusNotAvailable') : g.qty}</span>
-      <input type="text" class="form-input no-spinner ord-qty-input num-input" inputmode="numeric" id="ordsugqty_${i}" value="${Math.max(1, threshold)}" min="1" dir="ltr">
+      <span class="ord-suggestion-qty ${g.qty <= 0 ? 'ord-qty-oos' : 'ord-qty-low'}">${g.qty <= 0 ? t('orders.statusNotAvailable') : Unit.fmtQty(g.qty)}</span>
+      <input type="text" class="form-input no-spinner ord-qty-input num-input" inputmode="decimal" id="ordsugqty_${i}" value="${Math.max(1, threshold)}" min="0.000001" step="any" dir="ltr">
       <button class="btn btn-sm btn-primary" onclick="addOrdersProduct('${escHtml(g.barcode).replace(/'/g, "\\'")}', document.getElementById('ordsugqty_${i}').value)"><i class="fas fa-plus"></i> ${t('orders.tabMine')}</button>
     </div>`).join('');
 }
 
 function addOrdersProduct(barcode, qtyRaw) {
-  const qty = parseInt(qtyRaw) || 1;
+  const qty = Unit.roundQty(Unit.parse(qtyRaw)) || 1;
   const p = (DB.getProducts() || []).find(x => x.barcode === barcode);
   if (!p) { alert(t('common.error')); return; }
   DB.addOrder({ barcode, productName: p.name, unitPrice: p.sellPrice || 0, qty, status: 'pending' });
@@ -117,9 +117,9 @@ function renderOrdersList() {
       <div class="ord-card ord-card-search">
         <div class="ord-card-info">
           <div class="ord-card-name">${escHtml(g.name)}</div>
-          <div class="ord-card-meta" dir="ltr">${escHtml(g.barcode)} • ${t('common.qty')}: ${g.qty}</div>
+          <div class="ord-card-meta" dir="ltr">${escHtml(g.barcode)} • ${t('common.qty')}: ${Unit.fmtQty(g.qty)}</div>
         </div>
-        <input type="text" class="form-input no-spinner ord-qty-input num-input" inputmode="numeric" id="ordsearchqty_${i}" value="1" min="1" style="width:70px" dir="ltr">
+        <input type="text" class="form-input no-spinner ord-qty-input num-input" inputmode="decimal" id="ordsearchqty_${i}" value="1" min="0.000001" step="any" style="width:70px" dir="ltr">
         <button class="btn btn-sm btn-primary" onclick="addOrdersProduct('${escHtml(g.barcode).replace(/'/g, "\\'")}', document.getElementById('ordsearchqty_${i}').value)"><i class="fas fa-plus"></i></button>
       </div>`).join('');
     return;
@@ -140,7 +140,7 @@ function renderOrdersList() {
     return `<div class="ord-card">
       <div class="ord-card-info">
         <div class="ord-card-name">${escHtml(o.productName || '')}</div>
-        <div class="ord-card-meta" dir="ltr">${escHtml(o.barcode || '')} • ${o.qty} × DA${fmtMoney((parseFloat(o.unitPrice) || 0))} • ${_ordFmt(o.createdAt)}</div>
+        <div class="ord-card-meta" dir="ltr">${escHtml(o.barcode || '')} • ${Unit.fmtQty(o.qty)} × DA${fmtMoney((parseFloat(o.unitPrice) || 0))} • ${_ordFmt(o.createdAt)}</div>
       </div>
       <span class="ord-st ${statusBadge}">${statusLabel}</span>
       <div class="ord-card-actions">
@@ -222,7 +222,7 @@ async function loadBranchOrders() {
         return `<div class="ord-card">
           <div class="ord-card-info">
             <div class="ord-card-name">${escHtml(o.productName || '')}</div>
-            <div class="ord-card-meta" dir="ltr">${escHtml(o.barcode || '')} • ${o.qty} × DA${fmtMoney((parseFloat(o.unitPrice) || 0))} • ${_ordFmt(o.createdAt)}</div>
+            <div class="ord-card-meta" dir="ltr">${escHtml(o.barcode || '')} • ${Unit.fmtQty(o.qty)} × DA${fmtMoney((parseFloat(o.unitPrice) || 0))} • ${_ordFmt(o.createdAt)}</div>
           </div>
           <span class="ord-st ${statusBadge}">${statusLabel}</span>
         </div>`;

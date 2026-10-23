@@ -136,7 +136,7 @@ function restLoRender() {
     const tot = window.RestCore ? window.RestCore.totals(ord) : { itemsTotal: 0, discount: 0, total: 0 };
     const actions = window.RestCore ? window.RestCore.availableActions(ord, RestService.me(), RestService.permsForOrder ? RestService.permsForOrder(ord) : RestService.permsFor(RestService.me().id)) : [];
     const items = (ord.items || []).map(it =>
-      `<div class="rest-lo-item"><span>${escHtml(it.name)}</span><small>${window.RestCore ? window.RestCore.num(it.qty) : it.qty} × ${fmtMoney(it.price)}</small></div>`
+      `<div class="rest-lo-item"><span>${escHtml(it.name)}</span><small>${window.Unit ? window.Unit.qtyUnit(it.qty, it) : (window.RestCore ? window.RestCore.num(it.qty) : it.qty)} × ${fmtMoney(it.price)}</small></div>`
     ).join('');
     const peerName = RestService.me().id === String((ord.from || {}).id)
       ? (RestService.receiverPeers() || []).find(p => p.id === ord.to)

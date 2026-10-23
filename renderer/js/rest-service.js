@@ -794,7 +794,7 @@
     const d = new Date();
     const stamp = d.toLocaleString('ar-DZ');
     const rows = (ord.items || []).map(it =>
-      `<tr><td>${window.escHtml(it.name)}</td><td class="kq">x${RC.num(it.qty)}</td></tr>`
+      `<tr><td>${window.escHtml(it.name)}</td><td class="kq">x${(window.Unit && window.Unit.qtyUnit) ? window.Unit.qtyUnit(RC.num(it.qty), it) : RC.num(it.qty)}</td></tr>`
     ).join('');
     return `<html><head><meta charset="utf-8"><style>
       @page{ size:80mm auto; margin:2mm; }
@@ -831,7 +831,7 @@
     const store = (typeof window.getPrintInfo === 'function') ? window.getPrintInfo() : { name: state.myName };
     const items = (res && res.items) || [];
     const rows = items.map(it =>
-      `<tr><td>${window.escHtml(it.name)}</td><td class="r">${RC.num(it.qty)}</td><td class="r">${window.fmtMoney(it.price)}</td><td class="r">${window.fmtMoney(it.total)}</td></tr>`
+      `<tr><td>${window.escHtml(it.name)}</td><td class="r">${(window.Unit && window.Unit.qtyUnit) ? window.Unit.qtyUnit(RC.num(it.qty), it) : RC.num(it.qty)}</td><td class="r">${window.fmtMoney(it.price)}</td><td class="r">${window.fmtMoney(it.total)}</td></tr>`
     ).join('');
     const invNo = (inv && inv.invoiceNumber) || (res && res.invoiceNumber) || '';
     const d = new Date();

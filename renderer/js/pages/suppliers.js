@@ -239,7 +239,7 @@ function openSupRecords(id) {
         <div class="rec-row-main">
           <div class="rec-row-name">${escHtml(r.productName || 'منتج')}</div>
           <div class="rec-row-meta">
-            <span><strong>${r.qty ?? 0}</strong> قطعة</span>
+            <span><strong>${Unit.qtyUnit(r.qty ?? 0, r)}</strong></span>
             <span class="rec-date"><i class="far fa-calendar-alt"></i> ${dateStr} ${timeStr}</span>
             <span class="rec-id"><i class="fas fa-file-invoice"></i> ${escHtml(r.invoiceNumber || r.invoiceId || '—')}</span>
             ${r.note ? `<span class="rec-note"><i class="fas fa-sticky-note"></i> ${escHtml(r.note)}</span>` : ''}

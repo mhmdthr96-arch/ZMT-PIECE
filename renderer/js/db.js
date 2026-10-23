@@ -1240,13 +1240,20 @@ async function _ensureDefaultCompany() {
       const sameExpiry = (same.expiryDate || '') === (item.expiryDate || '');
 
       if (samePrices && sameExpiry) {
-        const incomingQty = parseInt(item.quantity) || parseInt(item.qty) || 0;
-        const changes = { quantity: (same.quantity || 0) + incomingQty };
+        // Decimal quantities: 0.25 kg + 0.5 kg = 0.75 kg (never parseInt).
+        const incomingQty = Math.round(((parseFloat(item.quantity) || parseFloat(item.qty) || 0)) * 1e6) / 1e6;
+        const changes = { quantity: Math.round(((same.quantity || 0) + incomingQty) * 1e6) / 1e6 };
         if (item.supplierId) changes.supplierId = item.supplierId;
+        // A unit typed on the incoming row is only adopted when the existing
+        // product has none yet (never silently rewrites a chosen unit).
+        if (item.unit && !same.unit) {
+          changes.unit = item.unit;
+          if (item.unit === 'custom' && item.unitLabel) changes.unitLabel = item.unitLabel;
+        }
         // العائلة ربط تصنيفي تنتقل مع المنتج عند الدمج (لا تدخل في الهوية).
         if (item.family != null && String(item.family).trim()) changes.family = String(item.family).trim();
         this.updateProduct(same.id, changes);
-        return { ok: true, created: false, merged: true, product: same };
+        return { ok: true, created: false, merged: true, product: Object.assign({}, same, changes) };
       }
 
       const prod = this.addProduct(Object.assign({}, item, { barcode }));

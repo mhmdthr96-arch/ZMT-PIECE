@@ -435,7 +435,7 @@ function renderNetTransactions() {
         const estMark = info.isEst ? '<span title="' + t('net.costEstimated') + '" style="color:#e65100">*</span>' : '';
         detRows += `<tr>
           <td>${it.name || ''}${estMark}</td>
-          <td style="text-align:center">${it.qty}</td>
+          <td style="text-align:center">${Unit.qtyUnit(it.qty, it)}</td>
           ${seeProfit ? `<td style="text-align:center">DA${fmtMoney(info.cost)}</td>` : ''}
           <td style="text-align:center">DA${fmtMoney(Number(it.price) || 0)}</td>
           <td style="text-align:center">${lineTotal > 0 ? 'DA' + fmtMoney(lineTotal) : '—'}</td>

@@ -162,7 +162,7 @@ function renderCdHistory() {
       date: new Date(r.createdAt),
       ts: r.createdAt,
       type: 'مرتجع',
-      desc: `مرتجع: ${r.productName} x${r.qty} (${r.reason || 'بدون سبب'})`,
+      desc: `مرتجع: ${r.productName} x${Unit.qtyUnit(r.qty, r)} (${r.reason || 'بدون سبب'})`,
       amount: 0,
       badge: 'warning',
     });
@@ -304,7 +304,7 @@ function showCdInvoiceDetail(id) {
             <td>${i + 1}</td>
             <td>${escHtml(item.name)}</td>
             <td dir="ltr">${item.barcode}</td>
-            <td>${item.qty}</td>
+            <td>${Unit.qtyUnit(item.qty, item)}</td>
             <td>DA${fmtMoney(item.price)}</td>
             <td>DA${fmtMoney(item.total)}</td>
           </tr>`).join('')}
@@ -444,7 +444,7 @@ function editCdInvoice() {
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
         <div>
           <label style="font-size:11px;color:var(--silver-600);display:block;margin-bottom:2px">الكمية</label>
-          <input type="text" class="form-input no-spinner num-input" inputmode="numeric" id="cdEditItemQty_${i}" value="${item.qty}" min="0" style="padding:6px 8px;font-size:13px" oninput="recalcCdEditItem(${i})">
+          <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="cdEditItemQty_${i}" value="${Unit.fmtQty(item.qty)}" min="0" step="any" style="padding:6px 8px;font-size:13px" oninput="recalcCdEditItem(${i})">
         </div>
         <div>
           <label style="font-size:11px;color:var(--silver-600);display:block;margin-bottom:2px">سعر الوحدة (DA)</label>
@@ -467,7 +467,7 @@ function recalcCdEditItem(i) {
   const qtyInput = document.getElementById(`cdEditItemQty_${i}`);
   const unitPrice = parseFloat(document.getElementById(`cdEditItemUnitPrice_${i}`).value) || 0;
   const totalDiv = document.getElementById(`cdEditItemTotal_${i}`);
-  const q = parseInt(qtyInput.value) || 0;
+  const q = Unit.parse(qtyInput.value);
   totalDiv.textContent = `DA${fmtMoney((q * unitPrice))}`;
 }
 
@@ -484,8 +484,8 @@ function confirmCdEditInvoice() {
   let newTotal = 0;
 
   inv.items.forEach((item, i) => {
-    let newQty = parseInt(document.getElementById(`cdEditItemQty_${i}`).value);
-    if (isNaN(newQty) || newQty < 0) newQty = item.qty;
+    let newQty = Unit.parse(document.getElementById(`cdEditItemQty_${i}`).value);
+    if (!(newQty >= 0)) newQty = item.qty;
     const unitPrice = parseFloat(document.getElementById(`cdEditItemUnitPrice_${i}`).value) || 0;
     const newItemTotal = newQty * unitPrice;
     newTotal += newItemTotal;

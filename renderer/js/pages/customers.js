@@ -218,7 +218,7 @@ function openCustRecords(id) {
         <div class="rec-row-main">
           <div class="rec-row-name">${escHtml(r.productName || 'منتج')}</div>
           <div class="rec-row-meta">
-            <span><strong>${r.qty ?? 0}</strong> قطعة</span>
+            <span><strong>${Unit.qtyUnit(r.qty ?? 0, r)}</strong></span>
             ${r.reason ? `<span class="rec-note"><i class="fas fa-comment-alt"></i> ${escHtml(r.reason)}</span>` : ''}
             <span class="rec-date"><i class="far fa-calendar-alt"></i> ${dateStr} ${timeStr}</span>
           </div>

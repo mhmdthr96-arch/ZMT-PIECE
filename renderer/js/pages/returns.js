@@ -22,7 +22,7 @@ function renderReturns() {
           <div class="prod-card-title">${escHtml(r.productName || '-')}</div>
           <div class="prod-card-sub">${t('returns.col1')}: ${escHtml(r.id ? r.id.substring(0, 8).toUpperCase() : '')}</div>
         </div>
-        <span class="prod-card-badge">${r.qty} ${t('common.piece')}</span>
+        <span class="prod-card-badge">${Unit.qtyUnit(r.qty, r)}</span>
       </div>
       <div class="prod-card-fields">
         <div class="prod-field"><span class="prod-field-label">${t('returns.col2')}</span><span class="prod-field-value mono">${escHtml(r.invoiceId ? r.invoiceId.substring(0, 8) : '-')}</span></div>

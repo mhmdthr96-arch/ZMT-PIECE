@@ -398,7 +398,7 @@ function focusBarcodeScanner() {
 function getFormItem() {
   const tab = document.querySelector('.tab-btn.active')?.dataset.tab;
   let productId, barcode, name;
-  const qty = parseInt(document.getElementById('prodQty').value) || 1;
+  const qty = Unit.parse(document.getElementById('prodQty').value);
   const buyPrice = parseFloat(document.getElementById('prodBuyPrice').value) || 0;
   const sellPrice = parseFloat(document.getElementById('prodSellPrice').value) || 0;
   const wholesalePrice = parseFloat(document.getElementById('prodWholePrice').value) || 0;
@@ -474,7 +474,7 @@ function renderCart() {
         <span class="text-muted">${item.barcode}</span>
       </div>
       <div class="cart-item-details">
-        <span>${item.qty} × DA${fmtMoney(item.buyPrice)}</span>
+        <span>${Unit.qtyUnit(item.qty, item)} × DA${fmtMoney(item.buyPrice)}</span>
         <span class="cart-item-total">DA${fmtMoney((item.qty * item.buyPrice))}</span>
       </div>
       <button class="btn btn-sm btn-danger" onclick="removeFromCart(${i})"><i class="fas fa-times"></i></button>

@@ -632,7 +632,7 @@ function renderBestSellers(invoices, productMap) {
       '<td>' + (i + 1) + '</td>' +
       '<td><strong>' + (prod ? escHtml(prod.name) : prodId) + '</strong></td>' +
       '<td dir="ltr">' + (prod ? escHtml(prod.barcode) : '-') + '</td>' +
-      '<td>' + data.qty + '</td>' +
+      '<td>' + Unit.fmtQty(data.qty) + '</td>' +
       '<td>' + formatDA(data.total) + '</td>' +
       '<td style="color:#28a745">' + formatDA(data.profit) + '</td>' +
     '</tr>';
