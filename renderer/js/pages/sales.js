@@ -83,7 +83,7 @@ function getTvaRate() {
 }
 
 function init_sales() {
-  _salesProducts = DB.getProducts();
+  _salesProducts = (DB.getProducts ? DB.getProducts() : (_salesProducts || []));
   invalidateSalesGroupsCache();
   _salesSearchQuery = '';
   _salesDefaultMode = 'unit';
@@ -92,6 +92,7 @@ function init_sales() {
   _salesListAllCols = (function () { try { return localStorage.getItem('zmt_sales_list_allcols') === '1'; } catch (e) { return false; } })();
   _salesInCartStrip = (function () { try { return localStorage.getItem('zmt_sales_incart_strip') === '1'; } catch (e) { return false; } })();
   _salesCartWidth = (function () { try { var v = parseInt(localStorage.getItem('zmt_sales_cart_width'), 10); if (isNaN(v)) return 420; return Math.max(300, Math.min(700, v)); } catch (e) { return 420; } })();
+  _salesCartDragging = false;
   renderSalesProducts();
   _syncSalesHideBtn();
   setupSalesBarcode();
@@ -241,7 +242,9 @@ function salesGroupKey(p) {
 function invalidateSalesGroupsCache() {
   _salesGroupsCache = null;
   _salesGroupsIndex = null;
+  _salesCardCtx = null;
 }
+function _invalidateSalesGroupsCache() { invalidateSalesGroupsCache(); }
 
 var _salesGroupsIndex = null;
 
@@ -249,9 +252,11 @@ function getSalesGroups() {
   if (_salesGroupsCache) return _salesGroupsCache;
   const map = new Map();
   const groups = [];
-  const prods = _salesProducts;
+  const prods = (_salesProducts && _salesProducts.length) ? _salesProducts : (DB.getProducts ? DB.getProducts() : []);
+  _salesProducts = prods;
   for (let i = 0; i < prods.length; i++) {
     const p = prods[i];
+    if (!p) continue;
     const key = salesGroupKey(p);
     let g = map.get(key);
     if (!g) {
@@ -630,7 +635,11 @@ function renderSalesProducts(filter) {
   _salesOosCache = new WeakMap();
 
   const grid = document.getElementById('salesProductGrid');
-  if (!grid || !grid.isConnected) return;
+  if (!grid || !grid.isConnected) {
+    // Never fail silently: a missing container used to blank the whole page.
+    console.error('[sales] #salesProductGrid is missing from sales.html');
+    return;
+  }
   const q = _salesSearchQuery;
   const hiding = _salesHideUntilSearch && (!q || q.trim().length < 2);
   let groups;
@@ -705,23 +714,34 @@ function salesListRowHTML(g, i) {
   const brand = brands.find(b => b.id === rep.brandId);
   const unitName = rep.unit ? Unit.name(rep.unit) : Unit.name('piece');
   const unitLabel = rep.unit === 'custom' ? (rep.unitLabel || unitName) : unitName;
+  const allCols = !!_salesListAllCols;
+  const extraCells = allCols
+    ? `<div class="sales-list-row-cell">${multi ? g.records.length : 1}</div>
+       <div class="sales-list-row-cell">${buy ? 'DA' + fmtMoney(buy) : '-'}</div>
+       <div class="sales-list-row-cell">${escHtml(rep.reference || '-')}</div>
+       <div class="sales-list-row-cell">${escHtml(rep.countryOfOrigin || '-')}</div>`
+    : '';
+  const extraDetails = allCols ? '' : `
+      ${multi ? `<span><b>${t('sales.multiBatches')}:</b> ${g.records.length}</span>` : ''}
+      ${buy ? `<span><b>${t('quickEntry.buyPrice') || 'سعر الشراء'}:</b> DA${fmtMoney(buy)}</span>` : ''}
+      <span><b>${t('quickEntry.reference')}:</b> ${referenceCellHTML(rep.reference)}</span>
+      <span><b>${t('quickEntry.countryOfOrigin')}:</b> ${escHtml(rep.countryOfOrigin || '-')}</span>`;
   return `<div class="sales-list-row ${outOfStock ? 'oos' : ''}" onclick="${outOfStock ? '' : `addSalesGroupToCart(${i})`}" data-idx="${i}">
     <div class="sales-list-row-main">
       <div class="sales-list-row-name">${escHtml(g.name)}${unitLabel && unitLabel !== Unit.name('piece') ? ` <span class="sc-unit-badge">${Unit.esc(unitLabel)}</span>` : ''}</div>
       <div class="sales-list-row-meta">${escHtml(g.barcode || '-')} • ${escHtml(rep.mark || '-')} • ${escHtml(brand ? brand.name : (rep.brandId || '-'))}</div>
     </div>
-    <div class="sales-list-row-cell">${multi ? g.records.length : 1}</div>
+    ${extraCells}
     <div class="sales-list-row-cell">${fixed ? '∞' : Unit.fmtQty(totalQty)}</div>
     <div class="sales-list-row-price">DA${fmtMoney(price)}</div>
     <div class="sales-list-row-price">${whole > 0 ? 'DA' + fmtMoney(whole) : '-'}</div>
-    <div class="sales-list-row-cell">${buy ? 'DA' + fmtMoney(buy) : '-'}</div>
-    <div class="sales-list-row-cell">${escHtml(rep.reference || '-')}</div>
-    <div class="sales-list-row-cell">${escHtml(rep.countryOfOrigin || '-')}</div>
     <div class="sales-list-row-actions">
-      <button type="button" class="sales-list-row-chevron" onclick="event.stopPropagation();toggleSalesListDetails(this)"><i class="fas fa-chevron-down"></i></button>
+      ${outOfStock ? '' : `<button type="button" class="sales-list-row-add" onclick="event.stopPropagation();addSalesGroupToCart(${i})"><i class="fas fa-plus"></i></button>`}
       ${hasSalesSubstitutes(g) ? `<button type="button" class="btn btn-sm" onclick="event.stopPropagation();openSalesSubstitutes(${i})"><i class="fas fa-pills"></i> ${t('sales.findSubstitute')}</button>` : ''}
+      <button type="button" class="sales-list-row-chevron" onclick="event.stopPropagation();toggleSalesListDetails(this)" title="${t('salesDense.details')}"><i class="fas fa-chevron-down"></i></button>
     </div>
     <div class="sales-list-row-details">
+      ${extraDetails}
       <span><b>${t('quickEntry.storageLocation')}:</b> ${escHtml(rep.storageLocation || '-')}</span>
       <span><b>${t('units.label')}:</b> ${escHtml(unitLabel)}</span>
       ${rep.family ? `<span><b>${t('quickEntry.family')}:</b> ${escHtml(rep.family)}</span>` : ''}
@@ -748,7 +768,10 @@ function _syncSalesViewUI() {
   const gb = document.getElementById('salesViewGridBtn');
   const lb = document.getElementById('salesViewListBtn');
   const ac = document.getElementById('salesListAllCols');
-  if (g) g.classList.toggle('sales-list-view', _salesViewMode === 'list');
+  if (g) {
+    g.classList.toggle('sales-list-view', _salesViewMode === 'list');
+    g.classList.toggle('all-cols', !!_salesListAllCols);
+  }
   if (gb) gb.classList.toggle('active', _salesViewMode === 'grid');
   if (lb) lb.classList.toggle('active', _salesViewMode === 'list');
   if (ac) ac.checked = !!_salesListAllCols;
@@ -789,15 +812,23 @@ function setSalesView(mode) {
   const g = document.getElementById('salesProductGrid');
   const gb = document.getElementById('salesViewGridBtn');
   const lb = document.getElementById('salesViewListBtn');
-  if (g) g.classList.toggle('sales-list-view', _salesViewMode === 'list');
+  if (g) {
+    if (_salesViewMode === 'list') g.classList.add('sales-list-view');
+    else g.classList.remove('sales-list-view');
+    g.classList.toggle('all-cols', !!_salesListAllCols);
+  }
   if (gb) gb.classList.toggle('active', _salesViewMode === 'grid');
   if (lb) lb.classList.toggle('active', _salesViewMode === 'list');
+  // Re-render to reflect view mode
+  try { invalidateSalesGroupsCache(); } catch (e) {}
   renderSalesProducts();
 }
 
 function toggleSalesListAllCols(on) {
   _salesListAllCols = !!on;
   try { localStorage.setItem('zmt_sales_list_allcols', _salesListAllCols ? '1' : '0'); } catch (e) {}
+  const g = document.getElementById('salesProductGrid');
+  if (g) g.classList.toggle('all-cols', _salesListAllCols);
   renderSalesProducts();
 }
 
@@ -824,8 +855,31 @@ function renderSalesInCartStrip() {
   items.innerHTML = _salesCart.map((line, i) => {
     const name = escHtml(line.name || '');
     const qty = Unit.fmtQty ? Unit.fmtQty(line.qty) : line.qty;
-    return `<span class="sales-in-cart-chip"><span>${name}</span> <span class="sales-in-cart-chip-qty">${qty}</span> <button class="sales-in-cart-chip-remove" onclick="event.stopPropagation();removeSalesCartItem(${i});renderSalesInCartStrip();"><i class="fas fa-times"></i></button></span>`;
+    return `<span class="sales-in-cart-chip"><span>${name}</span> <span class="sales-in-cart-chip-qty">${qty}</span> <button class="sales-in-cart-chip-remove" onclick="event.stopPropagation();removeFromSalesCart(${i});"><i class="fas fa-times"></i></button></span>`;
   }).join('');
+}
+
+function applySalesCartWidth(w, persist) {
+  let n = parseInt(w, 10);
+  if (!isFinite(n)) n = 420;
+  if (n < 300) n = 300;
+  if (n > 700) n = 700;
+  _salesCartWidth = n;
+  const right = document.getElementById('salesRight');
+  const layout = document.querySelector('.sales-layout');
+  if (right) {
+    right.style.width = n + 'px';
+    right.style.flex = '0 0 ' + n + 'px';
+  }
+  if (layout && window.innerWidth > 1100) {
+    layout.style.gridTemplateColumns = '1fr ' + n + 'px';
+  } else if (layout) {
+    layout.style.gridTemplateColumns = '';
+  }
+  if (persist) {
+    try { localStorage.setItem('zmt_sales_cart_width', String(n)); } catch (e) {}
+  }
+  return n;
 }
 
 function initSalesCartWidth() {
@@ -833,12 +887,16 @@ function initSalesCartWidth() {
   const layout = document.querySelector('.sales-layout');
   const resizer = document.getElementById('salesCartResizer');
   if (!right || !layout) return;
-  // apply saved width (300-700)
-  if (_salesCartWidth < 300) _salesCartWidth = 300;
-  if (_salesCartWidth > 700) _salesCartWidth = 700;
-  right.style.width = _salesCartWidth + 'px';
-  right.style.flex = '0 0 ' + _salesCartWidth + 'px';
-  layout.style.gridTemplateColumns = '1fr ' + _salesCartWidth + 'px';
+  // The display-settings slider is the single source of truth when present;
+  // the legacy localStorage key keeps older installs working.
+  let startW = _salesCartWidth;
+  try {
+    if (window.DisplaySettings && typeof window.DisplaySettings.current === 'function') {
+      const cur = window.DisplaySettings.current();
+      if (cur && typeof cur.salesCart === 'number') startW = cur.salesCart;
+    }
+  } catch (e) {}
+  applySalesCartWidth(startW, false);
   if (resizer) {
     resizer.onmousedown = function (e) {
       _salesCartDragging = true;
@@ -852,16 +910,9 @@ function initSalesCartWidth() {
     document.addEventListener('mousemove', function (e) {
       if (!_salesCartDragging) return;
       const layoutEl = document.querySelector('.sales-layout');
-      const rightEl = document.getElementById('salesRight');
-      if (!layoutEl || !rightEl) return;
+      if (!layoutEl) return;
       const rect = layoutEl.getBoundingClientRect();
-      let w = rect.right - e.clientX;
-      if (w < 300) w = 300;
-      if (w > 700) w = 700;
-      _salesCartWidth = Math.round(w);
-      rightEl.style.width = _salesCartWidth + 'px';
-      rightEl.style.flex = '0 0 ' + _salesCartWidth + 'px';
-      layoutEl.style.gridTemplateColumns = '1fr ' + _salesCartWidth + 'px';
+      applySalesCartWidth(rect.right - e.clientX, false);
     });
     document.addEventListener('mouseup', function () {
       if (!_salesCartDragging) return;
@@ -869,7 +920,12 @@ function initSalesCartWidth() {
       const resizerEl = document.getElementById('salesCartResizer');
       if (resizerEl) resizerEl.classList.remove('active');
       document.body.style.cursor = '';
-      try { localStorage.setItem('zmt_sales_cart_width', String(_salesCartWidth)); } catch (e) {}
+      applySalesCartWidth(_salesCartWidth, true);
+      try {
+        if (window.DisplaySettings && typeof window.DisplaySettings.setLive === 'function') {
+          window.DisplaySettings.setLive('salesCart', _salesCartWidth);
+        }
+      } catch (e) {}
     });
   }
 }

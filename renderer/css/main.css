@@ -37,6 +37,7 @@
   --inv-card-min: 260px;     /* min width of a product card on inventory et al.*/
   --sales-name-size: 13px;   /* product-name font size on the sales page       */
   --prod-name-size: 16px;    /* product-name font size on inventory et al.     */
+  --sales-cart-width: 420px; /* width of the sales cart / checkout column      */
   --titlebar-height: 36px;
   --radius: 8px;
   --radius-sm: 4px;
@@ -1134,8 +1135,6 @@ html[data-theme="dark"] .brand-card .brand-del { background:rgba(30,32,36,0.85);
   from { opacity:0; transform:translateY(-6px); }
   to   { opacity:1; transform:translateY(0); }
 }
-  width: 100%; height: 300px; position: relative;
-}
 
 /* ===== USER MODE: HIDE BUY PRICE & RESTRICTED ACTIONS ===== */
 body.user-mode .hide-user { display: none !important; }
@@ -1392,10 +1391,6 @@ body.user-mode td.hide-user { display: none !important; }
 /* ============================================================
    SALES PAGE — MODERN POS LAYOUT
    ============================================================ */
-
-:root {
-  --sales-cart-width: 420px;
-}
 
 /* ----- LAYOUT ----- */
 .sales-layout {
@@ -1665,7 +1660,7 @@ body.user-mode td.hide-user { display: none !important; }
 /* ----- LIST ROW ----- */
 .sales-list-row {
   display: grid;
-  grid-template-columns: minmax(0,2.2fr) 110px 130px 130px 90px 90px 90px 110px auto;
+  grid-template-columns: minmax(0,1fr) 90px 120px 120px auto;
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
@@ -1674,6 +1669,9 @@ body.user-mode td.hide-user { display: none !important; }
   border-radius: 10px;
   cursor: pointer;
   transition: border-color .15s, box-shadow .15s;
+}
+.sales-product-grid.sales-list-view.all-cols .sales-list-row {
+  grid-template-columns: minmax(0,2.2fr) 70px 100px 120px 120px 100px 110px 110px auto;
 }
 .sales-list-row:hover {
   border-color: rgba(var(--accent-rgb),0.5);
@@ -1697,7 +1695,19 @@ body.user-mode td.hide-user { display: none !important; }
   color: var(--silver-600);
 }
 .sales-list-row.open .sales-list-row-details { display: flex; }
-.sales-list-row-chevron { border: none; background: transparent; color: var(--silver-500); cursor: pointer; }
+.sales-list-row-chevron { border: none; background: transparent; color: var(--silver-500); cursor: pointer; width: 28px; height: 28px; border-radius: 6px; }
+.sales-list-row-chevron:hover { background: var(--silver-100); color: var(--bmw-blue-1); }
+.sales-list-row-add {
+  border: none;
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--bmw-blue-1);
+  cursor: pointer;
+  width: 28px; height: 28px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px;
+}
+.sales-list-row-add:hover { background: var(--bmw-blue-1); color: #fff; }
+.sp-card-head {
   display: flex; justify-content: space-between; align-items: flex-start;
 }
 .sp-card-name {
@@ -1768,6 +1778,7 @@ body.user-mode td.hide-user { display: none !important; }
 .sales-cart-section .sales-totals,
 .sales-cart-section .sales-pay { flex: 0 0 auto; }
 .sales-pay { position: sticky; bottom: 0; background: #fff; z-index: 5; }
+.sales-card {
   background: white;
   border: 1px solid var(--silver-300);
   border-radius: 10px;
@@ -1945,6 +1956,7 @@ body.user-mode td.hide-user { display: none !important; }
 
 .sales-cart-flex { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .sales-cart-items-wrap { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.sales-cart-items {
   max-height: 280px;
   overflow-y: auto;
   display: flex;
@@ -2247,8 +2259,8 @@ html[data-theme="dark"] .sc-unit-badge { color: #7ab8ff; background: rgba(10,125
 
 /* ----- RESPONSIVE ----- */
 @media (max-width:1100px) {
-  .sales-layout { grid-template-columns: 1fr; height: auto; }
-  .sales-right { overflow: visible; }
+  .sales-layout { grid-template-columns: 1fr !important; height: auto; }
+  .sales-right { overflow: visible; width: auto !important; flex: 1 1 auto !important; }
   .sales-cart-resizer { display: none; }
   .sales-product-grid { max-height: 420px; }
   .sales-cart-section { max-height: none; }

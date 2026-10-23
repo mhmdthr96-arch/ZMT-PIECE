@@ -89,7 +89,12 @@
       <div class="form-row">
         <div class="form-group">
           <label data-i18n="inventory.qty">الكمية <span class="required">*</span></label>
-          <input type="text" class="form-input no-spinner num-input" inputmode="numeric" id="invQty" value="1" min="1" dir="ltr">
+          <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invQty" value="1" min="0.000001" step="any" dir="ltr">
+        </div>
+        <div class="form-group">
+          <label data-i18n="units.label">الوحدة</label>
+          <select class="form-input" id="invUnit" onchange="invUnitSync('invUnit','invUnitCustom')"></select>
+          <input type="text" class="form-input" id="invUnitCustom" style="display:none;margin-top:6px" data-i18n-placeholder="units.customPlaceholder" placeholder="اسم الوحدة">
         </div>
         <div class="form-group">
           <label data-i18n="inventory.buyPrice">سعر الشراء <span class="required">*</span></label>
@@ -242,11 +247,16 @@
         </div>
       </div>
 
-      <!-- Qty + Buy + Sell -->
+      <!-- Qty + Unit + Buy + Sell -->
       <div class="form-row">
         <div class="form-group">
           <label data-i18n="inventory.qty">الكمية <span class="required">*</span></label>
-          <input type="text" class="form-input no-spinner num-input" inputmode="numeric" id="invDirectQty" value="1" min="1" dir="ltr">
+          <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invDirectQty" value="1" min="0.000001" step="any" dir="ltr">
+        </div>
+        <div class="form-group">
+          <label data-i18n="units.label">الوحدة</label>
+          <select class="form-input" id="invDirectUnit" onchange="invUnitSync('invDirectUnit','invDirectUnitCustom')"></select>
+          <input type="text" class="form-input" id="invDirectUnitCustom" style="display:none;margin-top:6px" data-i18n-placeholder="units.customPlaceholder" placeholder="اسم الوحدة">
         </div>
         <div class="form-group">
           <label data-i18n="inventory.buyPrice">سعر الشراء <span style="font-size:10px;font-weight:400;color:var(--silver-500)">(اختياري)</span></label>

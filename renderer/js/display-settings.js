@@ -1,7 +1,7 @@
 /* ============================================================
    ZMT PIECE — إعدادات العرض (Display Settings)
    ------------------------------------------------------------
-   A single top-bar button opens a panel that controls five purely
+   A single top-bar button opens a panel that controls six purely
    visual values. They are stored per device in localStorage and
    applied as CSS variables on <html>, so every open page reflows
    instantly — no reload, no rebuild:
@@ -11,6 +11,7 @@
      --sidebar-width    عرض القائمة الجانبية        (120 – 400 px)
      --sales-name-size  خط أسماء منتجات البيع       (10 – 32  px)
      --prod-name-size   خط أسماء منتجات المخزون     (10 – 40  px)
+     --sales-cart-width عرض سلة البيع                (300 – 700 px)
 
    Nothing here ever touches the database, so invoices, stock,
    printing, reports and LAN sync are 100% unaffected.
@@ -32,7 +33,8 @@
     { key: 'invCard',   css: '--inv-card-min',    min: 150, max: 450, def: 260, icon: 'fas fa-warehouse',   label: 'display.invCards',   flabel: 'حجم بطاقات المخزون' },
     { key: 'sidebar',   css: '--sidebar-width',   min: 120, max: 400, def: 240, icon: 'fas fa-columns',     label: 'display.sidebar',    flabel: 'عرض القائمة الجانبية' },
     { key: 'salesName', css: '--sales-name-size', min: 10,  max: 32,  def: 13,  icon: 'fas fa-text-height', label: 'display.salesName',  flabel: 'خط أسماء منتجات البيع' },
-    { key: 'invName',   css: '--prod-name-size',  min: 10,  max: 40,  def: 16,  icon: 'fas fa-font',        label: 'display.invName',    flabel: 'خط أسماء منتجات المخزون' }
+    { key: 'invName',   css: '--prod-name-size',  min: 10,  max: 40,  def: 16,  icon: 'fas fa-font',        label: 'display.invName',    flabel: 'خط أسماء منتجات المخزون' },
+    { key: 'salesCart', css: '--sales-cart-width', min: 300, max: 700, def: 420, icon: 'fas fa-shopping-cart', label: 'display.salesCart', flabel: 'عرض سلة البيع' }
   ];
 
   var DS_BY_KEY = {};
@@ -99,6 +101,12 @@
     DS_ITEMS.forEach(function (it) {
       root.style.setProperty(it.css, dsClamp(it.key, cfg[it.key]) + 'px');
     });
+    // The sales cart width must also reach the live POS layout, which sets an
+    // inline grid template when the page is open (drag handle / slider share
+    // this single value).
+    if (typeof window.applySalesCartWidth === 'function') {
+      try { window.applySalesCartWidth(dsClamp('salesCart', cfg.salesCart), false); } catch (e) {}
+    }
   }
 
   function dsIsDefault(cfg) {
@@ -305,6 +313,19 @@
 
   /* ---------- save / reset / open / close ---------- */
 
+  function dsSetLive(key, raw) {
+    if (!DS_BY_KEY[key]) return 0;
+    var n = dsClamp(key, raw);
+    dsSaved[key] = n;
+    dsDraft = Object.assign({}, dsDraft || dsSaved);
+    dsDraft[key] = n;
+    dsApply(dsSaved);
+    dsPersist(dsSaved);
+    if (dsBuilt) { dsSyncRow(key, 'none'); dsUpdatePreview(); dsRefreshDirty(); }
+    dsUpdateDot();
+    return n;
+  }
+
   function dsSave() {
     if (!dsDirty()) return;
     dsSaved = Object.assign({}, dsDraft);
@@ -442,6 +463,7 @@
     open: dsOpen,
     close: dsClose,
     defaults: dsDefaults,
+    setLive: dsSetLive,
     current: function () { return Object.assign({}, dsSaved); },
     items: DS_ITEMS
   };

@@ -2,7 +2,7 @@
 // ZMT PIECE — display settings (إعدادات العرض) static checks
 // Run: node renderer/tests/display-settings-verify.js
 // Guards the top-bar display button + panel: index.html wiring,
-// the five CSS variables and their hooks, the module's ranges /
+// the six CSS variables and their hooks, the module's ranges /
 // clamping / dirty-state contract, the four-language labels and
 // the fact that nothing here can ever touch the database.
 // ============================================================
@@ -55,6 +55,7 @@ const vars = [
   ['--sidebar-width', '240px'],
   ['--sales-name-size', '13px'],
   ['--prod-name-size', '16px'],
+  ['--sales-cart-width', '420px'],
 ];
 const rootSeg = css.slice(css.indexOf(':root {'), css.indexOf('/* Western digits'));
 for (const [name, def] of vars) {
@@ -65,6 +66,8 @@ for (const [name, def] of vars) {
 has(css, 'minmax(var(--inv-card-min, 260px),1fr)') ? ok('.prod-grid يستعمل --inv-card-min (مع قيمة احتياطية)') : bad('.prod-grid لا يستعمل المتغيّر');
 has(css, 'minmax(var(--sales-card-min, 240px), 1fr)') ? ok('.sales-product-grid يستعمل --sales-card-min') : bad('.sales-product-grid لا يستعمل المتغيّر');
 has(css, '.sales-product-grid .prod-card-title { font-size: var(--sales-name-size, 13px); }') ? ok('خط أسماء بطاقات البيع مستقل') : bad('تجاوز خط بطاقات البيع مفقود');
+has(css, 'grid-template-columns: 1fr minmax(300px, var(--sales-cart-width))') ? ok('.sales-layout يستعمل --sales-cart-width') : bad('عرض السلة غير مربوط بالمتغيّر');
+has(css, 'grid-template-columns: 1fr !important;') ? ok('الشاشات الضيقة تفرد عموداً واحداً') : bad('قاعدة الشاشات الضيقة مفقودة');
 count(css, /\.prod-card-title \{ font-size:var\(--prod-name-size, 16px\);/g) === 2 ? ok('قاعدتا .prod-card-title تستعملان --prod-name-size') : bad('عدد قواعد .prod-card-title غير متوقع');
 has(css, 'width: var(--sidebar-width);') ? ok('القائمة الجانبية تستعمل --sidebar-width') : bad('عرض القائمة الجانبية غير مربوط');
 has(css, '.app-container.sidebar-slim .sidebar { width: 60px; }') ? ok('الوضع المدمج (60px) ما زال يتقدّم') : bad('الوضع المدمج للقائمة تأثّر');
@@ -104,6 +107,7 @@ const items = [
   ['sidebar', '--sidebar-width', 120, 400, 240],
   ['salesName', '--sales-name-size', 10, 32, 13],
   ['invName', '--prod-name-size', 10, 40, 16],
+  ['salesCart', '--sales-cart-width', 300, 700, 420],
 ];
 for (const [key, cssVar, min, max, def] of items) {
   const re = new RegExp("key: '" + key + "',\\s*css: '" + cssVar.replace(/-/g, '\\-') + "',\\s*min: (\\d+),\\s*max: (\\d+),\\s*def: (\\d+)");
@@ -116,7 +120,7 @@ for (const [key, cssVar, min, max, def] of items) {
     ? ok(key + ': الافتراضي مطابق لقيمة CSS')
     : bad(key + ': الافتراضي لا يطابق CSS');
 }
-count(js, /key: '/g) === 5 ? ok('خمسة عناصر تحكم بالضبط') : bad('عدد العناصر ليس 5');
+count(js, /key: '/g) === 6 ? ok('ستة عناصر تحكم بالضبط') : bad('عدد العناصر ليس 6');
 
 // ---------- 6. i18n (ar/en/fr/zh) ----------
 console.log('\n--- 6. الترجمات الأربع ---');
@@ -124,7 +128,7 @@ const dStart = appJs.indexOf('/* ---- Display settings');
 const dEnd = appJs.indexOf('\n})();', dStart); // end of the display IIFE only
 const dSeg = (dStart >= 0 && dEnd > dStart) ? appJs.slice(dStart, dEnd) : '';
 dSeg ? ok('كتلة ترجمات إعدادات العرض موجودة') : bad('كتلة الترجمات مفقودة');
-const dKeys = ['title:', 'close:', 'hint:', 'preview:', 'tagSales:', 'tagInv:', 'sample1:', 'sampleMeta1:', 'sample2:', 'sampleMeta2:', 'salesCards:', 'invCards:', 'sidebar:', 'salesName:', 'invName:', 'px:', 'reset:', 'save:', 'saved:', 'dirty:'];
+const dKeys = ['title:', 'close:', 'hint:', 'preview:', 'tagSales:', 'tagInv:', 'sample1:', 'sampleMeta1:', 'sample2:', 'sampleMeta2:', 'salesCards:', 'invCards:', 'sidebar:', 'salesName:', 'invName:', 'salesCart:', 'px:', 'reset:', 'save:', 'saved:', 'dirty:'];
 for (const k of dKeys) {
   const n = count(dSeg, new RegExp('(^|[\\s{,])' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'));
   n === 4 ? ok('المفتاح ' + k + ' في اللغات الأربع') : bad('المفتاح ' + k + ' موجود ' + n + ' مرة (المطلوب 4)');

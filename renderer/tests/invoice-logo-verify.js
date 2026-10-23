@@ -231,7 +231,11 @@ const PD_KEYS = ['mediaTitle', 'mediaDesc', 'mediaAddImage', 'mediaAddVideo', 'm
 // ===========================================================================
 console.log('\n--- 10. الإصدار وملاحظات النشر ---');
 ok(/^\d+\.\d+\.\d+$/.test(pkg.version), 'version: a valid semver (' + pkg.version + ')');
-ok(pkg.version === '2.11.2', 'version: 2.11.2 as agreed');
+ok((() => {
+  const A = pkg.version.split('.').map(Number), B = [2, 11, 2];
+  for (let i = 0; i < 3; i++) { if (A[i] !== B[i]) return A[i] > B[i]; }
+  return true;
+})(), 'version: >= 2.11.2 (the logo feature release)');
 ok(notes.trimStart().startsWith('ZMT PIECE ' + pkg.version), 'notes: the newest section matches the version');
 has(notes, 'ZMT PIECE 2.11.0', 'notes: the previous section is preserved');
 has(notes, 'ZMT PIECE 2.7.0', 'notes: the 2.7.0 section is preserved');

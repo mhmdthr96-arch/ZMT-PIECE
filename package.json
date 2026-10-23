@@ -21,6 +21,7 @@
     "verify:thermal": "node renderer/tests/thermal-verify.js",
     "verify:cash": "node renderer/tests/cash-drawer-verify.js",
     "verify:logo": "node renderer/tests/invoice-logo-verify.js",
+    "verify:units": "node renderer/tests/units-verify.js",
     "verify:copy": "scripts/verify-copy.cmd",
     "publish:update": "node tools/publish-update.js",
     "phone-keygen": "node tools/phone-signer.js generate",

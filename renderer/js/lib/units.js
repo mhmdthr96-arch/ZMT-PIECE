@@ -139,7 +139,7 @@
   }
 
   // The + / − stepper follows the last decimal place the user actually typed:
-  // 1 -> 1  0.25 -> 0.01  0.001 -> 0.001  0.00006 -> 0.000001
+  // 1 -> 1  0.25 -> 0.01  0.001 -> 0.001  0.00006 -> 0.00001
   function step(qty) {
     var v = Math.abs(roundQty(qty));
     var s = fmtQty(v);
