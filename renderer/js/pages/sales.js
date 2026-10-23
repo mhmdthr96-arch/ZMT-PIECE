@@ -235,6 +235,31 @@ function _prependSalesGroups() {
   _salesGridLoadingMore = false;
 }
 
+// Load more groups when scrolling down (appends to existing DOM)
+function loadMoreSalesProducts() {
+  if (_salesGridLoadingMore) return;
+  if (!_salesGroupList || _salesRenderedCount >= _salesGroupList.length) return;
+  const grid = document.getElementById('salesProductGrid');
+  if (!grid || !grid.isConnected) return;
+  _salesGridLoadingMore = true;
+  const from = _salesRenderedCount;
+  const to = Math.min(from + SALES_GRID_PAGE_SIZE, _salesGroupList.length);
+  let html = '';
+  if (_salesViewMode === 'list') {
+    for (let i = from; i < to; i++) {
+      html += salesListRowHTML(_salesGroupList[i], i);
+    }
+  } else {
+    for (let i = from; i < to; i++) {
+      html += salesCardHTML(_salesGroupList[i], i);
+    }
+  }
+  _salesRenderedCount = to;
+  grid.insertAdjacentHTML('beforeend', html);
+  _trimSalesGrid();
+  _salesGridLoadingMore = false;
+}
+
 function salesGroupKey(p) {
   return (p.name || '') + '\u0001' + (p.barcode || '');
 }
@@ -706,7 +731,7 @@ function salesListRowHTML(g, i) {
   const totalQty = getGroupAvailableQty(g);
   const price = getGroupActivePrice(g);
   const whole = getGroupWholesalePrice(g);
-  const buy = getGroupBuyPrice ? getGroupBuyPrice(g) : (groupViableRecords(g)[0] && groupViableRecords(g)[0].buyPrice);
+  const buy = (typeof getGroupBuyPrice === 'function' ? getGroupBuyPrice(g) : null) || (groupViableRecords(g)[0] && groupViableRecords(g)[0].buyPrice);
   const outOfStock = !fixed && totalQty <= 0;
   const multi = g.records.length > 1;
   const rep = groupViableRecords(g)[0] || g.records[0] || {};
