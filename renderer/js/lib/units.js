@@ -131,8 +131,12 @@
   }
 
   // 1.000000 -> "1"  0.500000 -> "0.5"  0.010000 -> "0.01"  0.00006 -> "0.00006"
-  function fmtQty(n) {
+  // A second argument keeps the places a scale label printed: 0.25 with 3 is
+  // "0.250", exactly what the customer weighed and paid for.
+  function fmtQty(n, decimals) {
     var v = roundQty(n);
+    var d = Number(decimals);
+    if (isFinite(d) && d >= 0 && d <= DECIMALS) return v.toFixed(Math.round(d));
     var s = v.toFixed(DECIMALS);
     s = s.replace(/\.?0+$/, '');
     return (s === '' || s === '-0' || s === '-') ? '0' : s;
@@ -175,9 +179,10 @@
   function toggleShowInInvoice() { return setShowInInvoice(!showInInvoice()); }
 
   // Quantity + unit for any document. When the switch is off (or there is no
-  // quantity) only the formatted number is returned.
+  // quantity) only the formatted number is returned. A line that came off a
+  // scale carries the label's place-count, so the invoice repeats the label.
   function qtyUnit(qty, obj) {
-    var n = fmtQty(qty);
+    var n = fmtQty(qty, obj && obj.qtyDecimals);
     if (!showInInvoice()) return n;
     var u = label(obj);
     return u ? (n + ' ' + u) : n;

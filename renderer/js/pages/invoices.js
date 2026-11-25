@@ -44,6 +44,7 @@ if (!window._invLiveSyncBound) {
   window.addEventListener('zmt:data-refreshed', function () {
     refreshInvoiceList();
     if (typeof filterInvoices === 'function') filterInvoices(true);
+    if (typeof renderRouteDocList === 'function') renderRouteDocList();
   });
 }
 
@@ -97,6 +98,7 @@ function init_invoices() {
     _invEditQtySnapshot = null;
   }
   refreshInvoiceList();
+  renderRouteDocList();
   setupQuickEntryButton();
   const canManageInv = _canManageInvoices();
   const isUser = !canManageInv;
@@ -120,6 +122,12 @@ function init_invoices() {
   // In sales-history mode the type-filter reset button is meaningless (no filter), so hide it.
   const resetBtn = document.querySelector('[onclick="resetInvoiceFilters()"]');
   if (resetBtn) resetBtn.style.display = salesHistory ? 'none' : '';
+  // Route orders (أذون الطريق) are a manager-only cosmetic copy of sale invoices,
+  // so their tab is hidden for restricted users and in the sales-history overlay.
+  // Every visit re-opens the real-invoices tab so the default view never drifts.
+  const routeTabBtn = document.getElementById('invTabRoutes');
+  if (routeTabBtn) routeTabBtn.style.display = (canManageInv && !salesHistory) ? '' : 'none';
+  switchInvTab('invoices');
   if (_invsPager) { _invsPager.destroy(); _invsPager = null; }
   const _shOverlayEl = document.querySelector('.sh-overlay');
   const _shScroll = (_shOverlayEl && getComputedStyle(_shOverlayEl).display !== 'none')
@@ -143,6 +151,10 @@ function init_invoices() {
       if (e.key !== 'Escape') return;
       var pc = document.getElementById('invPrintChoiceModal');
       if (pc && pc.style.display !== 'none') { closeInvPrintChoice(); return; }
+      var rd = document.getElementById('routeDocCfgModal');
+      if (rd && rd.style.display !== 'none') { closeRouteDocSettings(); return; }
+      var rem = document.getElementById('routeDocModal');
+      if (rem && rem.style.display !== 'none') { closeRouteDocEditor(); return; }
       var am = document.getElementById('addInvoiceMenuModal');
       if (am && am.style.display !== 'none') { closeAddInvoiceMenu(); return; }
       var pm = document.getElementById('paymentInvoiceModal');
@@ -205,6 +217,8 @@ function filterInvoices(keepViewport) {
   if (pagEl) pagEl.style.display = 'none';
   const infoEl = document.getElementById('invResultsInfo');
   if (infoEl) infoEl.textContent = _invsFiltered.length + t('invoices.resultsInfo');
+  const invCountEl = document.getElementById('invInvoiceCount');
+  if (invCountEl) invCountEl.textContent = String(_invsFiltered.length);
   if (_invsPager) {
     if (keepViewport) _invsPager.updateDataKeepScroll(_invsFiltered);
     else _invsPager.updateData(_invsFiltered);
@@ -298,6 +312,13 @@ function _renderInvCard(inv, idx) {
 
   const isBuy = inv.type === 'supplier' || inv.type === 'purchase';
   const maskBuy = isBuy && !Auth.buyPriceVisible();
+  // A discounted purchase invoice shows on its card the same figure as the
+  // detail screen (the quoted total, 200) plus a discreet «discount» tag and
+  // the net that actually moved on the supplier balance (190). The rate and
+  // the real cost stay behind the "i" reveal like everywhere else.
+  const cardTotal = isBuy ? _invGrossTotal(inv) : (parseFloat(inv.totalAmount) || 0);
+  const cardNet = parseFloat(inv.totalAmount) || 0;
+  const cardDisc = isBuy && !maskBuy && _invHasBuyDiscount(inv);
 
   let type, typeColor, typeIcon;
   if (inv.type === 'customer') {
@@ -305,7 +326,7 @@ function _renderInvCard(inv, idx) {
     typeColor = 'badge-success';
     typeIcon = 'fas fa-hand-holding-usd';
   } else if (inv.type === 'sup_sale') {
-    type = t('invoices.typeSupSale') || 'بيع لمورد';
+    type = t('invoices.typeSupSale');
     typeColor = 'badge-warning';
     typeIcon = 'fas fa-hand-holding-usd';
   } else if (inv.type === 'payment') {
@@ -350,21 +371,23 @@ function _renderInvCard(inv, idx) {
       <div class="inv-card-type">
         <span class="badge ${typeColor}"><i class="${typeIcon}" style="margin-left:4px"></i>${type}</span>
         ${inv.isProvisional && inv.type !== 'proforma' ? `<span class="badge badge-warning" style="margin-right:4px">${t('invoices.badgeProvisional')}</span>` : ''}
+        ${_invHasReturns(inv.id) ? `<span class="badge badge-danger inv-return-badge" style="margin-right:4px"><i class="fas fa-undo" style="margin-left:4px"></i>${t('invoices.returnNote')}</span>` : ''}
         <strong class="inv-card-num">${inv.invoiceNumber || '—'}</strong>
       </div>
       <div class="inv-card-date">${date}</div>
     </div>
     <div class="inv-card-body">
       <div class="inv-card-party">${partyName ? `<i class="fas fa-user" style="margin-left:4px;color:var(--silver-500)"></i>${escHtml(partyName)}` : '<span style="color:var(--silver-400)">—</span>'}<span class="inv-card-actions">${_invCardActionButtons(inv.id, inv.type)}</span></div>
+      ${(inv.subCustomerName || inv.subCustomerId) ? `<div class="ct-tree-chip" title="${escHtml(t('customerTree.printLabel') || 'Client secondaire')}"><i class="fas fa-user-tag"></i>${escHtml(inv.subCustomerName || '')}</div>` : ''}
       ${lg ? '' : isPayment
-        ? `<div class="inv-card-items"><i class="fas ${inv.direction === 'out' ? 'fa-arrow-up' : 'fa-arrow-down'}" style="font-size:10px;color:var(--silver-500)"></i> ${(inv.direction === 'out' ? t('invoices.payToSupplier') : t('invoices.payFromCustomer'))}</div>`
+        ? `<div class="inv-card-items"><i class="fas ${inv.direction === 'out' ? 'fa-arrow-up' : 'fa-arrow-down'}" style="font-size:10px;color:var(--silver-500)"></i> ${escHtml(_paymentVoucherLabel(inv))}</div>`
         : `<div class="inv-card-items">${inv.items ? inv.items.length + ' ' + t('invoices.itemCount') : '—'}</div>`}
-      <div class="inv-card-total"><strong>${maskBuy ? '••••' : 'DA' + fmtMoney((inv.totalAmount || 0))}</strong></div>
+      <div class="inv-card-total${cardDisc ? ' inv-card-total-disc' : ''}"><strong>${maskBuy ? '••••' : 'DA' + fmtMoney(cardTotal)}${cardDisc ? `<span class="inv-card-disc-tag" title="${escHtml(t('invoices.cardDiscountTitle'))}"><i class="fas fa-tags"></i>${escHtml(t('invoices.cardDiscountTag'))}</span>` : ''}</strong>${cardDisc ? `<small class="inv-card-net" dir="rtl">${escHtml(t('invoices.paidAfterDiscount'))}: DA${fmtMoney(cardNet)}</small>` : ''}</div>
     </div>
     ${lg ? _renderInvCardItems(inv) : ''}
     ${isPayment
       ? `<div class="inv-card-footer">
-          <div class="inv-card-paid" style="color:#00897b"><i class="fas fa-check-circle"></i> ${inv.direction === 'out' ? t('invoices.payToSupplier') : t('invoices.receivedLabel')} DA${fmtMoney((inv.totalAmount || 0))}</div>
+          <div class="inv-card-paid" style="color:#00897b"><i class="fas fa-check-circle"></i> ${escHtml(inv.supplierId ? _paymentVoucherLabel(inv) : (inv.direction === 'out' ? _paymentVoucherLabel(inv) : t('invoices.receivedLabel')))} DA${fmtMoney((inv.totalAmount || 0))}</div>
         </div>`
       : inv.type === 'sup_sale'
         ? `<div class="inv-card-footer">
@@ -373,8 +396,8 @@ function _renderInvCard(inv, idx) {
           </div>
           <div class="inv-card-paid">
             ${remaining > 0
-              ? `<span style="color:#e65100;font-weight:600">المتبقي على المورد: DA${fmtMoney(remaining)}</span>`
-              : `<span style="color:#28a745"><i class="fas fa-check-circle"></i> دين المورد مسوّى</span>`}
+              ? `<span style="color:#e65100;font-weight:600">${t('invoices.remainingOnSupplier')}: DA${fmtMoney(remaining)}</span>`
+              : `<span style="color:#28a745"><i class="fas fa-check-circle"></i> ${t('invoices.supDebtSettled')}</span>`}
           </div>
         </div>`
       : maskBuy
@@ -413,21 +436,42 @@ function _invActionIcon(name) {
       return `<svg ${base}><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>`;
     case 'emp':
       return `<svg ${base}><rect x="4" y="3" width="16" height="18" rx="2" opacity="0.35"/><circle cx="12" cy="10" r="3"/><path d="M6 20a6 6 0 0 1 12 0"/></svg>`;
+    case 'route':
+      return `<svg ${base}><path d="M3 7h9v9H3z"/><path d="M12 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="1.7"/><circle cx="16.5" cy="18" r="1.7"/></svg>`;
+    case 'convert':
+      return `<svg ${base}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m17 11 2 2 4-4"/></svg>`;
+    case 'return':
+      return `<svg ${base}><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>`;
+    case 'eye':
+      return `<svg ${base}><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/></svg>`;
     default:
       return '';
   }
 }
 
+// A return invoice exists only when the shared returns store still holds at
+// least one row for this invoice. Keeping the mark derived (instead of a
+// persisted flag) means deleting the last return removes the badge, the note
+// and the print action automatically — no stale state, no migration.
+function _invHasReturns(invoiceId) {
+  const RI = (typeof window.ReturnInvoice !== 'undefined') ? window.ReturnInvoice : null;
+  return !!(RI && typeof RI.hasReturns === 'function' && RI.hasReturns(invoiceId));
+}
+
 function _invCardActionButtons(id, type) {
   const acts = [
-    ['print', 'طباعة'],
-    ['pdf', 'حفظ PDF'],
-    ['email', 'إرسال بالبريد'],
+    ['print', t('invoices.print')],
+    ['pdf', t('invoices.savePdf')],
+    ['email', t('invoices.sendEmail')],
   ];
-  if (type !== 'payment') acts.push(['edit', 'تعديل']);
-  acts.push(['delete', 'حذف']);
+  if (_invHasReturns(id)) acts.push(['return', t('invoices.printReturnInvoice')]);
+  // A route doc is a cosmetic copy of a SALE invoice only — purchasing, payment
+  // vouchers and supplier-side documents have nothing to copy.
+  if (type === 'customer') acts.push(['route', t('invoices.copyToRoute')]);
+  if (type !== 'payment') acts.push(['edit', t('invoices.edit')]);
+  acts.push(['delete', t('invoices.delete')]);
   if (type === 'purchase' || type === 'supplier') {
-    acts.push(['emp', 'طباعة إلى الموظف']);
+    acts.push(['emp', t('invoices.printEmployee')]);
   }
   return acts.map(([a, title]) =>
     `<button type="button" class="inv-act${a === 'delete' ? ' inv-act-danger' : ''}" title="${title}" aria-label="${title}" onclick="event.stopPropagation();invCardAction('${id}','${a}')">${_invActionIcon(a)}</button>`
@@ -436,12 +480,24 @@ function _invCardActionButtons(id, type) {
 
 function invCardAction(id, action) {
   showInvDetail(id);
-  if (action === 'print') { printInvFromDetail(); closeInvDetail(); }
+  if (action === 'print') {
+    // A discounted purchase invoice has two printable totals: let the operator
+    // pick between «after» (190) and «before» (200) discount instead of
+    // silently printing the default.
+    if (_invHasBuyDiscount(DB.getInvoice(id))) { openInvPrintChoice(); return; }
+    printInvFromDetail(); closeInvDetail();
+  }
   else if (action === 'pdf') { saveInvoicePdf(); closeInvDetail(); }
   else if (action === 'email') { openInvoiceEmail(); closeInvDetail(); }
   else if (action === 'emp') { printInvEmployee(); closeInvDetail(); }
+  else if (action === 'return') {
+    closeInvDetail();
+    if (window.ReturnInvoice && typeof window.ReturnInvoice.print === 'function') window.ReturnInvoice.print(id);
+  }
   else if (action === 'edit') { showInvEditSection(); }
   else if (action === 'delete') { deleteInvoiceFromDetail(); }
+  else if (action === 'route') { closeInvDetail(); invCopyToRouteDoc(id); }
+  else if (action === 'convert') { openInvConvert(id); }
 }
 
 function _invEnsureCtxMenu() {
@@ -450,17 +506,23 @@ function _invEnsureCtxMenu() {
   m.id = 'invCardCtx';
   m.className = 'inv-card-ctx';
   const acts = [
-    ['print', 'طباعة'],
-    ['pdf', 'حفظ PDF'],
-    ['email', 'إرسال بالبريد'],
-    ['edit', 'تعديل'],
-    ['delete', 'حذف']
+    ['print', t('invoices.print')],
+    ['pdf', t('invoices.savePdf')],
+    ['email', t('invoices.sendEmail')],
+    ['edit', t('invoices.edit')],
+    ['delete', t('invoices.delete')]
   ];
   m.innerHTML = acts.map(([a, label]) =>
     `<div class="inv-card-ctx-item" data-action="${a}">${_invActionIcon(a)}<span>${label}</span></div>`
   ).join('') +
+    `<div class="inv-card-ctx-return-wrap" style="display:none"><div class="inv-card-ctx-sep"></div>` +
+    `<div class="inv-card-ctx-item" data-action="return">${_invActionIcon('return')}<span>${t('invoices.printReturnInvoice')}</span></div></div>` +
+    `<div class="inv-card-ctx-route-wrap" style="display:none"><div class="inv-card-ctx-sep"></div>` +
+    `<div class="inv-card-ctx-item" data-action="route">${_invActionIcon('route')}<span>${t('invoices.copyToRoute')}</span></div></div>` +
+    `<div class="inv-card-ctx-convert-wrap" style="display:none"><div class="inv-card-ctx-sep"></div>` +
+    `<div class="inv-card-ctx-item" data-action="convert">${_invActionIcon('convert')}<span>${t('invoices.convertBtn')}</span></div></div>` +
     `<div class="inv-card-ctx-emp-wrap" style="display:none"><div class="inv-card-ctx-sep"></div>` +
-    `<div class="inv-card-ctx-item" data-action="emp">${_invActionIcon('emp')}<span>طباعة إلى الموظف</span></div></div>`;
+    `<div class="inv-card-ctx-item" data-action="emp">${_invActionIcon('emp')}<span>${t('invoices.printEmployee')}</span></div></div>`;
   m.addEventListener('click', function (e) {
     const item = e.target.closest('.inv-card-ctx-item');
     if (!item) return;
@@ -478,6 +540,15 @@ function _invShowCtxMenu(id, x, y) {
   const inv = DB.getInvoice(id);
   const empWrap = m.querySelector('.inv-card-ctx-emp-wrap');
   if (empWrap) empWrap.style.display = (inv && (inv.type === 'purchase' || inv.type === 'supplier')) ? 'block' : 'none';
+  const returnWrap = m.querySelector('.inv-card-ctx-return-wrap');
+  if (returnWrap) returnWrap.style.display = _invHasReturns(id) ? 'block' : 'none';
+  const routeWrap = m.querySelector('.inv-card-ctx-route-wrap');
+  if (routeWrap) routeWrap.style.display = (inv && inv.type === 'customer') ? 'block' : 'none';
+  const convertWrap = m.querySelector('.inv-card-ctx-convert-wrap');
+  if (convertWrap) {
+    const canConvert = !!(inv && _canManageInvoices() && _invConvertEligibility(inv).ok);
+    convertWrap.style.display = canConvert ? 'block' : 'none';
+  }
   m.querySelectorAll('.inv-card-ctx-item[data-action="edit"]').forEach(el => {
     el.style.display = (inv && inv.type === 'payment') ? 'none' : '';
   });
@@ -569,6 +640,19 @@ var _payInvPartyType = 'customer';
 var _payInvPartyId = null;
 var _payInvBalance = 0;
 
+// One label for every place a payment voucher is shown. A supplier voucher
+// with money coming IN is a receipt (قبض من مورد); the legacy debt note is
+// still labelled سند دين لمورد. Legacy rows without `isDebtNote` fall back to
+// direction so old data keeps its original meaning.
+function _paymentVoucherLabel(inv) {
+  if (!inv) return '';
+  if (inv.supplierId) {
+    return (inv.direction === 'in' && !inv.isDebtNote)
+      ? t('invoices.payFromSupplier') : t('invoices.payToSupplier');
+  }
+  return inv.direction === 'out' ? t('invoices.payToSupplier') : t('invoices.payFromCustomer');
+}
+
 // ===== PARTY BALANCE DISPLAY (shared) =====
 // A customer's positive balance means he owes us (عليه دين / هو مدين لنا); for
 // a supplier a positive balance means we owe him (له / نحن ندين له). Negative
@@ -630,7 +714,22 @@ function selectPayInvParty(id) {
   if (nameEl) nameEl.textContent = party.name;
   const selected = document.getElementById('payInvSelected');
   if (selected) selected.style.display = '';
+  syncPayInvSubSelect();
   updatePaymentBalance();
+}
+
+// Customer tree: show the sub-customer selector only for a parent with labels.
+// It tags the voucher; it never changes the party the money is posted to.
+function syncPayInvSubSelect() {
+  const group = document.getElementById('payInvSubGroup');
+  const sel = document.getElementById('payInvSubCustomer');
+  if (!sel) return;
+  const useful = (window.CustomerTree && _payInvPartyType === 'customer' && _payInvPartyId &&
+    typeof window.CustomerTree.fillSelect === 'function')
+    ? window.CustomerTree.fillSelect(sel, _payInvPartyId, t('customerTree.none'))
+    : false;
+  if (group) group.style.display = useful ? '' : 'none';
+  if (!useful) sel.value = '';
 }
 
 function openPaymentInvoiceModal() {
@@ -640,6 +739,8 @@ function openPaymentInvoiceModal() {
   setPaymentPartyType('customer');
   document.getElementById('payInvAmount').value = '';
   document.getElementById('payInvNote').value = '';
+  const debtNote = document.getElementById('payInvDebtNote');
+  if (debtNote) debtNote.checked = false;
   const warn = document.getElementById('payInvOverpay');
   if (warn) warn.style.display = 'none';
   if (!m._host) m._host = m.parentNode;
@@ -662,15 +763,23 @@ function setPaymentPartyType(type) {
   const suppTab = document.getElementById('payInvSuppTab');
   if (custTab) custTab.className = type === 'customer' ? 'btn btn-primary' : 'btn';
   if (suppTab) suppTab.className = type === 'supplier' ? 'btn btn-primary' : 'btn';
+  // A supplier is now a normal cash collection by default (قبض من مورد). The
+  // old debt-note behaviour stays available as an explicit, unchecked-by-default
+  // option — and only for the supplier tab. Switching tabs always clears it.
+  const debtGroup = document.getElementById('payInvDebtNoteGroup');
+  const debtNote = document.getElementById('payInvDebtNote');
+  if (debtNote) debtNote.checked = false;
+  if (debtGroup) debtGroup.style.display = type === 'supplier' ? '' : 'none';
   // Any party is selectable: collecting from a customer with zero/negative
-  // balance simply creates credit (رصيد لنا عليه), and a supplier voucher is a
-  // debt note (سند دين) that adds to what we owe.
+  // balance simply creates credit (رصيد لنا عليه), and collecting from a
+  // supplier reduces what we owe him.
   const search = document.getElementById('payInvPartySearch');
   if (search) search.value = '';
   const results = document.getElementById('payInvPartyResults');
   if (results) results.innerHTML = '';
   const selected = document.getElementById('payInvSelected');
   if (selected) selected.style.display = 'none';
+  syncPayInvSubSelect();
   updatePaymentBalance();
 }
 
@@ -698,8 +807,8 @@ function updatePaymentBalanceOverpay() {
   const warn = document.getElementById('payInvOverpay');
   if (!warn) return;
   // Informational (never blocking): collecting more than a customer's debt just
-  // flips the balance to a credit we owe them. Supplier vouchers (debt notes)
-  // carry no cap at all.
+  // flips the balance to a credit we owe them. Supplier receipts and explicit
+  // debt notes carry no cap at all.
   if (_payInvPartyType === 'customer' && amount > _payInvBalance + 0.001) {
     warn.textContent = t('invoices.overpayWarn') + ' DA' + fmtMoney(_payInvBalance);
     warn.style.display = 'block';
@@ -716,26 +825,41 @@ function confirmPaymentInvoice() {
   const method = document.getElementById('payInvMethod').value || 'cash';
   const note = document.getElementById('payInvNote').value.trim();
   const isCustomer = _payInvPartyType === 'customer';
+  // Supplier tab defaults to money coming IN (قبض من مورد). The old behaviour
+  // remains available as an explicit debt note with no money movement.
+  const debtNoteEl = document.getElementById('payInvDebtNote');
+  const isDebtNote = !isCustomer && !!debtNoteEl && debtNoteEl.checked;
+  const isCashIn = !isDebtNote;
 
+  // Customer tree: metadata only. `customerId` stays the parent and the single
+  // balance deduction below is unchanged — no second payment row is created.
+  const ctMeta = (isCustomer && window.CustomerTree)
+    ? window.CustomerTree.metaFromSelect(document.getElementById('payInvSubCustomer'), DB.getCustomer(partyId))
+    : {};
   const inv = DB.addInvoice({
     type: 'payment',
-    direction: isCustomer ? 'in' : 'out',
+    direction: isCashIn ? 'in' : 'out',
+    kind: isCustomer ? 'customer-receipt' : (isDebtNote ? 'supplier-debt-note' : 'supplier-receipt'),
+    isDebtNote: isDebtNote,
     customerId: isCustomer ? partyId : undefined,
+    ...ctMeta,
     supplierId: isCustomer ? undefined : partyId,
     totalAmount: amount,
     paidAmount: amount,
     items: [],
     date: new Date().toISOString().slice(0, 10),
     method: method,
-    note: note || (isCustomer ? t('invoices.custVoucherNote') : t('invoices.suppVoucherNote')),
+    note: note || (isCustomer ? t('invoices.custVoucherNote')
+      : (isDebtNote ? t('invoices.suppVoucherNote') : t('invoices.suppReceiptNote'))),
     isProvisional: false,
   }, { payment: true });
 
   // Balance effects (no cap, balances may go negative):
   // - Customer voucher: collecting money reduces what they owe; collecting more
   //   than the debt turns the balance into a credit we owe them (negative).
-  // - Supplier voucher: it is a debt note (سند دين); we owe the supplier, so
-  //   his outstanding balance increases by the voucher amount.
+  // - Supplier receipt: money came in, so what we owe the supplier drops by the
+  //   same amount. It is period revenue and carries no merchandise margin.
+  // - Supplier debt note (explicit): no money moved; what we owe increases.
   if (isCustomer) {
     const customers = DB.getCustomers();
     const cIdx = customers.findIndex(c => c.id === partyId);
@@ -743,11 +867,18 @@ function confirmPaymentInvoice() {
       customers[cIdx].balance = (parseFloat(customers[cIdx].balance) || 0) - amount;
       DB.saveCustomers(customers);
     }
-  } else {
+  } else if (isDebtNote) {
     const suppliers = DB.getSuppliers();
     const sIdx = suppliers.findIndex(s => s.id === partyId);
     if (sIdx !== -1) {
       suppliers[sIdx].balance = (parseFloat(suppliers[sIdx].balance) || 0) + amount;
+      DB.saveSuppliers(suppliers);
+    }
+  } else {
+    const suppliers = DB.getSuppliers();
+    const sIdx = suppliers.findIndex(s => s.id === partyId);
+    if (sIdx !== -1) {
+      suppliers[sIdx].balance = (parseFloat(suppliers[sIdx].balance) || 0) - amount;
       DB.saveSuppliers(suppliers);
     }
   }
@@ -767,13 +898,20 @@ function _invTypeLabel(inv) {
   if (inv.type === 'dispatch') return "BON D'ENVOI";
   if (inv.type === 'transfer') return 'BON DE TRANSFERT';
   if (inv.type === 'transfer_receive') return 'BON DE RÉCEPTION';
-  if (inv.type === 'payment') return inv.direction === 'out' ? 'BILLET DE DETTE' : 'BON DE CAISSE';
+  if (inv.type === 'payment') {
+    // A supplier receipt is money in (Bon de caisse); only an explicit debt
+    // note keeps the old Billet de dette label.
+    return (inv.direction === 'out' || inv.isDebtNote) ? 'BILLET DE DETTE' : 'BON DE CAISSE';
+  }
   return "FACTURE D'ACHAT";
 }
 
 function buildPaymentInvoiceHTML(inv) {
   const store = getStoreInfo();
   const isCustomer = !!inv.customerId;
+  // Money moving INTO the till is a receipt whether the party is a customer
+  // or a supplier; only an explicit debt note is a décaissement.
+  const isReceipt = inv.direction === 'in' && !inv.isDebtNote;
   const party = isCustomer
     ? DB.getCustomers().find(c => c.id === inv.customerId) || null
     : DB.getSuppliers().find(s => s.id === inv.supplierId) || null;
@@ -785,7 +923,7 @@ function buildPaymentInvoiceHTML(inv) {
     <div id="invDetailPrintArea" style="padding:30px 35px;font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;color:#222;direction:ltr;text-align:left" dir="ltr">
       ${buildDocHeaderRow(
         `<div style="font-size:20px;font-weight:900;color:#1a1a1a;text-transform:uppercase;letter-spacing:1px">${escHtml(store.name)}</div>
-            <div style="font-size:10px;color:#999;margin-top:1px;text-transform:uppercase;letter-spacing:0.5px">${isCustomer ? 'Reçu de versement' : inv.direction === 'out' ? 'Billet de dette' : 'Bon de caisse'}</div>
+            <div style="font-size:10px;color:#999;margin-top:1px;text-transform:uppercase;letter-spacing:0.5px">${isCustomer ? 'Reçu de versement' : (isReceipt ? 'Bon de caisse' : 'Billet de dette')}</div>
             ${store.address ? `<div style="font-size:11px;color:#555;margin-top:4px">${escHtml(store.address)}</div>` : ''}
             ${store.phone ? `<div style="font-size:11px;color:#555">Tél: ${escHtml(store.phone)}</div>` : ''}
             ${storeLegalLineHTML(inv)}`,
@@ -806,13 +944,14 @@ function buildPaymentInvoiceHTML(inv) {
             <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:1px">${isCustomer ? 'Client' : 'Fournisseur'}</div>
             ${party
               ? `<div style="font-size:14px;font-weight:600;color:#1a1a1a;margin-top:2px">${escHtml(party.name)}</div>
-                 ${party.phone ? `<div style="font-size:11px;color:#666">Tél: ${escHtml(party.phone)}</div>` : ''}`
+                 ${party.phone ? `<div style="font-size:11px;color:#666">Tél: ${escHtml(party.phone)}</div>` : ''}
+                 ${partyLegalLineHTML(inv, party, isCustomer ? 'customer' : 'supplier')}`
               : `<div style="font-size:14px;color:#888">—</div>`
             }
             ${invPartyBalanceBlockHTML(inv, party)}
           </td>
           <td style="vertical-align:top;text-align:right;width:50%">
-            <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${isCustomer ? 'Encaissement' : 'Décaissement'}</div>
+            <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${isReceipt ? 'Encaissement' : 'Décaissement'}</div>
             <div style="display:inline-block;padding:4px 14px;background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;border-radius:4px;font-size:12px;font-weight:700">${(inv.method === 'ccp') ? 'CCP' : 'ESPÈCES'}</div>
           </td>
         </tr>
@@ -875,10 +1014,11 @@ function ensureInvDetailModal() {
         <div class="modal-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-start">
           <h3 id="invDetailTitle" style="margin:0;flex:1;min-width:200px"><i class="fas fa-file-invoice"></i> <span></span></h3>
           <div id="invDetailFooter" style="display:flex;gap:8px;flex-wrap:wrap;direction:ltr;margin:0;padding:0;border:0">
-            <button class="btn btn-primary" onclick="openInvPrintChoice()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-print"></i> <span>طباعة</span></button>
-            <button class="btn" onclick="showInvPaymentSection()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-hand-holding-usd"></i> <span>دفع</span></button>
-            <button class="btn" onclick="showInvEditSection()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-edit"></i> <span>تعديل</span></button>
-            <button class="btn btn-danger" onclick="deleteInvoiceFromDetail()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-trash"></i> <span>حذف</span></button>
+            <button class="btn btn-primary" onclick="openInvPrintChoice()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-print"></i> <span>${t('invoices.print')}</span></button>
+            <button class="btn" onclick="previewInvFromDetail()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-eye"></i> <span>${t('invoices.preview')}</span></button>
+            <button class="btn" onclick="showInvPaymentSection()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-hand-holding-usd"></i> <span>${t('invoices.pay')}</span></button>
+            <button class="btn" onclick="showInvEditSection()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-edit"></i> <span>${t('invoices.edit')}</span></button>
+            <button class="btn btn-danger" onclick="deleteInvoiceFromDetail()" style="display:flex;align-items:center;gap:5px"><i class="fas fa-trash"></i> <span>${t('invoices.delete')}</span></button>
           </div>
           <button class="modal-close" onclick="closeInvDetail()">&times;</button>
         </div>
@@ -899,6 +1039,7 @@ function showInvDetail(invoiceId) {
     return;
   }
   _invDetailId = invoiceId;
+  _invPrintTotalBasis = 'net';
 
   const modal = document.getElementById('invDetailModal');
   // Portal to <body> so position:fixed resolves against the viewport rather
@@ -929,12 +1070,16 @@ function showInvDetail(invoiceId) {
   title.innerHTML = `<i class="fas fa-file-invoice"></i> ${invNum}`;
 
   _renderInvDetailBody(inv, isPayment, paidAmount, invoiceId);
+  _injectInvBuyRevealButton(inv);
+  _syncInvBuyRevealUI();
   // Payment vouchers are final balance settlements: no partial payment and no editing.
   if (footer) footer.querySelectorAll('button').forEach(b => {
     const oc = b.getAttribute && b.getAttribute('onclick');
     if (isPayment && (oc === 'showInvPaymentSection()' || oc === 'showInvEditSection()')) b.style.display = 'none';
   });
   _injectInvTransferFooterButton(inv);
+  _injectInvConvertFooterButton(inv);
+  _injectReturnInvoiceFooterButton(inv);
   modal.style.display = 'flex';
 }
 
@@ -982,28 +1127,103 @@ function buildDocHeaderRow(leftCell, rightCell, mono) {
     '</tr></table>';
 }
 
-function storeLegalLineHTML(inv, forceCat) {
-  const store = getStoreInfo();  const vis = (typeof getLegalInfoVisibility === 'function')
-    ? getLegalInfoVisibility()
-    : {
-        customer: localStorage.getItem('zmt_inv_legal_customer') === '1',
-        supplier: localStorage.getItem('zmt_inv_legal_supplier') === '1',
-        employee: localStorage.getItem('zmt_inv_legal_employee') === '1',
-      };
-  const cat = forceCat || ((inv.type === 'supplier' || inv.type === 'purchase') ? 'supplier'
+// Optional product columns on the commercial invoice. Hidden by default: the
+// values come from the display-settings switches and are shared by the screen,
+// printer, PDF and email copies because they all use buildInvoiceDetailHTML().
+function _invColumnVis() {
+  var cfg = null;
+  try {
+    if (typeof window !== 'undefined' && window.DisplaySettings && typeof window.DisplaySettings.invoiceColumns === 'function') {
+      cfg = window.DisplaySettings.invoiceColumns();
+    }
+  } catch (e) {}
+  if (!cfg) {
+    try {
+      var raw = (typeof localStorage !== 'undefined') ? localStorage.getItem('zmt_display_settings') : null;
+      cfg = raw ? JSON.parse(raw) : null;
+    } catch (e) { cfg = null; }
+  }
+  cfg = cfg || {};
+  // DisplaySettings.invoiceColumns() exposes {reference, mark}; the raw stored
+  // object uses {invShowReference, invShowMark}. Accept both shapes.
+  function isOn(v) { return v === true || v === 1 || v === '1' || v === 'true'; }
+  var ref = (cfg.invShowReference !== undefined) ? cfg.invShowReference : cfg.reference;
+  var mark = (cfg.invShowMark !== undefined) ? cfg.invShowMark : cfg.mark;
+  return {
+    reference: isOn(ref),
+    mark: isOn(mark)
+  };
+}
+
+// Older sale lines may not carry the product snapshot; fall back to the live
+// product so switching a column on never shows an empty cell for old invoices.
+function _invItemExtra(item, field) {
+  if (item && item[field]) return String(item[field]);
+  var pid = item && item.productId;
+  if (!pid || typeof DB === 'undefined' || typeof DB.getProduct !== 'function') return '';
+  try {
+    var p = DB.getProduct(pid);
+    return (p && p[field]) ? String(p[field]) : '';
+  } catch (e) { return ''; }
+}
+
+function _legalInfoVis() {
+  if (typeof getLegalInfoVisibility === 'function') return getLegalInfoVisibility();
+  return {
+    customer: localStorage.getItem('zmt_inv_legal_customer') === '1',
+    supplier: localStorage.getItem('zmt_inv_legal_supplier') === '1',
+    employee: localStorage.getItem('zmt_inv_legal_employee') === '1',
+  };
+}
+
+// The party's own legal identity is typed deliberately on its customer/supplier
+// card, so it prints on that party's documents by default and has its own
+// switches in settings. The shop's legal block keeps the older «إظهار هذه
+// المعلومات في الفواتير لـ» switches, which stay off until asked for.
+function _partyLegalVis() {
+  return {
+    customer: localStorage.getItem('zmt_inv_party_legal_customer') !== '0',
+    supplier: localStorage.getItem('zmt_inv_party_legal_supplier') !== '0',
+    employee: localStorage.getItem('zmt_inv_party_legal_employee') !== '0',
+  };
+}
+
+function _legalCatOf(inv, forceCat) {
+  return forceCat || ((inv.type === 'supplier' || inv.type === 'purchase') ? 'supplier'
             : (inv.type === 'employee') ? 'employee'
             : 'customer');
-  if (!vis[cat]) return '';
+}
+
+function _legalParts(rec) {
+  if (!rec) return [];
   const parts = [];
-  if (store.nis) parts.push('NIS: ' + escHtml(store.nis));
-  if (store.nif) parts.push('NIF: ' + escHtml(store.nif));
-  if (store.rcc) parts.push('RC: ' + escHtml(store.rcc));
-  if (store.article) parts.push('ART: ' + escHtml(store.article));
+  if (rec.nis) parts.push('NIS: ' + escHtml(rec.nis));
+  if (rec.nif) parts.push('NIF: ' + escHtml(rec.nif));
+  if (rec.rc || rec.rcc) parts.push('RC: ' + escHtml(rec.rc || rec.rcc));
+  if (rec.article) parts.push('ART: ' + escHtml(rec.article));
+  return parts;
+}
+
+// The party's own legal identity, typed on its customer/supplier form. It obeys
+// its own switch (on by default), independent of the shop line above it.
+function partyLegalLineHTML(inv, party, forceCat) {
+  const cat = _legalCatOf(inv, forceCat);
+  if (!_partyLegalVis()[cat]) return '';
+  const parts = _legalParts(party);
+  if (!parts.length) return '';
+  return '<div style="font-size:10px;color:#777;margin-top:3px;direction:ltr;text-align:left">' + parts.join(' | ') + '</div>';
+}
+
+function storeLegalLineHTML(inv, forceCat) {
+  const store = getStoreInfo();
+  const cat = _legalCatOf(inv, forceCat);
+  if (!_legalInfoVis()[cat]) return '';
+  const parts = _legalParts(store);
   if (!parts.length) return '';
   return '<div style="font-size:10px;color:#999;margin-top:2px">' + parts.join(' | ') + '</div>';
 }
 
-function buildInvoiceDetailHTML(inv, typeLabel, paidAmount) {
+function buildInvoiceDetailHTML(inv, typeLabel, paidAmount, opts) {
   const store = getStoreInfo();
   const remaining = inv.type === 'sup_sale'
     ? DB.getSupSaleNetDue(inv)
@@ -1012,6 +1232,8 @@ function buildInvoiceDetailHTML(inv, typeLabel, paidAmount) {
   const dateStr = date.toLocaleDateString('fr-DZ', { day: '2-digit', month: 'long', year: 'numeric' });
   const timeStr = date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   const totalQty = inv.items ? inv.items.reduce((s, it) => s + it.qty, 0) : 0;
+  const invCols = _invColumnVis();
+  const invColCount = 4 + (invCols.reference ? 1 : 0) + (invCols.mark ? 1 : 0);
 
   const sup = inv.supplierId ? DB.getSuppliers().find(s => s.id === inv.supplierId) : null;
   const cust = inv.customerId ? DB.getCustomers().find(c => c.id === inv.customerId) : null;
@@ -1019,7 +1241,125 @@ function buildInvoiceDetailHTML(inv, typeLabel, paidAmount) {
   const isCustomer = !!inv.customerId || inv.type === 'waybill' || inv.type === 'proforma' || inv.type === 'customer' || inv.type === 'sup_sale';
   const isBuy = inv.type === 'supplier' || inv.type === 'purchase';
   const maskBuy = isBuy && !Auth.buyPriceVisible();
+  // ===== DISCOUNTED PURCHASE: WHICH TOTAL GOES WHERE =======================
+  // The invoice lines always carry the QUOTED unit price (a 100→95 item still
+  // reads 100 on paper), so:
+  //   • screen total   = GROSS (200) — what the operator bargained for,
+  //   • "i" reveal     = the per-product % / real cost and the NET (190),
+  //   • printed total  = chosen in the print dialog: NET (190, «after
+  //                      discount», with explicit remise lines) or GROSS (200).
+  // The real per-unit cost is an internal accounting figure: it is never printed.
+  // Purchase discount detail is sensitive: hidden on screen until "i" is
+  // pressed and stripped from every printed / PDF / emailed copy.
+  const buyMode = inv.purchaseDiscountMode === 'amount' ? 'amount' : 'percent';
+  const buyGlobalDisc = parseFloat(inv.purchaseDiscountAmount) || 0;
+  const buyProductDisc = parseFloat(inv.purchaseProductDiscount) || 0;
+  const netTotal = parseFloat(inv.totalAmount) || 0;
+  const grossTotal = isBuy ? _invGrossTotal(inv) : netTotal;
+  const hasBuyDisc = isBuy && grossTotal > netTotal + 0.004;
+  const printBasis = (opts && opts.printBasis === 'gross') ? 'gross' : 'net';
+  const screenTotal = hasBuyDisc ? grossTotal : netTotal;
+  const printTotal = (hasBuyDisc && printBasis === 'gross') ? grossTotal : netTotal;
+  // Breakdown printed only for the «after discount» copy: the remise lines make
+  // 100 × 2 − 10 = 190 add up on paper. The «before discount» copy prints the
+  // gross total alone, without a single hint that a discount exists.
+  const printDiscRows = (hasBuyDisc && printBasis === 'net') ? (function () {
+    const r2 = function (v) { return Math.round((Number(v) || 0) * 100) / 100; };
+    const gap = r2(grossTotal - netTotal);            // the discount the paper must explain
+    const prodDisc = Math.min(r2(buyProductDisc), gap);
+    // Whatever is left is the invoice-level remise. Deriving it from the gap
+    // (instead of trusting the stored figure) guarantees the paper adds up
+    // even when a legacy record or a 0.01 line-allocation rounding disagrees.
+    const invDisc = r2(gap - prodDisc);
+    const rows = [{ label: 'الإجمالي قبل الخصم / Sous-total (brut)', value: grossTotal, kind: 'sub' }];
+    if (prodDisc > 0.004) {
+      const prodPct = grossTotal > 0 ? Math.round((prodDisc / grossTotal) * 100 * 100) / 100 : 0;
+      rows.push({ label: 'خصم المنتجات / Remise produits (' + fmtMoney(prodPct) + '%)', value: prodDisc, kind: 'disc' });
+    }
+    if (invDisc > 0.004) {
+      const pct = (buyMode === 'percent' && (parseFloat(inv.purchaseDiscountValue) || 0) > 0)
+        ? ' (' + fmtMoney(parseFloat(inv.purchaseDiscountValue) || 0) + '%)'
+        : '';
+      rows.push({ label: 'خصم الفاتورة / Remise facture' + pct, value: invDisc, kind: 'disc' });
+    }
+    return rows;
+  })() : [];
+  const hasBuySensitive = isBuy && (
+    buyGlobalDisc > 0 || buyProductDisc > 0 ||
+    (inv.items || []).some(it => (parseFloat(it.purchaseDiscountPct) || 0) > 0 || (parseFloat(it.realBuyPrice) || 0) > 0)
+  );
+  // Screen-only banner under the totals: the figure above is the GROSS (200);
+  // the net (190) and the per-product rate/real cost stay behind the "i"
+  // reveal. Clicking the banner (or pressing "i") toggles that same reveal.
+  // Every printed / PDF / emailed copy drops it with .inv-screen-only.
+  const discBanner = (hasBuyDisc && !maskBuy) ? (function () {
+    const text = escHtml(t('invoices.discountOnInvoiceBanner'))
+      .replace('{i}', '<b class="inv-disc-key">i</b>')
+      .replace('{net}', 'DA' + fmtMoney(netTotal));
+    return `<div class="inv-screen-only inv-disc-banner" dir="rtl" role="button" tabindex="0"
+        title="${escHtml(t('invoices.paidAfterDiscount'))}: DA${fmtMoney(netTotal)}"
+        onclick="toggleInvBuySensitive()"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleInvBuySensitive();}">
+        <i class="fas fa-tags"></i><span>${text}</span></div>`;
+  })() : '';
+  const buySensitiveBlock = hasBuySensitive ? `
+    <div class="inv-buy-sensitive inv-print-hide" dir="ltr" style="margin-top:10px;padding:10px 14px;border:1px dashed #8fbfa8;border-radius:6px;background:#f1f8f5;font-size:11.5px;color:#2e7d32">
+      <div style="display:flex;justify-content:space-between;gap:16px"><span>خصم المنتجات / Remise produits</span><b>DA${fmtMoney(buyProductDisc)}</b></div>
+      <div style="display:flex;justify-content:space-between;gap:16px"><span>خصم الفاتورة / Remise facture ${buyMode === 'amount' ? '(DA)' : '(' + fmtMoney(parseFloat(inv.purchaseDiscountValue) || 0) + '%)'}</span><b>DA${fmtMoney(buyGlobalDisc)}</b></div>
+      <div style="display:flex;justify-content:space-between;gap:16px;border-top:1px solid #c8e6c9;margin-top:3px;padding-top:3px"><span>الإجمالي قبل الخصم / Brut</span><b>DA${fmtMoney(grossTotal)}</b></div>
+      <div style="display:flex;justify-content:space-between;gap:16px;background:#e3f2e8;border-radius:4px;margin-top:4px;padding:4px 6px"><span style="font-weight:800">الإجمالي بعد الخصم / Net après remise</span><b>DA${fmtMoney(netTotal)}</b></div>
+    </div>` : '';
   const walkinCust = (!cust && !sup && inv.walkinName) ? { name: inv.walkinName, phone: inv.walkinPhone, address: inv.walkinAddress } : null;
+  // Conversion is a local ledger operation: the note explains who the invoice
+  // was moved to and which anonymous cash receipts were cancelled. It is shown
+  // on screen only (never printed).
+  const cancelledCash = parseFloat(inv.conversionCancelledCash) || 0;
+  const fromName = inv.convertedFromCustomerName || inv.walkinName || inv.walkinCustomerName || '';
+  const convertNote = inv.convertedAt ? `
+    <div class="inv-print-hide" dir="rtl" style="margin-top:12px;padding:10px 14px;border:1px solid #c7e0ff;border-radius:6px;background:#f2f8ff;font-size:12px;color:#1c4f82;line-height:1.8">
+      <div style="display:flex;align-items:center;gap:7px;font-weight:800;margin-bottom:2px"><i class="fas fa-user-check"></i> ${escHtml(t('invoices.convertNoteTitle'))}</div>
+      ${fromName ? `<div>${escHtml(t('invoices.convertNoteFrom'))} <b>${escHtml(fromName)}</b></div>` : ''}
+      ${cancelledCash > 0 ? `<div>${t('invoices.convertNoteCancelled').replace('{amount}', _invMoney(cancelledCash))}</div>` : ''}
+      <div style="font-size:11px;color:#5b7fa6">${escHtml(t('invoices.convertNoteOn').replace('{date}', new Date(inv.convertedAt).toLocaleString('fr-DZ')))}</div>
+    </div>` : '';
+
+  // A «ملاحظة مرتجع» note appears on screen only: it tells the operator that
+  // part of this invoice has been returned and offers the French return
+  // invoice. The printed ORIGINAL invoice stays untouched — stripInvPrintHidden
+  // removes the whole block (inv-print-hide) from every print / PDF / email.
+  const returnNote = _invHasReturns(inv.id) ? (function () {
+    const rows = (window.ReturnInvoice && typeof window.ReturnInvoice.returnsFor === 'function')
+      ? window.ReturnInvoice.returnsFor(inv.id) : [];
+    const count = rows.length;
+    const total = rows.reduce((s, r) => s + (Number(r.total) || 0), 0);
+    return `
+    <div class="inv-print-hide inv-return-note" dir="rtl" style="margin-top:12px;padding:11px 14px;border:1px solid #f0b8b8;border-radius:8px;background:#fff5f5;font-size:12px;color:#b71c1c;line-height:1.8">
+      <div style="display:flex;align-items:center;gap:7px;font-weight:800;margin-bottom:3px"><i class="fas fa-undo"></i> ${escHtml(t('invoices.returnNote'))}</div>
+      <div style="color:#8a2b2b">${escHtml(t('invoices.returnNoteHint'))
+        .replace('{count}', String(count))
+        .replace('{amount}', 'DA' + fmtMoney(total))}</div>
+      <button type="button" class="btn" onclick="event.stopPropagation();if(window.ReturnInvoice)window.ReturnInvoice.print('${inv.id}')"
+        style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #e0a0a0;color:#b71c1c">
+        <i class="fas fa-print"></i> ${escHtml(t('invoices.printReturnInvoice'))}
+      </button>
+    </div>`;
+  })() : '';
+
+  // "Montant payé / Reste" strip. It always works off the NET total: that is
+  // the money actually owed, so a settled invoice never shows a phantom
+  // remainder when the operator prints the pre-discount copy.
+  const paidBlockHTML = function (baseTotal, paidOpts) {
+    const rest = Math.max(0, baseTotal - paidAmount);
+    if (!(paidAmount > 0 || rest > 0)) return '';
+    const settled = paidAmount >= baseTotal;
+    const tag = (paidOpts && paidOpts.afterDisc)
+      ? `<span style="display:inline-block;margin-inline-end:8px;padding:1px 7px;border-radius:999px;background:rgba(0,0,0,.07);font-size:10px;font-weight:800">${escHtml(t('invoices.paidAfterDiscount'))}</span>`
+      : '';
+    return `<div style="margin-top:14px;padding:10px 14px;border-radius:6px;font-size:12px;${settled ? 'background:#e8f5e9;border:1px solid #a5d6a7;color:#2e7d32' : 'background:#fff3e0;border:1px solid #ffcc80;color:#e65100'}" dir="ltr">
+          ${tag}<strong>Montant payé:</strong> ${maskBuy ? '••••' : fmtMoney(paidAmount) + ' DA'}
+          ${rest > 0 ? `&nbsp;|&nbsp; <strong>Reste:</strong> ${maskBuy ? '••••' : fmtMoney(rest) + ' DA'}` : ''}
+        </div>`;
+  };
 
   return `
     <div id="invDetailPrintArea" style="padding:30px 35px;font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif;color:#222;direction:ltr;text-align:left" dir="ltr">
@@ -1048,7 +1388,8 @@ function buildInvoiceDetailHTML(inv, typeLabel, paidAmount) {
             ${party
               ? `<div style="font-size:14px;font-weight:600;color:#1a1a1a;margin-top:2px">${escHtml(party.name)}</div>
                  ${party.phone ? `<div style="font-size:11px;color:#666">Tél: ${escHtml(party.phone)}</div>` : ''}
-                 ${party.address ? `<div style="font-size:11px;color:#666">Adresse: ${escHtml(party.address)}</div>` : ''}`
+                 ${party.address ? `<div style="font-size:11px;color:#666">Adresse: ${escHtml(party.address)}</div>` : ''}
+                 ${partyLegalLineHTML(inv, party)}`
               : walkinCust
                 ? `<div style="font-size:14px;font-weight:600;color:#1a1a1a;margin-top:2px">${escHtml(walkinCust.name)}</div>
                    ${walkinCust.phone ? `<div style="font-size:11px;color:#666">Tél: ${escHtml(walkinCust.phone)}</div>` : ''}
@@ -1079,7 +1420,9 @@ function buildInvoiceDetailHTML(inv, typeLabel, paidAmount) {
       <table style="width:100%;border-collapse:collapse;font-size:12px" dir="ltr">
         <thead>
           <tr style="background:#f2f2f2;border-bottom:2px solid #1a1a1a">
+            ${invCols.reference ? '<th style="padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:110px">Référence</th>' : ''}
             <th style="padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd">Désignation</th>
+            ${invCols.mark ? '<th style="padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:110px">Marque</th>' : ''}
             <th style="padding:8px 10px;text-align:center;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:90px">Qté</th>
             <th style="padding:8px 10px;text-align:right;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:90px">Prix unitaire</th>
             <th style="padding:8px 10px;text-align:right;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:90px">Total</th>
@@ -1088,7 +1431,9 @@ function buildInvoiceDetailHTML(inv, typeLabel, paidAmount) {
         <tbody>
           ${(inv.items || []).map((item, i) => `
             <tr style="${i % 2 === 0 ? 'background:#fafafa' : ''}">
+              ${invCols.reference ? `<td style="padding:7px 10px;border:1px solid #eee;font-size:12px;color:#333" dir="ltr">${escHtml(_invItemExtra(item, 'reference'))}</td>` : ''}
               <td style="padding:7px 10px;border:1px solid #eee;font-size:12px;color:#333">${escHtml(item.name)}</td>
+              ${invCols.mark ? `<td style="padding:7px 10px;border:1px solid #eee;font-size:12px;color:#333" dir="ltr">${escHtml(_invItemExtra(item, 'mark'))}</td>` : ''}
               <td style="padding:7px 10px;border:1px solid #eee;text-align:center;font-size:12px;color:#333">${Unit.qtyUnit(item.qty, item)}</td>
               <td style="padding:7px 10px;border:1px solid #eee;text-align:right;font-size:12px;color:#333">
                 ${maskBuy ? '••••' : `${(inv.type !== 'waybill' && item.originalPrice && item.originalPrice !== item.price) ? `<span style="text-decoration:line-through;color:#999;font-size:10px">${fmtMoney(item.originalPrice)}</span> ` : ''}
@@ -1096,10 +1441,27 @@ function buildInvoiceDetailHTML(inv, typeLabel, paidAmount) {
               </td>
               <td style="padding:7px 10px;border:1px solid #eee;text-align:right;font-size:12px;font-weight:600;color:#333">${maskBuy ? '••••' : fmtMoney((item.price * item.qty)) + ' DA'}</td>
             </tr>
+            ${(isBuy && ((parseFloat(item.purchaseDiscountPct) || 0) > 0 || (parseFloat(item.realBuyPrice) || 0) > 0)) ? `
+            <tr class="inv-buy-sensitive inv-print-hide" style="background:#f7fbf9">
+              <td colspan="${invColCount}" style="padding:4px 10px 7px;border:1px solid #eee;font-size:10.5px;color:#2e7d32" dir="ltr">
+                <span style="margin-inline-end:14px">خصم المنتج: <b>${fmtMoney(parseFloat(item.purchaseDiscountPct) || 0)}%</b></span>
+                <span style="margin-inline-end:14px">خصم الفاتورة/السطر: <b>DA${fmtMoney(parseFloat(item.globalDiscount) || 0)}</b></span>
+                <span style="margin-inline-end:14px">التكلفة الحقيقية/الوحدة: <b>DA${fmtMoney(parseFloat(item.realBuyPrice) || 0)}</b></span>
+                <span>التكلفة الحقيقية/السطر: <b>DA${fmtMoney(parseFloat(item.realTotal) || 0)}</b></span>
+              </td>
+            </tr>` : ''}
           `).join('')}
         </tbody>
       </table>
+      ${buySensitiveBlock}
+      ${convertNote}
+      ${returnNote}
 
+      ${(inv.subCustomerName || inv.subCustomerId) ? `
+      <div class="ct-tree-note" style="margin-top:12px;padding:8px 12px;border-inline-start:3px solid #2563eb;background:#f8faff;font-size:12px;color:#334155" dir="ltr">
+        <div style="font-size:10px;font-weight:700;color:#1d4ed8;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">${escHtml(t('customerTree.printLabel') || 'Client secondaire')}</div>
+        <div style="font-weight:700">${escHtml(inv.subCustomerName || '')}</div>
+      </div>` : ''}
       ${inv.note ? `
       <div${(inv.mergedFrom && inv.mergedFrom.length) ? ' class="inv-print-hide"' : ''} style="margin-top:12px;padding:10px 14px;border:1px solid #ddd;border-radius:6px;background:#fafafa;font-size:12px;color:#333;white-space:pre-wrap" dir="ltr">
         <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Observation</div>
@@ -1111,34 +1473,42 @@ function buildInvoiceDetailHTML(inv, typeLabel, paidAmount) {
           <td style="width:60%"></td>
           <td style="width:40%">
             <table style="width:100%;border-collapse:collapse;font-size:13px">
+              ${printDiscRows.map(r => `<tr class="inv-print-only" style="display:none;${r.kind === 'sub' ? 'border-top:1px solid #ddd' : ''}">
+                <td style="padding:3px 10px;text-align:left;font-size:11.5px;color:${r.kind === 'sub' ? '#555' : '#c62828'};direction:rtl">${escHtml(r.label)}</td>
+                <td style="padding:3px 10px;text-align:right;font-size:11.5px;font-weight:700;color:${r.kind === 'sub' ? '#333' : '#c62828'}">${r.kind === 'sub' ? '' : '− '}${fmtMoney(r.value)} DA</td>
+              </tr>`).join('')}
               <tr style="border-top:2px solid #1a1a1a">
                 <td style="padding:6px 10px;text-align:left;font-weight:800;font-size:15px;color:#1a1a1a">Net à payer</td>
-                <td style="padding:6px 10px;text-align:right;font-weight:900;font-size:17px;color:#0066B1">${maskBuy ? '••••' : fmtMoney((inv.totalAmount || 0)) + ' DA'}</td>
+                <td style="padding:6px 10px;text-align:right;font-weight:900;font-size:17px;color:#0066B1">${maskBuy ? '••••' : (hasBuyDisc
+                  ? `<span class="inv-screen-only">${fmtMoney(screenTotal)} DA</span>
+                     <span class="inv-print-only" style="display:none">${fmtMoney(printTotal)} DA</span>`
+                  : fmtMoney(netTotal) + ' DA')}</td>
               </tr>
             </table>
           </td>
         </tr>
       </table>
 
+      ${discBanner}
+
       ${inv.type === 'sup_sale'
         ? (remaining > 0
           ? `<div style="margin-top:14px;padding:12px 16px;background:#fff3e0;border:1px solid #ffcc80;border-radius:6px;font-size:13px;color:#e65100;display:flex;justify-content:space-between;align-items:center" dir="ltr">
-              <strong>المتبقي على المورد (Restant dû par le fournisseur):</strong>
+              <strong>${t('invoices.remainingOnSupplier')}:</strong>
               <strong style="font-size:16px">${fmtMoney(remaining)} DA</strong>
             </div>`
           : `<div style="margin-top:14px;padding:12px 16px;background:#e8f5e9;border:1px solid #a5d6a7;border-radius:6px;font-size:13px;color:#2e7d32" dir="ltr">
-              <strong>دين المورد مسوّى بالكامل (Dette réglée)</strong>
+              <strong>${t('invoices.supDebtSettled')}</strong>
             </div>`)
         + `<div style="margin-top:8px;font-size:11px;color:#666" dir="ltr">
-            مبلغ الفاتورة: <strong>${fmtMoney((inv.totalAmount || 0))} DA</strong>
-            ${paidAmount > 0 ? ` &nbsp;|&nbsp; مقبوض نقداً: <strong>${fmtMoney(paidAmount)} DA</strong>` : ''}
-            ${(typeof inv.supExpense === 'number') ? ` &nbsp;|&nbsp; مسجّل في المصروفات: <strong>${fmtMoney(inv.supExpense)} DA</strong>` : ''}
+            ${t('invoices.invoiceAmount')}: <strong>${fmtMoney((inv.totalAmount || 0))} DA</strong>
+            ${paidAmount > 0 ? ` &nbsp;|&nbsp; ${t('invoices.cashReceived')}: <strong>${fmtMoney(paidAmount)} DA</strong>` : ''}
+            ${(typeof inv.supExpense === 'number') ? ` &nbsp;|&nbsp; ${t('invoices.expenseRecorded')}: <strong>${fmtMoney(inv.supExpense)} DA</strong>` : ''}
           </div>`
-        : (paidAmount > 0 || remaining > 0 ? `
-        <div style="margin-top:14px;padding:10px 14px;border-radius:6px;font-size:12px;${paidAmount >= (inv.totalAmount || 0) ? 'background:#e8f5e9;border:1px solid #a5d6a7;color:#2e7d32' : 'background:#fff3e0;border:1px solid #ffcc80;color:#e65100'}" dir="ltr">
-          <strong>Montant payé:</strong> ${maskBuy ? '••••' : fmtMoney(paidAmount) + ' DA'}
-          ${remaining > 0 ? `&nbsp;|&nbsp; <strong>Reste:</strong> ${maskBuy ? '••••' : fmtMoney(remaining) + ' DA'}` : ''}
-        </div>` : '')}
+        : (hasBuyDisc
+          ? `<div class="inv-screen-only">${paidBlockHTML(netTotal, { afterDisc: true })}</div>
+             <div class="inv-print-only" style="display:none">${paidBlockHTML(netTotal)}</div>`
+          : paidBlockHTML(netTotal))}
 
       <div style="border-top:2px solid #1a1a1a;margin-top:24px;padding-top:14px">
         <table style="width:100%;border-collapse:collapse" dir="ltr">
@@ -1184,8 +1554,9 @@ function closeInvDetail() {
 function viewInvoiceReadOnly(invoiceId) {
   ensureInvDetailModal();
   const inv = DB.getInvoice(invoiceId);
-  if (!inv) { alert(t('invoices.notFound') || 'الفاتورة غير موجودة'); return; }
+  if (!inv) { alert(t('invoices.notFound')); return; }
   _invDetailId = invoiceId;
+  _invPrintTotalBasis = 'net';
 
   const modal = document.getElementById('invDetailModal');
   if (!modal._host) modal._host = modal.parentNode;
@@ -1203,7 +1574,10 @@ function viewInvoiceReadOnly(invoiceId) {
   const footer = document.getElementById('invDetailFooter');
   if (footer) {
     _invDetailFooterReadOnlyBackup = footer.innerHTML;
-    footer.innerHTML = `<button class="btn" onclick="closeInvDetail()">${t('common.close')}</button><button class="btn btn-primary" onclick="printInvFromDetail()"><i class="fas fa-print"></i> ${t('common.print')}</button>`;
+    const returnBtn = _invHasReturns(inv.id)
+      ? `<button class="btn" onclick="if(window.ReturnInvoice)window.ReturnInvoice.print('${inv.id}')"><i class="fas fa-undo"></i> ${t('invoices.printReturnInvoice')}</button>`
+      : '';
+    footer.innerHTML = `<button class="btn" onclick="closeInvDetail()">${t('common.close')}</button>${returnBtn}<button class="btn btn-primary" onclick="printInvFromReadOnly()"><i class="fas fa-print"></i> ${t('common.print')}</button>`;
   }
 
   modal.style.display = 'flex';
@@ -1214,14 +1588,132 @@ function viewInvoiceReadOnly(invoiceId) {
 // balance, "merged from delivery notes" observation…). Payment vouchers keep
 // their balance block — they have no such class.
 function stripInvPrintHidden(html) {
-  if (!html || String(html).indexOf('inv-print-hide') === -1) return html;
+  if (!html) return html;
+  const src = String(html);
+  if (src.indexOf('inv-print-hide') === -1 && src.indexOf('inv-print-only') === -1) return html;
   try {
     const tmp = document.createElement('div');
     tmp.innerHTML = html;
-    tmp.querySelectorAll('.inv-print-hide').forEach(function (el) { el.remove(); });
+    tmp.querySelectorAll('.inv-print-hide, .inv-screen-only').forEach(function (el) { el.remove(); });
+    // Paper-only alternatives (e.g. the pre-discount total of a purchase
+    // invoice) are kept in the DOM hidden so the same markup serves both views.
+    tmp.querySelectorAll('.inv-print-only').forEach(function (el) { el.style.display = ''; });
     return tmp.innerHTML;
   } catch (e) { return html; }
 }
+
+// ===== "i" REVEAL: discount % and real cost of a purchase invoice =====
+// The values stay in the DOM (so the hidden rows survive a re-render) but are
+// only painted after the user presses "i"; printed/PDF copies strip them.
+var _invBuySensitiveOn = false;
+
+function _invHasBuySensitive(inv) {
+  if (!inv || (inv.type !== 'supplier' && inv.type !== 'purchase')) return false;
+  if ((parseFloat(inv.purchaseDiscountAmount) || 0) > 0) return true;
+  if ((parseFloat(inv.purchaseProductDiscount) || 0) > 0) return true;
+  return (inv.items || []).some(it =>
+    (parseFloat(it.purchaseDiscountPct) || 0) > 0 || (parseFloat(it.realBuyPrice) || 0) > 0
+  );
+}
+
+// ===== PRINTED TOTAL BASIS (discounted purchase invoices) =====
+// The operator picks, at print time, whether the paper carries the total
+// before the discount (200) or after it (190 + explicit remise lines).
+// 'net' is the default because 190 is the money that actually left the
+// supplier balance. The choice is reset every time the dialog opens.
+var _invPrintTotalBasis = 'net';
+
+function _invGrossTotal(inv) {
+  if (!inv) return 0;
+  const stored = parseFloat(inv.purchaseGross);
+  if (isFinite(stored)) return stored;
+  // Legacy invoice saved before purchaseGross existed: rebuild the quoted total
+  // from the line prices (the gross buy price is what the line carries).
+  const prodDisc = parseFloat(inv.purchaseProductDiscount) || 0;
+  const globDisc = parseFloat(inv.purchaseDiscountAmount) || 0;
+  if (prodDisc > 0.004 || globDisc > 0.004) {
+    return (inv.items || []).reduce(function (s, it) {
+      return s + (parseFloat(it.price) || 0) * (parseFloat(it.qty) || 0);
+    }, 0);
+  }
+  return parseFloat(inv.totalAmount) || 0;
+}
+
+function _invHasBuyDiscount(inv) {
+  if (!inv || (inv.type !== 'supplier' && inv.type !== 'purchase')) return false;
+  const net = parseFloat(inv.totalAmount) || 0;
+  return _invGrossTotal(inv) > net + 0.004;
+}
+
+function _invPrintBasisFor(inv) {
+  return _invHasBuyDiscount(inv) && _invPrintTotalBasis === 'gross' ? 'gross' : 'net';
+}
+
+function _syncInvPrintBasisUI() {
+  document.querySelectorAll('input[name="invPrintTotalBasis"]').forEach(function (r) {
+    r.checked = (r.value === _invPrintTotalBasis);
+  });
+  const hint = document.getElementById('invPrintTotalHint');
+  if (hint) {
+    hint.textContent = t(_invPrintTotalBasis === 'gross'
+      ? 'invoices.printTotalHintGross'
+      : 'invoices.printTotalHintNet');
+  }
+}
+
+function setInvPrintTotalBasis(basis) {
+  _invPrintTotalBasis = basis === 'gross' ? 'gross' : 'net';
+  _syncInvPrintBasisUI();
+}
+
+function _syncInvBuyRevealUI() {
+  document.body.classList.toggle('inv-buy-reveal', !!_invBuySensitiveOn);
+  const btn = document.getElementById('invBuyRevealBtn');
+  if (btn) {
+    btn.classList.toggle('is-on', !!_invBuySensitiveOn);
+    btn.setAttribute('aria-pressed', _invBuySensitiveOn ? 'true' : 'false');
+  }
+}
+
+function toggleInvBuySensitive(force) {
+  _invBuySensitiveOn = (force === undefined) ? !_invBuySensitiveOn : !!force;
+  _syncInvBuyRevealUI();
+  return _invBuySensitiveOn;
+}
+
+function _injectInvBuyRevealButton(inv) {
+  const old = document.getElementById('invBuyRevealBtn');
+  if (old) old.remove();
+  const footer = document.getElementById('invDetailFooter');
+  if (!footer || !_invHasBuySensitive(inv)) return;
+  const btn = document.createElement('button');
+  btn.id = 'invBuyRevealBtn';
+  btn.type = 'button';
+  btn.className = 'inv-buy-reveal-btn' + (_invBuySensitiveOn ? ' is-on' : '');
+  btn.textContent = 'i';
+  btn.title = t('invoices.buyRevealTitle');
+  btn.setAttribute('aria-pressed', _invBuySensitiveOn ? 'true' : 'false');
+  btn.onclick = function () { toggleInvBuySensitive(); };
+  footer.insertBefore(btn, footer.firstChild);
+}
+
+// The "i" key toggles the hidden cost detail of whichever purchase view is open.
+// Capture phase + stopPropagation keeps it from also opening product details.
+document.addEventListener('keydown', function (e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.code !== 'KeyI' && e.key !== 'i' && e.key !== 'I') return;
+  const tgt = e.target;
+  if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.tagName === 'SELECT' || tgt.isContentEditable)) return;
+  const purModal = document.getElementById('invPurModal');
+  const detModal = document.getElementById('invDetailModal');
+  const purOpen = !!purModal && purModal.style.display !== 'none';
+  const detOpen = !!detModal && detModal.style.display === 'flex';
+  if (!purOpen && !detOpen) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (purOpen) togglePurSensitive();
+  else toggleInvBuySensitive();
+}, true);
 
 // Monochrome (black & white) override for a print area — mirrors the sales
 // page's N&B mode: black text/borders, white background, light grey table bands.
@@ -1255,8 +1747,62 @@ function openPrintWindow(title, bodyHtml, mode) {
   let sh = '';
   styles.forEach(s => sh += s.outerHTML);
   const bw = mode === 'bw' ? invBwCss() : '';
-  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + title + '</title>' + sh + '<style>@page{margin:10mm;size:A4}body{margin:0;padding:0;font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif}*{box-sizing:border-box}@media print{body{margin:0;padding:0}}' + bw + '</style></head><body>' + bodyHtml + '<script>window.print();window.close();<\/script></body></html>');
+  const ppRule = (typeof PrintPaper !== 'undefined' && PrintPaper) ? PrintPaper.pageRule(10) : '@page{margin:10mm;size:A4}';
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + title + '</title>' + sh + '<style>' + ppRule + 'body{margin:0;padding:0;font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif}*{box-sizing:border-box}@media print{body{margin:0;padding:0}}' + bw + '</style></head><body>' + bodyHtml + '<script>window.print();window.close();<\/script></body></html>');
   win.document.close();
+}
+
+// The exact sheet the printer gets, shown on screen first: same markup, same
+// styles, same N&B override — but instead of firing the printer and closing
+// itself it carries a toolbar (طباعة / إغلاق) that disappears from the printout.
+function openInvoicePreview(title, bodyHtml, mode) {
+  const win = window.open('', '', 'width=900,height=700');
+  if (!win) { alert(t('invoices.allowPopups')); return; }
+  const styles = document.querySelectorAll('link[rel="stylesheet"], style');
+  let sh = '';
+  styles.forEach(s => sh += s.outerHTML);
+  const bw = mode === 'bw' ? invBwCss() : '';
+  const ppRule = (typeof PrintPaper !== 'undefined' && PrintPaper) ? PrintPaper.pageRule(10) : '@page{margin:10mm;size:A4}';
+  const previewW = (typeof PrintPaper !== 'undefined' && PrintPaper) ? PrintPaper.previewWidthCss() : '210mm';
+  const bar = '<div class="zmt-preview-bar">' +
+    '<span class="zmt-preview-title">' + escHtml(title || '') + '</span>' +
+    '<span class="zmt-preview-note">' + t('invoices.previewNote') + '</span>' +
+    '<button type="button" class="zmt-preview-btn zmt-preview-print" onclick="window.print()">' + t('invoices.print') + '</button>' +
+    '<button type="button" class="zmt-preview-btn" onclick="window.close()">' + t('common.close') + '</button>' +
+    '</div>';
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + escHtml(title || '') + '</title>' + sh +
+    '<style>' + ppRule + 'body{margin:0;padding:0;font-family:"Segoe UI","Helvetica Neue",Arial,sans-serif}' +
+    '*{box-sizing:border-box}' +
+    '.zmt-preview-bar{position:sticky;top:0;z-index:9;display:flex;align-items:center;gap:10px;padding:10px 16px;background:#263238;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3)}' +
+    '.zmt-preview-title{font-weight:700;font-size:14px}' +
+    '.zmt-preview-note{font-size:12px;opacity:.75;flex:1}' +
+    '.zmt-preview-btn{cursor:pointer;border:1px solid #546e7a;background:#37474f;color:#fff;border-radius:4px;padding:6px 14px;font-size:13px}' +
+    '.zmt-preview-print{background:#1e88e5;border-color:#1e88e5;font-weight:700}' +
+    '#zmtPreviewSheet{background:#fff;max-width:' + previewW + ';margin:14px auto;box-shadow:0 2px 10px rgba(0,0,0,.25)}' +
+    '@media print{.zmt-preview-bar{display:none!important}body{background:#fff}#zmtPreviewSheet{max-width:none;margin:0;box-shadow:none}}' +
+    bw + '</style></head><body>' + bar +
+    '<div id="zmtPreviewSheet">' + bodyHtml + '</div></body></html>');
+  win.document.close();
+}
+
+// Preview of the invoice currently open in the detail modal — rebuilt from the
+// record exactly like printInvFromDetail, so what is on screen is what prints.
+// `_invPrintTotalBasis` carries the total chosen in the print dialog: a
+// discounted purchase invoice previews «after» (190) or «before» (200) discount.
+function previewInvFromDetail() {
+  withInvoiceLogo(function () {
+    const inv = DB.getInvoice(_invDetailId);
+    if (!inv) return;
+    const isPayment = inv.type === 'payment';
+    const paidAmount = isPayment ? (inv.totalAmount || 0) : DB.getInvoiceEffectivePaid(_invDetailId);
+    const body = document.getElementById('invDetailBody');
+    if (body) body.innerHTML = isPayment
+      ? buildPaymentInvoiceHTML(inv)
+      : buildInvoiceDetailHTML(inv, _invTypeLabel(inv), paidAmount, { printBasis: _invPrintBasisFor(inv) });
+    const content = document.getElementById('invDetailPrintArea');
+    if (!content) return;
+    openInvoicePreview((t('invoices.invoiceDetails') || 'Facture') + ' ' + t('invoices.routePreviewSuffix'), stripInvPrintHidden(content.outerHTML));
+  });
 }
 
 // `mode`: 'color' (default) or 'bw' (أبيض وأسود) — chosen in the print dialog.
@@ -1272,12 +1818,24 @@ function printInvFromDetail(mode) {
       const body = document.getElementById('invDetailBody');
       if (body) body.innerHTML = isPayment
         ? buildPaymentInvoiceHTML(inv)
-        : buildInvoiceDetailHTML(inv, _invTypeLabel(inv), paidAmount);
+        : buildInvoiceDetailHTML(inv, _invTypeLabel(inv), paidAmount, { printBasis: _invPrintBasisFor(inv) });
     }
     const content = document.getElementById('invDetailPrintArea');
     if (!content) return;
     openPrintWindow(t('invoices.invoiceDetails') || 'Facture', stripInvPrintHidden(content.outerHTML), mode);
   });
+}
+
+// Read-only viewers (discounts page, store debts) print straight away — except
+// for a discounted purchase invoice, where the print dialog offers the two
+// totals. Pages that don't host the dialog fall back to the net copy.
+function printInvFromReadOnly() {
+  const inv = DB.getInvoice(_invDetailId);
+  if (_invHasBuyDiscount(inv) && document.getElementById('invPrintChoiceModal')) {
+    openInvPrintChoice();
+    return;
+  }
+  printInvFromDetail();
 }
 
 // Refresh the inlined logo data URL, then run the print callback. Kept separate
@@ -1293,11 +1851,25 @@ function openInvPrintChoice() {
   const inv = DB.getInvoice(_invDetailId);
   if (!inv) return;
   const m = document.getElementById('invPrintChoiceModal');
-  if (!m) return;
+  // Pages that host only the injected detail modal (no invoices.html) have no
+  // print dialog: print straight away rather than dead-ending the button.
+  if (!m) { printInvFromDetail(); return; }
   if (!m._host) m._host = m.parentNode;
   if (m.parentNode !== document.body) document.body.appendChild(m);
   const empBtn = document.getElementById('invPrintEmployeeBtn');
   if (empBtn) empBtn.style.display = (inv.type === 'purchase' || inv.type === 'supplier') ? 'flex' : 'none';
+  const routeBtn = document.getElementById('invPrintRouteBtn');
+  if (routeBtn) routeBtn.style.display = inv.type === 'customer' ? 'flex' : 'none';
+  // Total basis — only for a purchase invoice carrying a discount. Default is
+  // the net (190): the amount that actually moved on the supplier balance.
+  _invPrintTotalBasis = 'net';
+  const totalBlock = document.getElementById('invPrintTotalBlock');
+  if (totalBlock) totalBlock.style.display = _invHasBuyDiscount(inv) ? 'block' : 'none';
+  const netVal = document.getElementById('invPrintTotalNetVal');
+  if (netVal) netVal.textContent = 'DA' + fmtMoney(parseFloat(inv.totalAmount) || 0);
+  const grossVal = document.getElementById('invPrintTotalGrossVal');
+  if (grossVal) grossVal.textContent = 'DA' + fmtMoney(_invGrossTotal(inv));
+  _syncInvPrintBasisUI();
   m.style.display = 'flex';
 }
 
@@ -1316,6 +1888,540 @@ function printInvEmployee() {
     const html = buildEmployeePrintHTML(inv);
     openPrintWindow(t('invoices.employeeDocTitle') || 'Bon de préparation', html);
   });
+}
+
+// ===== ROUTE DOCS (bon de route — printed as «FACTURE») =====
+// A cosmetic copy of a sale invoice. It lives in the `routeDocs` store, not in
+// `invoices`, so no sales report, stock level, customer balance or net-account
+// figure can see it. Every money figure is one fixed share of the original:
+// the operator sets the share (default 58 % deducted → 42 % kept) in the
+// invoices page header, behind the manager password.
+//
+// The doc always totals itself from its own lines (routeDocTotal), so the
+// editor, the card and the printed sheet can never disagree.
+
+var ROUTE_PCT_META = 'route_doc_pct';
+var ROUTE_PCT_DEFAULT = 58;
+var _rdEdit = null;
+var _rdSearchTimer = null;
+var _rdTab = 'invoices';
+
+function routeDocPct() {
+  let raw = null;
+  try { raw = DB.getMeta(ROUTE_PCT_META); } catch (e) { raw = null; }
+  const n = Number(raw);
+  return (isFinite(n) && n >= 0 && n <= 100) ? n : ROUTE_PCT_DEFAULT;
+}
+
+function _rdRound(v) { return Math.round((Number(v) || 0) * 100) / 100; }
+
+function _rdKeep(pct) {
+  return Math.max(0, Math.min(1, (100 - (Number(pct) || 0)) / 100));
+}
+
+// subtotal − remise client % − remise globale. Same shape the sales engine uses,
+// so a route doc reads like the invoice it was copied from.
+function routeDocTotal(items, custDiscPct, extraDisc) {
+  const sub = (items || []).reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
+  const afterCust = sub * (1 - (Number(custDiscPct) || 0) / 100);
+  return Math.max(0, _rdRound(afterCust - (Number(extraDisc) || 0)));
+}
+
+function _rdPartyName(inv) {
+  if (inv.customerId) {
+    const c = DB.getCustomers().find(x => x.id === inv.customerId);
+    if (c) return c.name || '';
+  }
+  if (inv.supplierId) {
+    const s = DB.getSuppliers().find(x => x.id === inv.supplierId);
+    if (s) return s.name || '';
+  }
+  return inv.walkinName || '';
+}
+
+function buildRouteDocFromInvoice(inv, pct) {
+  const keep = _rdKeep(pct);
+  const items = (inv.items || []).map(function (it) {
+    return {
+      productId: it.productId || '',
+      name: it.name || '',
+      barcode: it.barcode || '',
+      unit: it.unit || '',
+      unitLabel: it.unitLabel || '',
+      qty: Number(it.qty) || 0,
+      price: _rdRound((Number(it.price) || 0) * keep),
+    };
+  });
+  const paid = DB.getInvoiceEffectivePaid(inv) || 0;
+  const wantTotal = _rdRound((Number(inv.totalAmount) || 0) * keep);
+  const cdPct = Number(inv.customerDiscount) || 0;
+  // A single «remise globale» absorbs whatever the scaled lines still overshoot
+  // the scaled invoice total, so the doc adds up to exactly that figure.
+  const gross = items.reduce((s, it) => s + it.price * it.qty, 0) * (1 - cdPct / 100);
+  const extra = Math.max(0, _rdRound(gross - wantTotal));
+  return {
+    refInvoiceId: inv.id,
+    refInvoiceNumber: inv.invoiceNumber || '',
+    customerId: inv.customerId || '',
+    supplierId: inv.supplierId || '',
+    partyName: _rdPartyName(inv),
+    walkinName: inv.walkinName || '',
+    items: items,
+    customerDiscount: cdPct,
+    extraDiscount: extra,
+    paidAmount: _rdRound(paid * keep),
+    totalAmount: routeDocTotal(items, cdPct, extra),
+    pct: Number(pct) || 0,
+    note: inv.note || '',
+  };
+}
+
+// One click must yield exactly one document. Both the card button and the print
+// menu call this, so a double-fired click (or an operator pressing it twice by
+// accident) used to mint a second BR- number for the same invoice. A copy that
+// is still byte-identical to what this invoice would produce — same percentage,
+// same lines, same money — is reopened instead of duplicated; anything the
+// operator has edited, or a different percentage, still makes a new document.
+function _rdSignature(rd) {
+  const items = (rd.items || []).map(function (it) {
+    return [it.productId || '', String(it.name || '').trim(), Number(it.qty) || 0, Number(it.price) || 0].join(':');
+  }).join('|');
+  return [rd.refInvoiceId || '', rd.pct || 0, items, rd.customerDiscount || 0, rd.extraDiscount || 0,
+          rd.totalAmount || 0, rd.paidAmount || 0].join('#');
+}
+
+function invCopyToRouteDoc(invId) {
+  const inv = DB.getInvoice(invId || _invDetailId);
+  if (!inv) { invToast(t('invoices.notFound'), 'error'); return; }
+  if (inv.type !== 'customer') { invToast(t('invoices.routeOnlySales'), 'error'); return; }
+  const pct = routeDocPct();
+  const cand = buildRouteDocFromInvoice(inv, pct);
+  const sig = _rdSignature(cand);
+  const same = (DB.getRouteDocs() || []).find(function (rd) { return _rdSignature(rd) === sig; });
+  if (same) {
+    refreshInvoiceList();
+    switchInvTab('routes');
+    invToast(t('invoices.routeExists').replace('{NUM}', same.routeNumber || ''), 'success');
+    openRouteDocEditor(same.id);
+    return;
+  }
+  const rd = DB.addRouteDoc(cand);
+  refreshInvoiceList();
+  switchInvTab('routes');
+  invToast(t('invoices.routeCreated').replace('{NUM}', rd.routeNumber), 'success');
+  openRouteDocEditor(rd.id);
+}
+
+// The printer only knows invoices; a route doc is handed to it as a read-only
+// stand-in so the A4 sheet is byte-identical to a sale invoice except for the
+// «FACTURE» heading and its own BR- number.
+function _rdFakeInvoice(rd) {
+  return {
+    id: rd.id,
+    type: 'customer',
+    invoiceNumber: rd.routeNumber,
+    createdAt: rd.createdAt,
+    items: rd.items || [],
+    totalAmount: rd.totalAmount || 0,
+    customerId: rd.customerId || '',
+    supplierId: rd.supplierId || '',
+    customerDiscount: rd.customerDiscount || 0,
+    extraDiscount: rd.extraDiscount || 0,
+    note: rd.note || '',
+    walkinName: rd.walkinName || '',
+    walkinPhone: '',
+    walkinAddress: '',
+  };
+}
+
+function printRouteDoc(id, mode) {
+  const rd = DB.getRouteDoc(id);
+  if (!rd) { invToast(t('invoices.routeNotFound'), 'error'); return; }
+  withInvoiceLogo(function () {
+    const html = buildInvoiceDetailHTML(_rdFakeInvoice(rd), 'FACTURE', Number(rd.paidAmount) || 0);
+    openPrintWindow(rd.routeNumber || 'Facture', stripInvPrintHidden(html), mode);
+  });
+}
+
+function previewRouteDoc(id) {
+  const rd = DB.getRouteDoc(id);
+  if (!rd) { invToast(t('invoices.routeNotFound'), 'error'); return; }
+  withInvoiceLogo(function () {
+    const html = buildInvoiceDetailHTML(_rdFakeInvoice(rd), 'FACTURE', Number(rd.paidAmount) || 0);
+    openInvoicePreview((rd.routeNumber || 'Facture') + ' ' + t('invoices.routePreviewSuffix'), stripInvPrintHidden(html));
+  });
+}
+
+// Preview of the editor's current content: saved first so the sheet on screen is
+// the saved document, then shown before anything goes to the printer.
+function rdSaveAndPreview() {
+  const id = _rdEdit ? _rdEdit.id : '';
+  saveRouteDocEditor();
+  if (id) previewRouteDoc(id);
+}
+
+// Same capture-then-close order: saving clears _rdEdit, so the id must be read
+// before it, or the print call would run with an empty id.
+function rdSaveAndPrint() {
+  const id = _rdEdit ? _rdEdit.id : '';
+  saveRouteDocEditor();
+  if (id) printRouteDoc(id);
+}
+
+function deleteRouteDocConfirm(id) {
+  const rd = DB.getRouteDoc(id);
+  if (!rd) return;
+  if (!confirm(t('invoices.deleteRouteConfirm').replace('{NUM}', rd.routeNumber))) return;
+  DB.deleteRouteDoc(id);
+  refreshInvoiceList();
+  invToast(t('invoices.routeDeleted'), 'success');
+}
+
+// ===== ROUTE DOCS TAB =====
+
+function switchInvTab(tab) {
+  _rdTab = tab === 'routes' ? 'routes' : 'invoices';
+  const routes = _rdTab === 'routes';
+  const t1 = document.getElementById('invTabInvoices');
+  const t2 = document.getElementById('invTabRoutes');
+  if (t1) t1.classList.toggle('is-active', !routes);
+  if (t2) t2.classList.toggle('is-active', routes);
+  const hide = ['invFiltersBar', 'invResultsInfo', 'allInvoicesList', 'invPagination'];
+  hide.forEach(function (i) {
+    const el = document.getElementById(i);
+    if (el) el.style.display = routes ? 'none' : (i === 'invPagination' ? 'none' : '');
+  });
+  const rl = document.getElementById('routeDocList');
+  if (rl) rl.style.display = routes ? '' : 'none';
+  if (routes) renderRouteDocList();
+}
+
+function renderRouteDocList() {
+  const box = document.getElementById('routeDocList');
+  const count = document.getElementById('invRouteCount');
+  if (!box) return;
+  const docs = (DB.getRouteDocs() || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  if (count) count.textContent = String(docs.length);
+  if (!docs.length) {
+    box.innerHTML = `<div class="rd-empty"><i class="fas fa-truck-fast" style="font-size:34px;display:block;margin-bottom:10px;opacity:.45"></i>${t('invoices.noRouteDocs')}</div>`;
+    return;
+  }
+  box.innerHTML = docs.map(function (rd) {
+    const paid = Number(rd.paidAmount) || 0;
+    const tot = Number(rd.totalAmount) || 0;
+    const date = rd.createdAt ? new Date(rd.createdAt).toLocaleDateString('fr-DZ', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+    return `<div class="rd-card">
+      <div class="rd-meta">
+        <div class="rd-num">${escHtml(rd.routeNumber || '—')} <span class="rd-badge">${t('invoices.formalCopy')}</span></div>
+        <div class="rd-ref">${t('invoices.fromInvoice')} ${escHtml(rd.refInvoiceNumber || '—')} · ${date} · ${escHtml(t('invoices.seller'))}: ${escHtml(rd.operatorName || '')}</div>
+        <div class="rd-party">${escHtml(rd.partyName || rd.walkinName || t('invoices.cashCustomer'))}</div>
+      </div>
+      <div class="rd-tot">DA${fmtMoney(tot)}${paid > 0 ? `<div style="font-size:11px;font-weight:600;color:#2e7d32">${t('invoices.paidPrefix')} DA${fmtMoney(paid)}</div>` : ''}</div>
+      <div class="rd-acts">
+        <button type="button" class="rd-act" title="${t('invoices.preview')}" aria-label="${t('invoices.preview')}" onclick="previewRouteDoc('${rd.id}')">${_invActionIcon('eye')}</button>
+        <button type="button" class="rd-act" title="${t('invoices.edit')}" aria-label="${t('invoices.edit')}" onclick="openRouteDocEditor('${rd.id}')">${_invActionIcon('edit')}</button>
+        <button type="button" class="rd-act" title="${t('invoices.print')}" aria-label="${t('invoices.print')}" onclick="printRouteDoc('${rd.id}')">${_invActionIcon('print')}</button>
+        <button type="button" class="rd-act rd-act-danger" title="${t('invoices.delete')}" aria-label="${t('invoices.delete')}" onclick="deleteRouteDocConfirm('${rd.id}')">${_invActionIcon('delete')}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ===== ROUTE DOC EDITOR =====
+
+function _ensureRouteDocModal() {
+  let m = document.getElementById('routeDocModal');
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = 'routeDocModal';
+  m.className = 'modal-overlay';
+  m.style.zIndex = '100004';
+  m.onclick = function (e) { if (e.target === m) closeRouteDocEditor(); };
+  m.innerHTML = `<div class="modal rd-modal">
+    <div class="modal-header">
+      <h3><i class="fas fa-truck-fast" style="color:#5c6bc0"></i> ${t('invoices.routeDocTitle')} <span id="rdModalNum">—</span></h3>
+      <button class="modal-close" onclick="closeRouteDocEditor()" aria-label="${t('common.close')}">&times;</button>
+    </div>
+    <div class="modal-body" style="max-height:66vh;overflow:auto">
+      <div class="rd-hint" id="rdModalHint"></div>
+      <div class="rd-row-head" style="margin-top:8px"><span>${t('invoices.colLabel')}</span><span>${t('common.qty')}</span><span>${t('invoices.sellPriceLabel')}</span><span>${t('common.total')}</span><span></span></div>
+      <div class="rd-form" id="rdRows"></div>
+      <div style="padding:0 16px 10px">
+        <div class="search-bar" style="margin:0">
+          <i class="fas fa-search"></i>
+          <input type="text" id="rdProductSearch" placeholder="${t('invoices.searchProductToAdd')}" oninput="rdProductSearch()" autocomplete="off">
+        </div>
+        <div id="rdProductResults" class="search-results" style="display:none"></div>
+      </div>
+      <div class="rd-form">
+        <div class="rd-row" style="grid-template-columns:1fr 110px 110px 120px">
+          <span class="rd-hint">${t('invoices.discountHint')}</span>
+          <input type="number" id="rdCustDisc" step="0.01" min="0" max="100" oninput="rdRecalc()" value="0">
+          <input type="number" id="rdExtraDisc" step="0.01" min="0" oninput="rdRecalc()" value="0">
+          <input type="number" id="rdPaid" step="0.01" min="0" oninput="rdRecalc()" value="0">
+        </div>
+        <div class="rd-row" style="grid-template-columns:1fr">
+          <input type="text" id="rdNote" placeholder="${t('invoices.notePh')}" oninput="rdRecalc()">
+        </div>
+        <div class="rd-sum"><span>${t('invoices.routeNet')}</span><span id="rdTotalLabel" dir="ltr">DA 0,00</span></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeRouteDocEditor()">${t('common.cancel')}</button>
+      <button class="btn" onclick="rdSaveAndPreview()"><i class="fas fa-eye"></i> ${t('invoices.savePreview')}</button>
+      <button class="btn btn-primary" onclick="saveRouteDocEditor()"><i class="fas fa-check"></i> ${t('common.save')}</button>
+      <button class="btn btn-success" onclick="rdSaveAndPrint()"><i class="fas fa-print"></i> ${t('invoices.savePrint')}</button>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  return m;
+}
+
+function openRouteDocEditor(id) {
+  const rd = DB.getRouteDoc(id);
+  if (!rd) { invToast(t('invoices.routeNotFound'), 'error'); return; }
+  _rdEdit = {
+    id: rd.id,
+    routeNumber: rd.routeNumber,
+    refInvoiceNumber: rd.refInvoiceNumber,
+    pct: rd.pct,
+    items: (rd.items || []).map(it => Object.assign({}, it)),
+    customerDiscount: Number(rd.customerDiscount) || 0,
+    extraDiscount: Number(rd.extraDiscount) || 0,
+    paidAmount: Number(rd.paidAmount) || 0,
+    note: rd.note || '',
+  };
+  const m = _ensureRouteDocModal();
+  m.style.display = 'flex';
+  document.getElementById('rdModalNum').textContent = rd.routeNumber || '—';
+  document.getElementById('rdModalHint').textContent =
+    t('invoices.formalCopyNote')
+      .replace('{NUM}', rd.refInvoiceNumber || '—')
+      .replace('{PCT}', String(100 - (Number(rd.pct) || 0)));
+  document.getElementById('rdCustDisc').value = _rdEdit.customerDiscount;
+  document.getElementById('rdExtraDisc').value = _rdEdit.extraDiscount;
+  document.getElementById('rdPaid').value = _rdEdit.paidAmount;
+  document.getElementById('rdNote').value = _rdEdit.note;
+  const res = document.getElementById('rdProductResults');
+  if (res) { res.style.display = 'none'; res.innerHTML = ''; }
+  const si = document.getElementById('rdProductSearch');
+  if (si) si.value = '';
+  renderRouteDocRows();
+}
+
+function closeRouteDocEditor() {
+  const m = document.getElementById('routeDocModal');
+  if (m) m.style.display = 'none';
+  _rdEdit = null;
+}
+
+function renderRouteDocRows() {
+  const box = document.getElementById('rdRows');
+  if (!box || !_rdEdit) return;
+  box.innerHTML = _rdEdit.items.map(function (it, i) {
+    return `<div class="rd-row">
+      <input type="text" value="${escHtml(it.name || '')}" onchange="rdSetField(${i},'name',this.value)" placeholder="${t('invoices.productNamePh')}">
+      <input type="number" step="any" min="0" value="${it.qty}" onchange="rdSetField(${i},'qty',this.value)" dir="ltr">
+      <input type="number" step="any" min="0" value="${it.price}" onchange="rdSetField(${i},'price',this.value)" dir="ltr">
+      <div class="rd-total" dir="ltr">DA ${fmtMoney((Number(it.price) || 0) * (Number(it.qty) || 0))}</div>
+      <button type="button" class="rd-act rd-act-danger" title="${t('invoices.deleteLineTitle')}" aria-label="${t('invoices.deleteLineTitle')}" onclick="rdRemoveRow(${i})">${_invActionIcon('delete')}</button>
+    </div>`;
+  }).join('');
+  rdRecalc();
+}
+
+function rdSetField(i, field, value) {
+  if (!_rdEdit || !_rdEdit.items[i]) return;
+  _rdEdit.items[i][field] = (field === 'name') ? String(value || '') : (Number(value) || 0);
+  renderRouteDocRows();
+}
+
+function rdRemoveRow(i) {
+  if (!_rdEdit) return;
+  _rdEdit.items.splice(i, 1);
+  renderRouteDocRows();
+}
+
+function rdRecalc() {
+  if (!_rdEdit) return;
+  const lbl = document.getElementById('rdTotalLabel');
+  if (lbl) lbl.textContent = 'DA ' + fmtMoney(routeDocTotal(_rdEdit.items, _rdEdit.customerDiscount, _rdEdit.extraDiscount));
+}
+
+function rdProductSearch() {
+  if (_rdSearchTimer) clearTimeout(_rdSearchTimer);
+  _rdSearchTimer = setTimeout(renderRdProductSearch, 180);
+}
+
+function renderRdProductSearch() {
+  const box = document.getElementById('rdProductResults');
+  if (!box) return;
+  const q = normSearch(document.getElementById('rdProductSearch').value || '');
+  const all = DB.getProducts();
+  const matches = q
+    ? all.map(p => ({ p, score: productSearchScore(p.name, p.barcode, q, p.mark, p.reference, p.countryOfOrigin) }))
+        .filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 10).map(x => x.p)
+    : all.slice(0, 10);
+  box.style.display = 'block';
+  if (!matches.length) {
+    box.innerHTML = `<div class="search-result-item disabled">${t('inventory.noResults')}</div>`;
+    return;
+  }
+  const keep = _rdKeep(routeDocPct());
+  box.innerHTML = matches.map(function (p) {
+    const sell = Number(p.sellPrice) || Number(p.price) || 0;
+    return `<div class="search-result-item" onclick="rdAddProduct('${p.id}')">
+      <strong>${escHtml(p.name)}</strong>
+      <span class="text-muted" dir="ltr">${escHtml(p.barcode || '')} | DA ${fmtMoney(_rdRound(sell * keep))}</span>
+    </div>`;
+  }).join('');
+}
+
+function rdAddProduct(pid) {
+  if (!_rdEdit) return;
+  const p = DB.getProducts().find(x => x.id === pid);
+  if (!p) return;
+  const keep = _rdKeep(routeDocPct());
+  _rdEdit.items.push({
+    productId: p.id,
+    name: p.name || '',
+    barcode: p.barcode || '',
+    unit: p.unit || '',
+    unitLabel: p.unitLabel || '',
+    qty: 1,
+    price: _rdRound((Number(p.sellPrice) || Number(p.price) || 0) * keep),
+  });
+  const box = document.getElementById('rdProductResults');
+  if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+  renderRouteDocRows();
+}
+
+function saveRouteDocEditor() {
+  if (!_rdEdit) return;
+  const cd = Number(document.getElementById('rdCustDisc').value) || 0;
+  const ex = Number(document.getElementById('rdExtraDisc').value) || 0;
+  const paid = Number(document.getElementById('rdPaid').value) || 0;
+  const items = _rdEdit.items.filter(it => (String(it.name || '').trim() !== '') && (Number(it.qty) || 0) > 0);
+  if (!items.length) { invToast(t('invoices.routeNeedsLine'), 'error'); return; }
+  DB.updateRouteDoc(_rdEdit.id, {
+    items: items,
+    customerDiscount: cd,
+    extraDiscount: ex,
+    paidAmount: Math.max(0, paid),
+    note: document.getElementById('rdNote').value || '',
+    totalAmount: routeDocTotal(items, cd, ex),
+  });
+  renderRouteDocList();
+  closeRouteDocEditor();
+  invToast(t('invoices.routeSaved'), 'success');
+}
+
+// ===== ROUTE DOC PRICING SETTING (manager password) =====
+
+var _rdCfgUnlocked = false;
+
+function _rdCfgModal(html) {
+  let m = document.getElementById('routeDocCfgModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'routeDocCfgModal';
+    m.className = 'modal-overlay';
+    m.style.zIndex = '100004';
+    m.onclick = function (e) { if (e.target === m) closeRouteDocSettings(); };
+    document.body.appendChild(m);
+  }
+  m.innerHTML = html;
+  m.style.display = 'flex';
+  return m;
+}
+
+function closeRouteDocSettings() {
+  const m = document.getElementById('routeDocCfgModal');
+  if (m) m.style.display = 'none';
+}
+
+function openRouteDocSettings() {
+  if (_rdCfgUnlocked) { _rdCfgForm(); return; }
+  _rdCfgModal(`<div class="modal" style="max-width:400px">
+    <div class="modal-header">
+      <h3><i class="fas fa-lock"></i> ${t('invoices.routeCfgTitle')}</h3>
+      <button class="modal-close" onclick="closeRouteDocSettings()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="rd-lock">
+        <label class="ms-label" for="rdCfgPass">${t('invoices.managerPassword')}</label>
+        <input id="rdCfgPass" class="form-input" type="password" autocomplete="off" onkeydown="if(event.key==='Enter')rdCfgUnlockDo()">
+        <div id="rdCfgError" style="color:#ff6b6b;font-size:12px;display:none">${t('invoices.wrongPassword')}</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button type="button" class="btn" onclick="closeRouteDocSettings()">${t('common.cancel')}</button>
+          <button type="button" class="btn btn-primary" onclick="rdCfgUnlockDo()">${t('invoices.enterLabel')}</button>
+        </div>
+      </div>
+    </div>
+  </div>`);
+  const inp = document.getElementById('rdCfgPass');
+  if (inp) setTimeout(() => inp.focus(), 60);
+}
+
+async function rdCfgUnlock(password) {
+  const stored = (typeof Auth !== 'undefined' && Auth.getStorePassword) ? (Auth.getStorePassword() || '') : '';
+  if (stored) return (password || '') === stored;
+  if (typeof Auth !== 'undefined' && typeof Auth.verifyLocalPassword === 'function' && typeof Auth.getUserCode === 'function') {
+    try { return await Auth.verifyLocalPassword(Auth.getUserCode(), password || ''); } catch (e) { return false; }
+  }
+  return false;
+}
+
+async function rdCfgUnlockDo() {
+  const inp = document.getElementById('rdCfgPass');
+  const ok = await rdCfgUnlock(inp ? inp.value : '');
+  const err = document.getElementById('rdCfgError');
+  if (!ok) { if (err) err.style.display = 'block'; if (inp) inp.select(); return; }
+  _rdCfgUnlocked = true;
+  _rdCfgForm();
+}
+
+function _rdCfgForm() {
+  const pct = routeDocPct();
+  _rdCfgModal(`<div class="modal" style="max-width:440px">
+    <div class="modal-header">
+      <h3><i class="fas fa-percent"></i> ${t('invoices.routeCfgTitle')}</h3>
+      <button class="modal-close" onclick="closeRouteDocSettings()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="rd-lock" style="max-width:none">
+        <label class="ms-label" for="rdCfgPct">${t('invoices.pctLabel')}</label>
+        <input id="rdCfgPct" class="form-input rd-pct" type="number" step="0.5" min="0" max="100" value="${pct}" oninput="rdCfgPreview()" dir="ltr">
+        <div class="rd-hint" id="rdCfgHint"></div>
+        <div class="rd-hint">${t('invoices.pctExample').replace('{VAL}', fmtMoney(200 * _rdKeep(58)))}</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+          <button type="button" class="btn" onclick="closeRouteDocSettings()">${t('common.cancel')}</button>
+          <button type="button" class="btn btn-primary" onclick="rdCfgSaveDo()">${t('common.save')}</button>
+        </div>
+      </div>
+    </div>
+  </div>`);
+  rdCfgPreview();
+}
+
+function rdCfgPreview() {
+  const el = document.getElementById('rdCfgPct');
+  const hint = document.getElementById('rdCfgHint');
+  if (!el || !hint) return;
+  const raw = Number(el.value);
+  const pct = (isFinite(raw) && raw >= 0 && raw <= 100) ? raw : ROUTE_PCT_DEFAULT;
+  hint.textContent = t('invoices.pctRemainHint')
+    .replace('{PCT}', String(_rdRound(100 - pct)))
+    .replace('{VAL}', fmtMoney(_rdRound(200 * _rdKeep(pct))));
+}
+
+function rdCfgSaveDo() {
+  const el = document.getElementById('rdCfgPct');
+  const raw = Number(el ? el.value : NaN);
+  if (!isFinite(raw) || raw < 0 || raw > 100) { invToast(t('invoices.invalidPct'), 'error'); return; }
+  DB.setMeta(ROUTE_PCT_META, _rdRound(raw));
+  closeRouteDocSettings();
+  invToast(t('invoices.pctSaved').replace('{PCT}', String(_rdRound(raw))), 'success');
 }
 
 function buildEmployeePrintHTML(inv) {
@@ -1432,6 +2538,15 @@ function showInvPaymentSection() {
   document.getElementById('invPayPaid').textContent = 'DA' + fmtMoney(paid);
   document.getElementById('invPayRemaining').textContent = 'DA' + fmtMoney(remaining);
   document.getElementById('invPayAmount').value = remaining.toFixed(2);
+  const ctRow = document.getElementById('invPaySubRow');
+  const ctSel = document.getElementById('invPaySubCustomer');
+  if (ctSel && window.CustomerTree && inv.customerId && typeof window.CustomerTree.fillSelect === 'function') {
+    const useful = window.CustomerTree.fillSelect(ctSel, inv.customerId, t('customerTree.none'));
+    if (useful && typeof window.CustomerTree.selectInvoiceChild === 'function') {
+      window.CustomerTree.selectInvoiceChild(ctSel, inv, inv.customerId);
+    }
+    if (ctRow) ctRow.style.display = useful ? '' : 'none';
+  } else if (ctRow) ctRow.style.display = 'none';
   const payModal = document.getElementById('invPayModal');
   if (!payModal._host) payModal._host = payModal.parentNode;
   if (payModal.parentNode !== document.body) document.body.appendChild(payModal);
@@ -1456,8 +2571,13 @@ function confirmInvPayment() {
   const amount = parseFloat(document.getElementById('invPayAmount').value) || 0;
   if (amount <= 0 || amount > remaining) { alert(t('invoices.invalidAmount')); return; }
 
+  // Customer tree: tag only — the payment and balance stay on the parent.
+  const ctMeta = (inv.customerId && window.CustomerTree)
+    ? window.CustomerTree.metaFromSelect(document.getElementById('invPaySubCustomer'), DB.getCustomer(inv.customerId))
+    : {};
   DB.addPayment({
     customerId: inv.customerId || undefined,
+    ...ctMeta,
     supplierId: inv.supplierId || undefined,
     invoiceId: _invDetailId,
     amount,
@@ -1511,6 +2631,8 @@ function confirmInvPayment() {
 
 var _invEditNewItems = [];
 var _invEditNewIdx = 0;
+// A manually typed sale line (name / qty / price, no product card).
+var _invEditFreeIdx = 0;
 // Lines marked for removal by the quick-entry "add from scratch" mode
 // (indices into inv.items). Applied (stock decrement + line drop) at save time.
 var _invEditRemoved = [];
@@ -1518,12 +2640,113 @@ var _invEditRemoved = [];
 // reapplied on re-render so typed values survive the round-trip.
 var _invEditPendingQty = null;
 var _invEditQtySnapshot = null;
+// Live total of the lines currently typed in the edit screen. The paid preview
+// reads it so «المتبقي / رصيد دائن» moves with the quantities and prices.
+var _invEditLiveTotal = 0;
+
+// Bundle lines carry their component snapshot on the invoice row. The edit
+// screen shows one return field per component so the customer can hand back a
+// single item of the bundle without having to "un-buy" the whole bundle.
+function _invEditBundleRowsHtml(item, i, showPrices) {
+  if (!showPrices || typeof SaleCore === 'undefined' || !SaleCore.bundleHeldComponents) return '';
+  if (!SaleCore.isBundleItem || !SaleCore.isBundleItem(item)) return '';
+  const comps = SaleCore.bundleHeldComponents(DB, item);
+  if (!comps.length) return '';
+  const cols = 3 + (showPrices ? 3 : 0);
+  return `<tr class="inv-bundle-comp-row">
+    <td colspan="${cols}" style="padding:0 8px 10px">
+      <div style="background:#f5f8ff;border:1px solid #d9e6ff;border-radius:8px;padding:8px 10px">
+        <div style="font-size:11px;font-weight:700;color:var(--bmw-blue-1);margin-bottom:6px">
+          <i class="fas fa-gift"></i> مكونات الباقة — إرجاع جزئي
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr style="color:var(--silver-600)">
+            <th style="text-align:right;padding:3px 5px">المكوّن</th>
+            <th style="text-align:center;padding:3px 5px">المباع</th>
+            <th style="text-align:center;padding:3px 5px">مرتجع سابقاً</th>
+            <th style="text-align:center;padding:3px 5px">المتبقي</th>
+            <th style="text-align:center;padding:3px 5px">إرجاع الآن</th>
+          </tr></thead>
+          <tbody>
+            ${comps.map((c, j) => `<tr>
+              <td style="padding:3px 5px">${escHtml(c.name || c.barcode || '')}</td>
+              <td style="text-align:center;padding:3px 5px">${Unit.qtyUnit(c.soldQty, DB.getProduct(c.productId) || c)}</td>
+              <td style="text-align:center;padding:3px 5px;color:${c.returnedQty > 0 ? '#e65100' : 'var(--silver-500)'};font-weight:${c.returnedQty > 0 ? '700' : '400'}">${Unit.qtyUnit(c.returnedQty, DB.getProduct(c.productId) || c)}</td>
+              <td style="text-align:center;padding:3px 5px;font-weight:700">${Unit.qtyUnit(c.heldQty, DB.getProduct(c.productId) || c)}</td>
+              <td style="text-align:center;padding:3px 5px">
+                <input type="text" class="no-spinner num-input" inputmode="decimal" id="editCompReturn_${i}_${j}" value="0" min="0" step="any" ${c.heldQty <= 0 ? 'disabled ' : ''}oninput="updateInvEditTotals()" style="width:72px;text-align:center;padding:3px 6px;border:1px solid var(--silver-300);border-radius:4px;font-size:12px">
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </td>
+  </tr>`;
+}
+
+// تحويل timestamp → 'YYYY-MM-DD' لحقل input type=date
+function _invDateToInput(ts) {
+  const d = new Date(ts || Date.now());
+  if (!isFinite(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+function _invInputToDate(s) {
+  if (!s) return null;
+  const t = new Date(s + 'T00:00:00').getTime();
+  return isFinite(t) ? t : null;
+}
+
+function showPaymentDateEdit(inv) {
+  inv = inv || DB.getInvoice(_invDetailId);
+  if (!inv) return;
+  _invDetailId = inv.id;
+  const modal = document.getElementById('invDetailModal');
+  // reuse invDetailBody
+  const body = document.getElementById('invDetailBody');
+  if (body) {
+    body.innerHTML = `<div style="padding:20px;direction:rtl;text-align:right">
+      <div style="font-size:14px;font-weight:700;margin-bottom:12px"><i class="fas fa-calendar-alt"></i> تعديل تاريخ سند القبض</div>
+      <div style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label style="font-size:13px;font-weight:600">التاريخ</label>
+        <input type="date" id="payDateEdit" value="${_invDateToInput(inv.createdAt || inv.date)}" style="padding:6px 10px;border:1px solid var(--silver-300);border-radius:4px;font-size:13px">
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" onclick="savePaymentDateEdit()"><i class="fas fa-save"></i> حفظ</button>
+        <button class="btn" onclick="showInvDetail('${inv.id}')">إلغاء</button>
+      </div>
+    </div>`;
+  }
+  const footer = document.getElementById('invDetailFooter');
+  if (footer) footer.style.display = 'none';
+  if (modal) modal.style.display = 'flex';
+}
+
+function savePaymentDateEdit() {
+  if (!_invDetailId) return;
+  const inv = DB.getInvoice(_invDetailId);
+  if (!inv) return;
+  const inp = document.getElementById('payDateEdit');
+  const newTs = inp ? _invInputToDate(inp.value) : null;
+  if (!newTs) { alert('تاريخ غير صحيح'); return; }
+  DB.updateInvoice(_invDetailId, { createdAt: newTs, date: newTs, modifiedAt: Date.now() });
+  // الدفعات المرتبطة (الموجودة الآن) تتبع التاريخ الجديد
+  const allPmts = DB.getPayments();
+  let chg = false;
+  allPmts.forEach(p => { if (p.invoiceId === _invDetailId) { p.createdAt = newTs; chg = true; } });
+  if (chg) DB.savePayments(allPmts);
+  showInvDetail(_invDetailId);
+  filterInvoices();
+  alert(t('invoices.invoiceEdited'));
+}
 
 function showInvEditSection(keepStaged) {
   if (!_invDetailId) return;
   const inv = DB.getInvoice(_invDetailId);
   if (!inv || !inv.items || inv.items.length === 0) return;
-  if (inv.type === 'payment') { alert(t('invoices.cannotEditVoucher')); return; }
+  if (inv.type === 'payment') { showPaymentDateEdit(inv); return; }
   if (inv.type === 'transfer_receive') { alert(t('invoices.cannotEditReception')); return; }
   if (inv.type === 'transfer') { showTransferEditSection(inv); return; }
   if (inv.isProvisional && inv.type === 'waybill') { alert(t('invoices.cannotEditProformaWaybill')); return; }
@@ -1532,9 +2755,14 @@ function showInvEditSection(keepStaged) {
   const showPrices = (inv.type === 'customer' || inv.type === 'sup_sale');
   const isPurFamily = inv.type === 'supplier' || inv.type === 'purchase';
 
+  // المبلغ المدفوع قابل للتعديل في فواتير البيع للعميل وفواتير الشراء (مورد أو
+  // بدون مورد). «بيع لمورد» يبقى كما هو. الدفعات هي المصدر الحقيقي للرصيد.
+  const showPaid = (inv.type === 'customer' || inv.type === 'supplier' || inv.type === 'purchase');
+  const paidNow = showPaid ? DB.getInvoicePaidAmount(_invDetailId) : 0;
+
   // keepStaged: re-render after returning from the "add from scratch"
   // quick-entry — the staged additions and removal markers must survive.
-  if (!keepStaged) { _invEditNewItems = []; _invEditNewIdx = 0; _invEditRemoved = []; }
+  if (!keepStaged) { _invEditNewItems = []; _invEditNewIdx = 0; _invEditFreeIdx = 0; _invEditRemoved = []; }
 
   const canQuickAdd = isPurFamily && (typeof Auth === 'undefined' || !Auth.isLoggedIn() || Auth.canView('quick-entry'));
 
@@ -1550,7 +2778,11 @@ function showInvEditSection(keepStaged) {
         : t('invoices.editHelpCustomer')}
     </p>
     <div style="margin-bottom:14px;padding:10px;background:#f0f7ff;border:1px solid #cce5ff;border-radius:8px;display:flex;gap:8px;align-items:center">
-      <i class="fas fa-barcode" style="font-size:18px;color:var(--bmw-blue-1)"></i>
+      <div style="margin-bottom:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+       <label style="font-size:13px;font-weight:600;color:var(--silver-700)"><i class="fas fa-calendar-alt"></i> تاريخ الفاتورة</label>
+       <input type="date" id="editInvDate" value="${_invDateToInput(inv.createdAt || inv.date)}" style="padding:6px 10px;border:1px solid var(--silver-300);border-radius:4px;font-size:13px">
+     </div>
+     <i class="fas fa-barcode" style="font-size:18px;color:var(--bmw-blue-1)"></i>
       <input type="text" id="editBarcodeScan" placeholder="${t('invoices.scanPlaceholder')}" dir="ltr" style="flex:1;padding:6px 10px;border:1px solid var(--silver-300);border-radius:4px;font-size:13px" onkeydown="handleEditBarcodeKey(event)">
         <div id="editScanStatus" style="font-size:11px;color:#888">${t('invoices.scanReady')}</div>
       </div>
@@ -1565,29 +2797,42 @@ function showInvEditSection(keepStaged) {
       </tr></thead>
       <tbody id="editItemsBody">
         ${inv.items.map((item, i) => {
-          const rem = isPurFamily && _invEditRemoved.includes(i);
+          const rem = _invEditRemoved.includes(i);
+          const canRemove = !isPurFamily && showPrices && !rem;
           return `
           <tr${rem ? ' style="opacity:.55"' : ''}>
-            <td${rem ? ' style="text-decoration:line-through"' : ''}>${escHtml(item.name)}${rem ? ` <button class="btn btn-sm" onclick="undoInvEditRemove(${i})" style="padding:1px 6px;font-size:10px;margin-right:6px"><i class="fas fa-undo"></i> ${t('invoices.qeUndoRemove')}</button>` : ''}</td>
+            <td${rem ? ' style="text-decoration:line-through"' : ''}>${escHtml(item.name)}${item.isBundle ? ` <span style="font-size:10px;color:var(--bmw-blue-1);background:#eaf1ff;border-radius:4px;padding:1px 5px"><i class="fas fa-gift"></i> باقة</span>` : ''}${rem ? ` <button class="btn btn-sm" onclick="undoInvEditRemove(${i})" style="padding:1px 6px;font-size:10px;margin-right:6px"><i class="fas fa-undo"></i> ${t('invoices.qeUndoRemove')}</button>` : (canRemove ? ` <button class="btn btn-sm btn-danger" onclick="markInvEditRemove(${i})" title="${t('invoices.deleteLine')}" style="padding:1px 6px;font-size:10px;margin-right:6px"><i class="fas fa-trash"></i></button>` : '')}</td>
             <td style="text-align:center">${Unit.qtyUnit(item.qty, item)}</td>
             <td style="text-align:center">
-              <input type="text" class="no-spinner num-input" inputmode="decimal" id="editQty_${i}" value="${Unit.fmtQty(item.qty)}" min="0" step="any" ${rem ? 'disabled ' : ''}oninput="updateInvEditTotals()" style="width:80px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
+              <input type="text" class="no-spinner num-input" inputmode="decimal" id="editQty_${i}" value="${Unit.fmtQty(item.qty, item.qtyDecimals)}" min="0" step="any" ${rem ? 'disabled ' : ''}oninput="updateInvEditTotals()" style="width:80px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
             </td>
             ${showPrices ? `
             <td style="text-align:center">
-              <input type="text" class="no-spinner num-input" inputmode="decimal" id="editPrice_${i}" value="${item.price}" min="0" step="0.01" oninput="updateInvEditTotals()" style="width:85px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
+              <input type="text" class="no-spinner num-input" inputmode="decimal" id="editPrice_${i}" value="${item.price}" min="0" step="0.01" ${rem ? 'disabled ' : ''}oninput="updateInvEditTotals()" style="width:85px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
             </td>
             <td style="text-align:center">
-              <input type="text" class="no-spinner num-input" inputmode="decimal" id="editDisc_${i}" value="0" min="0" step="0.01" oninput="updateInvEditTotals()" style="width:80px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
+              <input type="text" class="no-spinner num-input" inputmode="decimal" id="editDisc_${i}" value="0" min="0" step="0.01" ${rem ? 'disabled ' : ''}oninput="updateInvEditTotals()" style="width:80px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
             </td>
             <td style="text-align:center" id="editLineTotal_${i}">DA${fmtMoney(item.price * item.qty)}</td>` : ''}
-          </tr>`;
+          </tr>
+          ${rem ? '' : _invEditBundleRowsHtml(item, i, showPrices)}`;
         }).join('')}
       </tbody>
     </table>
     ${showPrices ? `
     <div id="editTotalsBar" style="margin-top:12px;padding:10px 14px;background:#fff8e1;border:1px solid #ffe082;border-radius:8px;font-size:13px;font-weight:600;color:var(--silver-700)"></div>` : ''}
+    ${showPaid ? `
+    <div id="editPaidBar" style="margin-top:12px;padding:10px 14px;background:#eef7ee;border:1px solid #cde8cd;border-radius:8px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label style="font-size:13px;font-weight:600;color:var(--silver-700)"><i class="fas fa-money-bill-wave"></i> ${t('invoices.paidEditLabel')}</label>
+        <input type="text" class="no-spinner num-input" inputmode="decimal" id="editPaidAmount" value="${Number(paidNow || 0).toFixed(2)}" oninput="updateInvEditPaidPreview()" dir="ltr" style="width:130px;text-align:center;padding:5px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
+        <div id="editPaidPreview" style="font-size:12px;font-weight:600;color:var(--silver-600)"></div>
+      </div>
+      <div style="font-size:11px;color:var(--silver-500);margin-top:6px">${t('invoices.paidEditHint')}</div>
+    </div>` : ''}
     <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+      ${showPrices && !isPurFamily ? `
+      <button class="btn" onclick="addInvEditFreeLine()" style="display:flex;align-items:center;gap:6px;background:#f3e5f5;border:1px solid #ce93d8;color:#6a1b9a;font-weight:700"><i class="fas fa-plus"></i> ${t('invoices.addFreeLine')}</button>` : ''}
       ${canQuickAdd ? `
       <button class="btn" onclick="openInvQEAdd()" style="display:flex;align-items:center;gap:6px;background:#fff8e1;border:1px solid #ffe082;color:#8d6e00;font-weight:700"><i class="fas fa-bolt"></i> ${t('invoices.addFromScratch')}</button>` : ''}
       ${isPurFamily ? `
@@ -1601,19 +2846,32 @@ function showInvEditSection(keepStaged) {
   document.getElementById('invDetailFooter').style.display = 'none';
   if (keepStaged) {
     for (const ni of _invEditNewItems) renderEditNewItemRow(ni, showPrices);
-    if (_invEditPendingQty) {
-      for (const key in _invEditPendingQty) {
-        const inp = document.getElementById('editQty_' + key);
-        if (inp) inp.value = _invEditPendingQty[key];
-      }
-      _invEditPendingQty = null;
-    }
+    _restoreInvEditInputs();
   }
-  if (showPrices) updateInvEditTotals();
+  if (showPrices || showPaid) updateInvEditTotals();
   setTimeout(() => {
     const scanInput = document.getElementById('editBarcodeScan');
     if (scanInput) scanInput.focus();
   }, 200);
+}
+
+// Credit already stored on the line from previous partial component returns
+// plus whatever is typed in the "return now" fields of this edit.
+function _invEditBundleCreditValue(item, i) {
+  let credit = parseFloat(item.bundleReturnCredit) || 0;
+  if (typeof SaleCore === 'undefined' || !SaleCore.bundleHeldComponents || !SaleCore.isBundleItem || !SaleCore.isBundleItem(item)) {
+    return credit;
+  }
+  const comps = SaleCore.bundleHeldComponents(DB, item);
+  comps.forEach((c, j) => {
+    const inp = document.getElementById(`editCompReturn_${i}_${j}`);
+    if (!inp) return;
+    let q = Unit.parse(inp.value);
+    if (!(q > 0)) return;
+    q = Math.min(Unit.roundQty(q), c.heldQty);
+    credit += (parseFloat(c.valuePerBundle) || 0) * q;
+  });
+  return credit;
 }
 
 function updateInvEditTotals() {
@@ -1621,23 +2879,29 @@ function updateInvEditTotals() {
   const inv = DB.getInvoice(_invDetailId);
   if (!inv || !inv.items) return;
   const showTotals = (inv.type === 'customer' || inv.type === 'sup_sale');
-  if (!showTotals) return;
+  if (!showTotals) {
+    // فاتورة شراء: لا شريط إجماليات هنا، لكن المعاينة تحتاج الإجمالي الحيّ.
+    _invEditLiveTotal = _invEditPurchaseLiveTotal(inv);
+    updateInvEditPaidPreview();
+    return;
+  }
   const oldTotal = inv.totalAmount || 0;
   let newTotal = 0;
 
   for (let i = 0; i < inv.items.length; i++) {
+    if (_invEditRemoved.includes(i)) continue;
     const item = inv.items[i];
     const qtyInput = document.getElementById('editQty_' + i);
     const priceInput = document.getElementById('editPrice_' + i);
     const discInput = document.getElementById('editDisc_' + i);
-    if (!qtyInput) { newTotal += item.price * item.qty; continue; }
+    if (!qtyInput) { newTotal += Math.max(0, (item.price * item.qty) - (parseFloat(item.bundleReturnCredit) || 0)); continue; }
     const qty = Unit.parse(qtyInput.value);
     const q = Unit.roundQty(qty >= 0 ? qty : item.qty);
     const price = priceInput ? parseFloat(priceInput.value) : item.price;
     const p = priceInput && isFinite(price) && price >= 0 ? price : item.price;
     const disc = discInput ? parseFloat(discInput.value) : 0;
     const d = discInput && isFinite(disc) && disc > 0 ? disc : 0;
-    let lineTotal = (p * q) - d;
+    let lineTotal = (p * q) - d - _invEditBundleCreditValue(item, i);
     if (lineTotal < 0) lineTotal = 0;
     const cell = document.getElementById('editLineTotal_' + i);
     if (cell) cell.textContent = 'DA' + fmtMoney(lineTotal);
@@ -1662,6 +2926,8 @@ function updateInvEditTotals() {
   }
 
   const bar = document.getElementById('editTotalsBar');
+  _invEditLiveTotal = newTotal;
+  updateInvEditPaidPreview();
   if (!bar) return;
   const diff = newTotal - oldTotal;
   const sign = diff > 0 ? '+' : (diff < 0 ? '−' : '');
@@ -1673,6 +2939,61 @@ function updateInvEditTotals() {
     `<span style="margin-right:12px;color:${diffColor}">${t('invoices.diff')} ${sign}DA${fmtMoney(Math.abs(diff))}</span>`;
 }
 
+// Live discounted total of a purchase invoice being edited (qty-only edits).
+// Mirrors how saveInvEdit recomputes the purchase total so the paid preview
+// never shows a stale remaining.
+function _invEditPurchaseLiveTotal(inv) {
+  const lines = [];
+  for (let i = 0; i < inv.items.length; i++) {
+    if (_invEditRemoved.includes(i)) continue;
+    const item = inv.items[i];
+    const qtyInput = document.getElementById('editQty_' + i);
+    let q = item.qty;
+    if (qtyInput && String(qtyInput.value).trim() !== '') {
+      const v = Unit.parse(qtyInput.value);
+      if (v >= 0) q = Unit.roundQty(v);
+    }
+    lines.push({ qty: q, buyPrice: item.price, purchaseDiscountPct: item.purchaseDiscountPct || 0 });
+  }
+  for (const ni of _invEditNewItems) {
+    const qtyInput = document.getElementById('editNewQty_' + ni._idx);
+    const q = qtyInput ? (Unit.roundQty(Unit.parse(qtyInput.value)) || 1) : ni.qty;
+    lines.push({ qty: q, buyPrice: ni.price || 0, purchaseDiscountPct: ni.purchaseDiscountPct || 0 });
+  }
+  if (typeof PurchaseCore !== 'undefined' && PurchaseCore && PurchaseCore.compute) {
+    try {
+      const pd = PurchaseCore.compute(lines, inv.purchaseDiscountMode || 'percent', inv.purchaseDiscountValue || 0);
+      return pd.total;
+    } catch (e) {}
+  }
+  return lines.reduce((s, l) => s + (l.buyPrice || 0) * (l.qty || 0), 0);
+}
+
+// Shows, under the paid field, what the corrected amount does to the invoice:
+// the remaining still owed, or — when the paid exceeds the total — the credit
+// the party now carries.
+function updateInvEditPaidPreview() {
+  const input = document.getElementById('editPaidAmount');
+  const box = document.getElementById('editPaidPreview');
+  if (!input || !box) return;
+  const inv = DB.getInvoice(_invDetailId);
+  if (!inv) return;
+  const total = _invEditLiveTotal || 0;
+  const credit = parseFloat(inv.creditUsed) || 0;
+  const paid = Unit.parse(input.value);
+  const rest = total - paid - credit;
+  if (rest > 0.005) {
+    box.style.color = 'var(--silver-600)';
+    box.textContent = `${t('invoices.paidEditRemaining')} DA${fmtMoney(rest)}`;
+  } else if (rest < -0.005) {
+    box.style.color = '#198754';
+    box.textContent = `${t('invoices.paidEditCredit')} DA${fmtMoney(Math.abs(rest))}`;
+  } else {
+    box.style.color = 'var(--silver-600)';
+    box.textContent = `${t('invoices.paidEditRemaining')} DA0.00`;
+  }
+}
+
 function handleEditBarcodeKey(e) {
   if (e.key === 'Enter') {
     e.preventDefault();
@@ -1680,10 +3001,19 @@ function handleEditBarcodeKey(e) {
     const q = cleanScannedCode(input.value);
     if (!q) return;
     const status = document.getElementById('editScanStatus');
-    const prod = DB.getProductByBarcode(q);
+    // A label off the counter scale names its article by PLU, so a weighed item
+    // can be put back on the invoice. The read is the register's own: a LAN sub
+    // device and a disabled setting both refuse it and fall through to the
+    // ordinary barcode lookup below.
+    const hit = (typeof salesScaleLookup === 'function') ? salesScaleLookup(q) : null;
+    const scaleProd = hit && hit.prod && hit.decoded.weight > 0 ? hit.prod : null;
+    const prod = scaleProd || DB.getProductByBarcode(q);
     if (prod) {
-      addEditProduct(prod.id);
-      status.textContent = t('invoices.scanDone');
+      addEditProduct(prod.id, scaleProd ? hit.decoded.weight : null,
+        scaleProd ? hit.decoded.weightDecimals : null);
+      status.textContent = scaleProd
+        ? `${t('invoices.scanDone')} — ${t('sales.scaleTag')} ${Unit.fmtQty(hit.decoded.weight, hit.decoded.weightDecimals)}`
+        : t('invoices.scanDone');
       status.style.color = '#28a745';
       input.value = '';
       setTimeout(() => { status.textContent = t('invoices.scanReady'); status.style.color = '#888'; }, 1500);
@@ -1698,17 +3028,24 @@ function handleEditBarcodeKey(e) {
   }
 }
 
-function addEditProduct(productId) {
+// A label that printed its weight stages the line at that weight — the
+// cashier never retypes what the paper already says.
+function addEditProduct(productId, qty, qtyDecimals) {
   const prod = DB.getProduct(productId);
   if (!prod) return;
   const inv = DB.getInvoice(_invDetailId);
   const isSupplier = inv && (inv.type === 'supplier' || inv.type === 'purchase');
   const showPrices = inv && (inv.type === 'customer' || inv.type === 'sup_sale');
-  if (!isSupplier && prod.quantity <= 0) { alert(`"${prod.name}" ${t('invoices.notInStock')}`); return; }
+  // «غير محدود» is the scale's answer, not the shelf's: a weighed card is never
+  // refused for having no stock, because its stock is what the machine weighs.
+  if (!isSupplier && prod.fixed !== true && prod.quantity <= 0) { alert(`"${prod.name}" ${t('invoices.notInStock')}`); return; }
 
   const idx = _invEditNewIdx++;
   const price = isSupplier ? (prod.buyPrice || 0) : (prod.sellPrice || 0);
-  const ni = { _idx: idx, productId: prod.id, barcode: prod.barcode, name: prod.name, price, qty: 1, originalPrice: price, discount: 0 };
+  const typed = Number(qty);
+  const ni = { _idx: idx, productId: prod.id, barcode: prod.barcode, name: prod.name, price,
+    qty: typed > 0 ? Unit.roundQty(typed) : 1, originalPrice: price, discount: 0 };
+  if (qtyDecimals != null) ni.qtyDecimals = qtyDecimals;
   _invEditNewItems.push(ni);
   renderEditNewItemRow(ni, showPrices);
 }
@@ -1719,17 +3056,21 @@ function renderEditNewItemRow(ni, showPrices) {
   const idx = ni._idx;
   const tbody = document.getElementById('editItemsBody');
   if (!tbody) return;
-  const badgeColor = ni._isNew ? '#e65100' : 'var(--bmw-blue-1)';
+  const badgeColor = ni._isFree ? '#6a1b9a' : (ni._isNew ? '#e65100' : 'var(--bmw-blue-1)');
   const priceNote = ni._isNew && ni.payload
     ? ` <span style="font-size:10px;color:var(--silver-500)">(${t('quickEntry.buyPrice')}: DA${fmtMoney(ni.payload.buyPrice || 0)})</span>`
     : '';
+  const nameCell = ni._isFree
+    ? `<input type="text" id="editNewName_${idx}" value="${escHtml(ni.name || '')}" placeholder="${t('invoices.freeLineNamePlaceholder')}" oninput="updateInvEditTotals()" style="width:100%;min-width:130px;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:13px">`
+    : escHtml(ni.name);
+  const badge = ni._isFree ? t('invoices.freeLineBadge') : t('invoices.badgeNew');
   const row = document.createElement('tr');
   row.id = `editNewRow_${idx}`;
   row.innerHTML = `
-    <td>${escHtml(ni.name)} <span style="font-size:10px;color:${badgeColor};font-weight:600">(${t('invoices.badgeNew')})</span>${priceNote}</td>
+    <td>${nameCell} <span style="font-size:10px;color:${badgeColor};font-weight:600">(${badge})</span>${priceNote}</td>
     <td style="text-align:center">—</td>
     <td style="text-align:center">
-      <input type="text" class="no-spinner num-input" inputmode="decimal" id="editNewQty_${idx}" value="${Unit.fmtQty(ni.qty)}" min="0" step="any" oninput="updateInvEditTotals()" style="width:70px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
+      <input type="text" class="no-spinner num-input" inputmode="decimal" id="editNewQty_${idx}" value="${Unit.fmtQty(ni.qty, ni.qtyDecimals)}" min="0" step="any" oninput="updateInvEditTotals()" style="width:70px;text-align:center;padding:4px 8px;border:1px solid var(--silver-300);border-radius:4px;font-size:14px">
       <button class="btn btn-sm btn-danger" onclick="removeEditNewItem(${idx})" style="margin-right:4px;padding:2px 6px;font-size:10px"><i class="fas fa-times"></i></button>
     </td>
     ${showPrices ? `
@@ -1741,12 +3082,49 @@ function renderEditNewItemRow(ni, showPrices) {
     </td>
     <td style="text-align:center" id="editNewLineTotal_${idx}">DA${fmtMoney(ni.price)}</td>` : ''}`;
   tbody.appendChild(row);
-  if (showPrices) updateInvEditTotals();
+  updateInvEditTotals();
+}
+
+// Snapshots every typed value before a re-render (mark/undo a line removal),
+// so switching a line's removed state never discards what the user typed.
+function _snapshotInvEditInputs() {
+  const snap = {};
+  document.querySelectorAll('[id^="editQty_"],[id^="editPrice_"],[id^="editDisc_"],[id^="editNewQty_"],[id^="editNewPrice_"],[id^="editNewDisc_"],[id^="editNewName_"]')
+    .forEach(el => { snap[el.id] = el.value; });
+  _invEditPendingQty = snap;
+}
+
+function _restoreInvEditInputs() {
+  if (!_invEditPendingQty) return;
+  for (const key in _invEditPendingQty) {
+    // Older quick-entry snapshots used bare numeric keys for editQty_N.
+    const id = (/^\d+$/.test(key) ? 'editQty_' + key : key);
+    const el = document.getElementById(id);
+    if (el) el.value = _invEditPendingQty[key];
+  }
+  _invEditPendingQty = null;
+}
+
+function markInvEditRemove(i) {
+  if (!_invEditRemoved.includes(i)) { _snapshotInvEditInputs(); _invEditRemoved.push(i); }
+  showInvEditSection(true);
 }
 
 function undoInvEditRemove(i) {
+  _snapshotInvEditInputs();
   _invEditRemoved = _invEditRemoved.filter(x => x !== i);
   showInvEditSection(true);
+}
+
+// A sale line typed by hand: no product card, no stock movement, full price is
+// revenue and (having no cost) profit. It is committed only inside saveInvEdit.
+function addInvEditFreeLine() {
+  const inv = DB.getInvoice(_invDetailId);
+  if (!inv || (inv.type !== 'customer' && inv.type !== 'sup_sale')) return;
+  const ni = { _idx: _invEditFreeIdx++, _isFree: true, freeLine: true,
+    productId: null, barcode: '', name: '', qty: 1, price: 0, discount: 0 };
+  _invEditNewItems.push(ni);
+  renderEditNewItemRow(ni, true);
 }
 
 /* ===== Quick-entry "add from scratch" (إضافة من العدم) =====================
@@ -1768,17 +3146,21 @@ function openInvQEAdd() {
   const rows = inv.items.map((item, i) => {
     const inp = document.getElementById('editQty_' + i);
     let curQty = item.qty;
-    if (inp) { const v = parseInt(inp.value, 10); if (!isNaN(v) && v >= 0) curQty = v; }
+    // Unit.parse reads "" as 0, so a blank field must keep the stored quantity.
+    if (inp && String(inp.value).trim() !== '') { const v = Unit.parse(inp.value); if (v >= 0) curQty = v; }
     _invEditQtySnapshot[i] = curQty;
     const p = DB.getProduct(item.productId);
     return {
       src: 'item', itemIdx: i, productId: item.productId, name: item.name,
       barcode: (p && p.barcode) || item.barcode || '',
       qty: curQty, price: item.price || 0,
+      purchaseDiscountPct: parseFloat(item.purchaseDiscountPct) || 0,
       sell: p ? (p.sellPrice || 0) : 0, whole: p ? (p.wholesalePrice || 0) : 0,
       brandId: p ? (p.brandId || '') : '', reference: p ? (p.reference || '') : '',
+      plu: p ? (p.plu || '') : '',
       countryOfOrigin: p ? (p.countryOfOrigin || '') : '', mark: p ? (p.mark || '') : '',
       storageLocation: p ? (p.storageLocation || '') : '', family: p ? (p.family || '') : '',
+      extraPrices: (p && p.extraPrices) || {},
       expiryDate: p ? (p.expiryDate || '') : ''
     };
   }).concat(_invEditNewItems.map(ni => {
@@ -1787,19 +3169,28 @@ function openInvQEAdd() {
       src: 'staged', stagedIdx: ni._idx, isNew: !!ni._isNew, productId: ni.productId || null,
       name: ni.name, barcode: (p && p.barcode) || ni.barcode || '',
       qty: ni.qty, price: ni.price || 0,
+      purchaseDiscountPct: parseFloat(ni.purchaseDiscountPct || (ni.payload && ni.payload.purchaseDiscountPct)) || 0,
       sell: p ? (p.sellPrice || 0) : (ni.payload ? (ni.payload.sellPrice || 0) : 0),
       whole: p ? (p.wholesalePrice || 0) : (ni.payload ? (ni.payload.wholesalePrice || 0) : 0),
       brandId: p ? (p.brandId || '') : (ni.payload ? (ni.payload.brandId || '') : ''),
       reference: p ? (p.reference || '') : (ni.payload ? (ni.payload.reference || '') : ''),
+      plu: p ? (p.plu || '') : (ni.payload ? (ni.payload.plu || '') : ''),
       countryOfOrigin: p ? (p.countryOfOrigin || '') : (ni.payload ? (ni.payload.countryOfOrigin || '') : ''),
       mark: p ? (p.mark || '') : (ni.payload ? (ni.payload.mark || '') : ''),
       storageLocation: p ? (p.storageLocation || '') : (ni.payload ? (ni.payload.storageLocation || '') : ''),
       family: p ? (p.family || '') : (ni.payload ? (ni.payload.family || '') : ''),
+      extraPrices: (p && p.extraPrices) || (ni.payload && ni.payload.extraPrices) || ni.extraPrices || {},
       expiryDate: p ? (p.expiryDate || '') : (ni.payload ? (ni.payload.expiryDate || '') : '')
     };
   }));
 
-  window._qePrefill = { invoiceId: inv.id, invoiceNumber: inv.invoiceNumber || '', supplierName: sup ? sup.name : '', rows };
+  // The invoice keeps its own whole-invoice discount while being edited; hand it
+  // over so the quick-entry footer shows the net that will actually be saved.
+  window._qePrefill = {
+    invoiceId: inv.id, invoiceNumber: inv.invoiceNumber || '', supplierName: sup ? sup.name : '', rows,
+    discMode: inv.purchaseDiscountMode === 'amount' ? 'amount' : 'percent',
+    discValue: parseFloat(inv.purchaseDiscountValue) || 0
+  };
   window._qeReturnPage = 'invoices';
   if (typeof getSidebarState === 'function') { window._qePrevSidebar = getSidebarState(); applySidebarState('slim'); }
   navigateTo('quick-entry');
@@ -1832,12 +3223,17 @@ function _applyInvQEResult(res) {
       _invEditNewItems.push({
         _idx: idx, productId: null, barcode: a.payload.barcode || '', name: a.payload.name,
         price: a.payload.buyPrice || 0, qty: a.qty, originalPrice: a.payload.buyPrice || 0,
-        discount: 0, _isNew: true, payload: a.payload
+        discount: 0, _isNew: true, payload: a.payload,
+        purchaseDiscountPct: parseFloat(a.purchaseDiscountPct || a.payload.purchaseDiscountPct) || 0,
+        realBuyPrice: parseFloat(a.realBuyPrice || a.payload.realBuyPrice) || 0
       });
     } else {
       _invEditNewItems.push({
         _idx: idx, productId: a.productId, barcode: a.barcode || '', name: a.name,
-        price: a.price || 0, qty: a.qty, originalPrice: a.price || 0, discount: 0
+        price: a.price || 0, qty: a.qty, originalPrice: a.price || 0, discount: 0,
+        extraPrices: (a.extraPrices && Object.keys(a.extraPrices).length) ? a.extraPrices : null,
+        purchaseDiscountPct: parseFloat(a.purchaseDiscountPct) || 0,
+        realBuyPrice: parseFloat(a.realBuyPrice) || 0
       });
     }
   });
@@ -1852,6 +3248,7 @@ function removeEditNewItem(idx) {
 
 var _editSearchTimer = null;
 function searchEditProduct(q) {
+  if (q && String(q).trim().length >= 2) { try { DB.logSearch({ query: q, context: 'edit-product' }); } catch (e) {} }
   if (_editSearchTimer) clearTimeout(_editSearchTimer);
   _editSearchTimer = setTimeout(() => renderEditProductSearch(q), 180);
 }
@@ -1878,7 +3275,8 @@ function renderEditProductSearch(q) {
   const inv = DB.getInvoice(_invDetailId);
   const isSupplier = inv && (inv.type === 'supplier' || inv.type === 'purchase');
   results.innerHTML = matches.map(p => {
-    const oos = (!isSupplier && p.quantity <= 0);
+    // Same rule the product grid uses: a «غير محدود» card is never out of stock.
+    const oos = (!isSupplier && p.fixed !== true && p.quantity <= 0);
     const act = oos ? '' : `addEditProduct('${p.id}');document.getElementById('editSearchResults').innerHTML='';`;
     return `<div class="search-result-item ${oos ? 'disabled' : ''}" onclick="${act}">
         <strong>${escHtml(p.name)}</strong>
@@ -1925,6 +3323,18 @@ function saveInvEdit() {
   let newTotalAmount = 0;
   const updatedItems = [];
 
+  // المبلغ المدفوع كما هو مسجّل الآن في سطور الدفعات (المصدر الحقيقي).
+  const paidBefore = DB.getInvoicePaidAmount(_invDetailId);
+  // المبلغ المدفوع الذي كتبه المستخدم في الحقل، إن وُجد الحقل أصلًا. يُسمح بأن
+  // يتجاوز الإجمالي: الزائد يخفّض رصيد الطرف (رصيد دائن إن تعدّاه).
+  const paidInputEl = document.getElementById('editPaidAmount');
+  let explicitPaid = null;
+  if (paidInputEl && String(paidInputEl.value).trim() !== '') {
+    const pv = Unit.parse(paidInputEl.value);
+    if (isFinite(pv) && pv >= 0) explicitPaid = pv;
+  }
+  const paidChanged = (explicitPaid !== null) && (Math.abs(explicitPaid - paidBefore) >= 0.005);
+
   // Quick-entry removals/decreases on purchase invoices: validate ALL stock
   // guards BEFORE any write so a blocked save never leaves partial changes
   // (or half-created products) behind.
@@ -1952,13 +3362,42 @@ function saveInvEdit() {
   // Process existing items
   for (let i = 0; i < inv.items.length; i++) {
     const item = inv.items[i];
-    const removed = isPurFamily && _invEditRemoved.includes(i);
+    const removed = _invEditRemoved.includes(i);
     if (removed) {
-      // Full-line removal: decrement stock by the whole line qty, then drop the
-      // line from the invoice (totals & balance follow via the diff below).
-      if (!isProvisional) {
+      // Full-line removal. A purchase line put stock ON the shelf, so removing
+      // it takes that stock back. A sale line took stock OFF the shelf, so
+      // removing it returns the goods and writes a return row (same as typing
+      // a lower quantity). «غير محدود» cards never carry a shelf number.
+      if (!isProvisional && item.productId) {
         const rprod = DB.getProduct(item.productId);
-        if (rprod) DB.updateProduct(item.productId, { quantity: (rprod.quantity || 0) - item.qty });
+        const isBundleLine = salesPriceEdit && typeof SaleCore !== 'undefined' &&
+          SaleCore.isBundleItem && SaleCore.isBundleItem(item);
+        if (rprod && rprod.fixed !== true && !isBundleLine) {
+          DB.updateProduct(item.productId, { quantity: Unit.roundQty((rprod.quantity || 0) + (isPurFamily ? -item.qty : item.qty)) });
+        }
+        if (salesPriceEdit) {
+          if (isBundleLine) {
+            const comps = SaleCore.bundleComponents(DB, item);
+            const returns = comps.map(c => ({ productId: c.productId, qty: Unit.roundQty(c.qtyPerBundle * item.qty) }));
+            SaleCore.applyBundleComponentReturns(
+              DB, _invDetailId, item, returns, 'تعديل فاتورة (حذف سطر باقة)', { track: false });
+          } else {
+            const returnUnit = parseFloat(item.price) ||
+              (parseFloat(item.qty) ? (parseFloat(item.total) || 0) / parseFloat(item.qty) : 0);
+            DB.addReturn({
+              invoiceId: _invDetailId,
+              productId: item.productId,
+              productName: item.name,
+              qty: item.qty,
+              price: returnUnit,
+              total: returnUnit * item.qty,
+              unit: item.unit,
+              unitLabel: item.unitLabel,
+              qtyDecimals: item.qtyDecimals,
+              reason: 'تعديل فاتورة (حذف سطر)',
+            });
+          }
+        }
       }
       totalChanged = true;
       changes.push({ name: item.name, oldQty: item.qty, newQty: 0, diff: -item.qty });
@@ -1970,37 +3409,97 @@ function saveInvEdit() {
     if (!(newQty >= 0)) newQty = item.qty;
     const diff = newQty - item.qty;
 
-    if (diff !== 0 && !isProvisional) {
-      const prod = DB.getProduct(item.productId);
-      if (!prod) { updatedItems.push(item); newTotalAmount += item.price * item.qty; continue; }
+    const isBundleLine = salesPriceEdit && !isProvisional &&
+      typeof SaleCore !== 'undefined' && SaleCore.isBundleItem && SaleCore.isBundleItem(item);
 
-      if (inv.type === 'supplier' || inv.type === 'purchase') {
-        if (diff > 0) {
-          DB.updateProduct(item.productId, { quantity: Unit.roundQty((prod.quantity || 0) + diff) });
-        } else {
-          const newQty = Unit.roundQty((prod.quantity || 0) - Math.abs(diff));
-          if (newQty < 0) {
-            alert(t('invoices.cannotBelowZero').replace('...', item.name));
-            return;
+    // Bundle lines are a single invoice row over several real stock cards.
+    // Work on a copy so a blocked save never leaves half-returned components.
+    const bundleWork = isBundleLine ? Object.assign({}, item, {
+      returnedComponents: Object.assign({}, item.returnedComponents || {}),
+      bundleComponents: (item.bundleComponents || []).map(c => Object.assign({}, c)),
+    }) : null;
+
+    if (diff !== 0 && !isProvisional) {
+      if (isBundleLine) {
+        const comps = SaleCore.bundleComponents(DB, bundleWork);
+        if (diff < 0) {
+          // Whole bundles went back: every component comes back with them,
+          // capped by whatever is still held (a component already returned
+          // earlier must not be restored twice).
+          const returns = comps.map(c => ({
+            productId: c.productId,
+            qty: Unit.roundQty(c.qtyPerBundle * Math.abs(diff)),
+          }));
+          // The quantity drop already removes this money from the line total,
+          // so these pieces are restored to stock but not tracked as an extra
+          // partial return (that would count them twice).
+          SaleCore.applyBundleComponentReturns(
+            DB, _invDetailId, bundleWork, returns,
+            'تعديل فاتورة (نقص كمية باقة)', { track: false });
+        } else if (diff > 0) {
+          // Raising the bundle quantity asks the shelf for every component of
+          // the added bundles. Partial returns made earlier stay returned.
+          for (const c of comps) {
+            const want = Unit.roundQty(c.qtyPerBundle * diff);
+            if (want <= 0) continue;
+            const p = DB.getProduct(c.productId);
+            if (!p || p.fixed === true) continue;
+            if ((p.quantity || 0) < want) {
+              alert(t('invoices.insufficientStock').replace('...', c.name || item.name));
+              return;
+            }
+            DB.updateProduct(c.productId, { quantity: Unit.roundQty((p.quantity || 0) - want) });
           }
-          DB.updateProduct(item.productId, { quantity: newQty });
         }
-      } else {
-        if (diff > 0) {
-          if (prod.quantity < diff) {
-            alert(t('invoices.insufficientStock').replace('...', item.name));
-            return;
+        // The component rows are rendered against the *new* bundle quantity.
+        bundleWork.qty = newQty;
+      } else if (DB.getProduct(item.productId)) {
+        // Only a line that still has a product card can move stock. An unlisted
+        // (F10) line has none, and its edit must still reach the invoice below.
+        const prod = DB.getProduct(item.productId);
+        if (inv.type === 'supplier' || inv.type === 'purchase') {
+          if (diff > 0) {
+            DB.updateProduct(item.productId, { quantity: Unit.roundQty((prod.quantity || 0) + diff) });
+          } else {
+            const belowQty = Unit.roundQty((prod.quantity || 0) - Math.abs(diff));
+            if (belowQty < 0) {
+              alert(t('invoices.cannotBelowZero').replace('...', item.name));
+              return;
+            }
+            DB.updateProduct(item.productId, { quantity: belowQty });
           }
-          DB.updateProduct(item.productId, { quantity: Unit.roundQty(prod.quantity - diff) });
         } else {
-          DB.updateProduct(item.productId, { quantity: Unit.roundQty(prod.quantity + Math.abs(diff)) });
-          DB.addReturn({
-            invoiceId: _invDetailId,
-            productId: item.productId,
-            productName: item.name,
-            qty: Math.abs(diff),
-            reason: 'تعديل فاتورة (نقص كمية)',
-          });
+          // A «غير محدود» card is filled by the scale, not by the shelf: the sale
+          // engine never deducts it, so editing its line must not add to it or
+          // drain it either. The return itself is still written — the customer
+          // handed the goods back and the reports have to say so.
+          const weighed = prod.fixed === true;
+          if (diff > 0) {
+            if (!weighed) {
+              if (prod.quantity < diff) {
+                alert(t('invoices.insufficientStock').replace('...', item.name));
+                return;
+              }
+              DB.updateProduct(item.productId, { quantity: Unit.roundQty(prod.quantity - diff) });
+            }
+          } else {
+            if (!weighed) DB.updateProduct(item.productId, { quantity: Unit.roundQty(prod.quantity + Math.abs(diff)) });
+            const returnQty = Math.abs(diff);
+            const returnUnit = parseFloat(item.price) ||
+              (parseFloat(item.qty) ? (parseFloat(item.total) || 0) / parseFloat(item.qty) : 0);
+            DB.addReturn({
+              invoiceId: _invDetailId,
+              productId: item.productId,
+              productName: item.name,
+              qty: returnQty,
+              price: returnUnit,
+              total: returnUnit * returnQty,
+              unit: item.unit,
+              unitLabel: item.unitLabel,
+              qtyDecimals: item.qtyDecimals,
+              reason: 'تعديل فاتورة (نقص كمية)',
+            });
+          }
         }
       }
     }
@@ -2011,7 +3510,13 @@ function saveInvEdit() {
       const priceInput = document.getElementById('editPrice_' + i);
       if (priceInput) {
         const p = parseFloat(priceInput.value);
-        if (isFinite(p) && p >= 0) price = p;
+        if (isFinite(p) && p >= 0) {
+          const prod = item.productId ? DB.getProduct(item.productId) : null;
+          const floor = prod ? Math.max(0, parseFloat(prod.minPrice) || 0) : 0;
+          // The product's floor is not advisory: an edited sale invoice cannot
+          // be pushed below it by typing over the line price.
+          price = Math.max(p, floor);
+        }
       }
       const discInput = document.getElementById('editDisc_' + i);
       if (discInput) {
@@ -2020,19 +3525,70 @@ function saveInvEdit() {
       }
     }
 
-    const newTotal = (price * newQty) - discount;
-    updatedItems.push(salesPriceEdit
-      ? { ...item, qty: newQty, price, total: newTotal, lineDiscount: discount, discount }
-      : { ...item, qty: newQty, total: newTotal });
+    // Partial component returns: only the pieces the customer actually handed
+    // back from this bundle line. Each one restores its own stock card and is
+    // credited against the line total.
+    let partialCredit = 0;
+    if (isBundleLine) {
+      const comps = SaleCore.bundleHeldComponents(DB, bundleWork);
+      const returns = [];
+      comps.forEach((c, j) => {
+        const inp = document.getElementById(`editCompReturn_${i}_${j}`);
+        if (!inp) return;
+        let q = Unit.parse(inp.value);
+        if (!(q > 0)) return;
+        q = Math.min(Unit.roundQty(q), c.heldQty);
+        if (q > 0) returns.push({ productId: c.productId, qty: q });
+      });
+      if (returns.length) {
+        const res = SaleCore.applyBundleComponentReturns(
+          DB, _invDetailId, bundleWork, returns, 'تعديل فاتورة (إرجاع جزئي لمكوّن باقة)');
+        partialCredit = parseFloat(res.credit) || 0;
+      }
+    }
+
+    const lineBase = bundleWork || item;
+    const lineCredit = isBundleLine ? (parseFloat(bundleWork.bundleReturnCredit) || 0) : 0;
+    const newTotal = Math.max(0, (price * newQty) - discount - lineCredit);
+    const savedItem = salesPriceEdit
+      ? { ...lineBase, qty: newQty, price, total: newTotal, lineDiscount: discount, discount }
+      : { ...lineBase, qty: newQty, total: newTotal };
+    updatedItems.push(savedItem);
     newTotalAmount += newTotal;
     if (diff !== 0) { changes.push({ name: item.name, oldQty: item.qty, newQty, diff }); totalChanged = true; }
     if (salesPriceEdit && (price !== item.price || discount !== 0)) totalChanged = true;
+    if (partialCredit > 0) totalChanged = true;
   }
 
   // Process new items added during edit
   for (const newItem of _invEditNewItems) {
     const qtyInput = document.getElementById('editNewQty_' + newItem._idx);
     const qty = qtyInput ? (Unit.roundQty(Unit.parse(qtyInput.value)) || 1) : newItem.qty;
+
+    // Hand-typed sale line: no product card, no shelf movement. Its full price
+    // is revenue and profit (there is no purchase cost for an unlisted item).
+    if (newItem._isFree) {
+      if (!salesPriceEdit) continue;
+      const nameInput = document.getElementById('editNewName_' + newItem._idx);
+      const name = String((nameInput && nameInput.value) || newItem.name || '').trim();
+      if (!name) { alert(t('invoices.freeLineNameRequired')); return; }
+      if (!(qty > 0)) { alert(t('invoices.freeLineQtyRequired')); return; }
+      const priceInput = document.getElementById('editNewPrice_' + newItem._idx);
+      const p = priceInput ? parseFloat(priceInput.value) : Number(newItem.price);
+      const price = isFinite(p) && p >= 0 ? p : 0;
+      const discInput = document.getElementById('editNewDisc_' + newItem._idx);
+      const d = discInput ? parseFloat(discInput.value) : 0;
+      const discount = isFinite(d) && d > 0 ? d : 0;
+      const total = Math.max(0, (price * qty) - discount);
+      updatedItems.push({
+        productId: null, barcode: '', name, qty, price, total,
+        freeLine: true, lineDiscount: discount, discount
+      });
+      newTotalAmount += total;
+      changes.push({ name, oldQty: 0, newQty: qty, diff: qty });
+      totalChanged = true;
+      continue;
+    }
 
     // New product staged by the "add from scratch" quick-entry: created NOW
     // (save time only) so abandoning the edit leaves no orphan product. Stock
@@ -2044,7 +3600,7 @@ function saveInvEdit() {
         barcode: (payload.barcode || '').trim() || (DB.generateBarcode ? DB.generateBarcode() : ('P' + Date.now())),
         quantity: isProvisional ? 0 : qty,
         supplierId: inv.supplierId || null
-      }));
+      }), { source: 'invoice-edit-new' });
       if (!res || !res.ok) {
         alert(t('invoices.addFromScratchConflict') + ': ' + (res && res.existing ? res.existing.name : ''));
         return;
@@ -2052,10 +3608,13 @@ function saveInvEdit() {
       const nprod = res.product;
       newItem.productId = nprod.id; newItem.barcode = nprod.barcode; newItem.name = nprod.name;
       const buyPrice = parseFloat(payload.buyPrice) || 0;
+      const linePct = parseFloat(payload.purchaseDiscountPct) || 0;
       const total = buyPrice * qty;
       updatedItems.push(Object.assign({
         productId: nprod.id, barcode: nprod.barcode, name: nprod.name, qty,
-        price: buyPrice, total, originalPrice: buyPrice, lineDiscount: 0, discount: 0
+        price: buyPrice, total, originalPrice: buyPrice, lineDiscount: 0, discount: 0,
+        purchaseDiscountPct: linePct,
+        realBuyPrice: parseFloat(payload.realBuyPrice) || 0
       }, Unit.snapshot(nprod)));
       newTotalAmount += total;
       changes.push({ name: nprod.name, oldQty: 0, newQty: qty, diff: qty });
@@ -2066,10 +3625,20 @@ function saveInvEdit() {
     const prod = DB.getProduct(newItem.productId);
     if (!prod) continue;
 
+    // Extra sale prices typed on the quick-entry line belong to the product,
+    // not to this invoice: merge them in (never wipe the stored ones).
+    if (isPurFamily && newItem.extraPrices) {
+      DB.updateProduct(newItem.productId, {
+        extraPrices: Object.assign({}, prod.extraPrices || {}, newItem.extraPrices)
+      });
+    }
+
     if (!isProvisional) {
       if (inv.type === 'supplier' || inv.type === 'purchase') {
         DB.updateProduct(newItem.productId, { quantity: Unit.roundQty((prod.quantity || 0) + qty) });
-      } else {
+      } else if (prod.fixed !== true) {
+        // A weighed card («غير محدود») has no shelf number to drain: the scale
+        // is its only quantity source, exactly as at the register.
         if (prod.quantity < qty) {
           alert(t('invoices.insufficientStock').replace('...', newItem.name));
           return;
@@ -2085,7 +3654,7 @@ function saveInvEdit() {
       const priceInput = document.getElementById('editNewPrice_' + newItem._idx);
       if (priceInput) {
         const p = parseFloat(priceInput.value);
-        if (isFinite(p) && p >= 0) price = p;
+        if (isFinite(p) && p >= 0) price = Math.max(p, Math.max(0, parseFloat(prod.minPrice) || 0));
       }
       const discInput = document.getElementById('editNewDisc_' + newItem._idx);
       if (discInput) {
@@ -2094,7 +3663,7 @@ function saveInvEdit() {
       }
     }
     const total = (price * qty) - discount;
-    updatedItems.push(Object.assign({
+    const item = Object.assign({
       productId: newItem.productId,
       barcode: newItem.barcode,
       name: newItem.name,
@@ -2104,7 +3673,11 @@ function saveInvEdit() {
       originalPrice: newItem.originalPrice || fallbackPrice,
       lineDiscount: discount,
       discount,
-    }, Unit.snapshot(prod || newItem)));
+      purchaseDiscountPct: parseFloat(newItem.purchaseDiscountPct) || 0,
+      realBuyPrice: parseFloat(newItem.realBuyPrice) || 0
+    }, Unit.snapshot(prod || newItem));
+    if (newItem.qtyDecimals != null) item.qtyDecimals = newItem.qtyDecimals;
+    updatedItems.push(item);
     newTotalAmount += total;
     changes.push({ name: newItem.name, oldQty: 0, newQty: qty, diff: qty });
     totalChanged = true;
@@ -2113,27 +3686,83 @@ function saveInvEdit() {
   _invEditNewItems = [];
   _invEditRemoved = [];
 
-  if (!totalChanged) {
+  // Purchase invoices keep their stored invoice-level discount: recompute the
+  // REAL total from every line (product discount + global discount) instead of
+  // the gross sum, so editing a discounted purchase never wipes the discount.
+  let purDiscountFields = null;
+  if (isPurFamily && typeof PurchaseCore !== 'undefined' && PurchaseCore && PurchaseCore.compute) {
+    const pd = PurchaseCore.compute(
+      updatedItems.map(it => ({
+        qty: it.qty,
+        buyPrice: it.price,
+        purchaseDiscountPct: it.purchaseDiscountPct || 0
+      })),
+      inv.purchaseDiscountMode || 'percent',
+      inv.purchaseDiscountValue || 0
+    );
+    pd.lines.forEach((line, i) => {
+      const it = updatedItems[i];
+      if (!it) return;
+      it.purchaseDiscountPct = line.purchaseDiscountPct;
+      it.realBuyPrice = line.realBuyPrice;
+      it.realTotal = line.realTotal;
+      it.globalDiscount = line.globalDiscount;
+    });
+    newTotalAmount = pd.total;
+    purDiscountFields = {
+      purchaseDiscountMode: pd.mode,
+      purchaseDiscountValue: pd.value,
+      purchaseDiscountAmount: pd.globalDiscountAmount,
+      purchaseProductDiscount: pd.productDiscountAmount,
+      purchaseGross: pd.gross
+    };
+  }
+
+  if (!totalChanged && !paidChanged) {
     alert(t('invoices.noChangesMade'));
     return;
   }
-
   // Update invoice
   const oldTotal = inv.totalAmount;
   inv.totalAmount = newTotalAmount;
   const isSaleEdit = inv.type !== 'supplier' && inv.type !== 'purchase';
-  const paidBefore = DB.getInvoicePaidAmount(_invDetailId);
-  if (isSaleEdit) DB.reduceInvoicePayments(_invDetailId, newTotalAmount);
-  const actualPaid = DB.getInvoicePaidAmount(_invDetailId);
-  if (actualPaid > newTotalAmount) inv.paidAmount = newTotalAmount;
-  else inv.paidAmount = actualPaid;
+  // المبلغ المدفوع (المصدر: سطور الدفعات) قبل التعديل — أُلقط مبكرًا في الأعلى.
+  // المبلغ (المدفوع) الجديد after reconciliation.
+  let newPaid;
+  if (paidChanged && explicitPaid !== null) {
+    newPaid = explicitPaid;
+    DB.setInvoicePaid(_invDetailId, explicitPaid, { note: t('invoices.paidEditNote') });
+  } else if (isSaleEdit) {
+    DB.reduceInvoicePayments(_invDetailId, newTotalAmount);
+    newPaid = DB.getInvoicePaidAmount(_invDetailId);
+  } else {
+    newPaid = paidBefore;
+  }
+  if (isSaleEdit && !(paidChanged && explicitPaid !== null)) {
+    const actualPaid = DB.getInvoicePaidAmount(_invDetailId);
+    if (actualPaid > newTotalAmount) inv.paidAmount = newTotalAmount;
+    else inv.paidAmount = actualPaid;
+  } else {
+    inv.paidAmount = newPaid;
+  }
 
   const updateData = { items: updatedItems, totalAmount: newTotalAmount, paidAmount: inv.paidAmount };
+  if (purDiscountFields) Object.assign(updateData, purDiscountFields);
+  const dateInput = document.getElementById('editInvDate');
+  const newDateTs = dateInput ? _invInputToDate(dateInput.value) : null;
+  if (newDateTs) { updateData.createdAt = newDateTs; updateData.date = newDateTs; inv.createdAt = newDateTs; inv.date = newDateTs; }
   if (inv.type !== 'supplier' && inv.type !== 'purchase') {
     const newProfit = updatedItems.reduce((s, item) => {
       const prod = DB.getProduct(item.productId);
-      const buyPrice = prod ? (prod.buyPrice || 0) : 0;
-      return s + (((item.price - buyPrice) * item.qty) - (item.discount || 0));
+      const isBundle = typeof SaleCore !== 'undefined' && SaleCore.isBundleItem && SaleCore.isBundleItem(item);
+      const buyPrice = isBundle
+        ? (parseFloat(item.costPrice) || 0)
+        : ((typeof PurchaseCore !== 'undefined' && PurchaseCore && typeof PurchaseCore.itemCost === 'function')
+          ? PurchaseCore.itemCost(item, prod)
+          : (prod ? (prod.buyPrice || 0) : 0));
+      // A partial component return removes revenue but the component itself is
+      // back on the shelf; its stored credit is what left the invoice total.
+      return s + (((item.price - buyPrice) * item.qty) - (item.discount || 0) - (parseFloat(item.bundleReturnCredit) || 0));
     }, 0);
     updateData.profit = newProfit;
   }
@@ -2145,11 +3774,16 @@ function saveInvEdit() {
     updateData.timbreFiscal = newTimbre;
   }
   DB.updateInvoice(_invDetailId, updateData);
+  if (newDateTs) {
+    const allPmts = DB.getPayments();
+    let chg = false;
+    allPmts.forEach(p => { if (p.invoiceId === _invDetailId) { p.createdAt = newDateTs; chg = true; } });
+    if (chg) DB.savePayments(allPmts);
+  }
 
-  // Update customer/supplier balance if total changed
-  if (oldTotal !== newTotalAmount) {
-    const diff = newTotalAmount - oldTotal;
-    const balanceChange = (isSaleEdit && newTotalAmount < paidBefore) ? (paidBefore - oldTotal) : diff;
+  // Update customer/supplier balance if total or paid changed
+  if (oldTotal !== newTotalAmount || paidChanged) {
+    const balanceChange = (newTotalAmount - newPaid) - (oldTotal - paidBefore);
     if (inv.customerId) {
       const customers = DB.getCustomers();
       const cIdx = customers.findIndex(c => c.id === inv.customerId);
@@ -2164,7 +3798,7 @@ function saveInvEdit() {
       if (sIdx !== -1) {
         // بيع لمورد (sup_sale): الإنشاء طرح المبلغ المستحق من رصيد المورد،
         // فالتعديل هنا يعكس نفس الإتجاه (النقص عندما يرتفع الإجمالي والعكس).
-        const supAdjustment = (inv.type === 'sup_sale') ? -balanceChange : diff;
+        const supAdjustment = (inv.type === 'sup_sale') ? -balanceChange : balanceChange;
         suppliers[sIdx].balance = (parseFloat(suppliers[sIdx].balance) || 0) + supAdjustment;
         DB.saveSuppliers(suppliers);
       }
@@ -2442,6 +4076,607 @@ function _injectInvTransferFooterButton(inv) {
   if (del) footer.insertBefore(btn, del); else footer.appendChild(btn);
 }
 
+// ===== CONVERT A SALE INVOICE TO A CUSTOMER ACCOUNT =====
+// A walk-in sale (customerId:null) becomes a normal account sale: the whole
+// invoice amount lands on the chosen customer's balance and the anonymous cash
+// receipts already recorded on the invoice are cancelled. Reassigning an
+// invoice that is already linked moves only the outstanding remainder (money
+// already collected stays collected). The arithmetic lives in ConvertCore.
+var _invConvertInvoiceId = null;
+var _invConvertTargetId = null;
+var _invConvertTab = 'existing';
+var _invConvertMatches = [];
+var _invConvertActive = -1;
+
+function _invConvertR2(v) {
+  const n = parseFloat(v) || 0;
+  return Math.round((n + (n >= 0 ? 1e-9 : -1e-9)) * 100) / 100;
+}
+
+// Cash actually recorded on this invoice. Legacy invoices may only carry
+// inv.paidAmount (no payment row), so fall back to it when no rows exist.
+function _invConvertRecordedCash(inv) {
+  if (!inv || !inv.id) return 0;
+  const paid = _invConvertR2(DB.getInvoicePaidAmount(inv.id));
+  if (paid > 0) return paid;
+  const rows = (typeof DB.getInvoicePayments === 'function') ? (DB.getInvoicePayments(inv.id) || []) : [];
+  if (!rows.length) return Math.max(0, _invConvertR2(inv.paidAmount));
+  return Math.max(0, paid);
+}
+
+function _invConvertHasReturns(inv) {
+  if (!inv || !inv.id) return false;
+  return (DB.getReturns() || []).some(r => r && (r.invoiceId === inv.id || r.relatedTo === inv.id));
+}
+
+function _invConvertEligibility(inv) {
+  if (!inv) return { ok: false, error: 'not_sale' };
+  if (inv.type !== 'customer') return { ok: false, error: 'not_sale' };
+  if (inv.isProvisional) return { ok: false, error: 'provisional' };
+  if (_invConvertHasReturns(inv)) return { ok: false, error: 'has_returns' };
+  if (!(_invConvertR2(inv.totalAmount) > 0)) return { ok: false, error: 'zero_total' };
+  return { ok: true };
+}
+
+function _invConvertCurrentName(inv) {
+  if (!inv) return '';
+  if (inv.customerId) {
+    const c = DB.getCustomer(inv.customerId);
+    if (c) return c.name;
+  }
+  return inv.walkinName || inv.walkinCustomerName || t('invoices.convertWalkinLabel');
+}
+
+function _invConvertContext(inv) {
+  const total = Math.max(0, _invConvertR2(inv && inv.totalAmount));
+  const recordedCash = _invConvertRecordedCash(inv);
+  const creditUsed = Math.max(0, _invConvertR2(inv && inv.creditUsed));
+  return {
+    total,
+    recordedCash,
+    creditUsed,
+    effectivePaid: _invConvertR2(recordedCash + creditUsed),
+    isWalkin: !(inv && inv.customerId)
+  };
+}
+
+function _invConvertBuildPlan(inv, targetId) {
+  if (typeof ConvertCore === 'undefined' || !ConvertCore || !ConvertCore.plan) {
+    return { ok: false, error: 'unavailable' };
+  }
+  const ctx = _invConvertContext(inv);
+  return ConvertCore.plan({
+    type: inv.type,
+    isProvisional: !!inv.isProvisional,
+    hasReturns: _invConvertHasReturns(inv),
+    targetCustomerId: targetId || '',
+    currentCustomerId: (inv && inv.customerId) || '',
+    totalAmount: ctx.total,
+    recordedCash: ctx.recordedCash,
+    creditUsed: ctx.creditUsed,
+    effectivePaid: ctx.effectivePaid
+  });
+}
+
+function _invConvertErrorText(code) {
+  const map = {
+    not_sale: 'invoices.convertErrNotSale',
+    provisional: 'invoices.convertErrProvisional',
+    has_returns: 'invoices.convertErrHasReturns',
+    no_customer: 'invoices.convertErrNoCustomer',
+    same_customer: 'invoices.convertErrSame',
+    zero_total: 'invoices.convertErrZero',
+    unavailable: 'invoices.convertErrUnavailable'
+  };
+  return t(map[code] || 'invoices.convertErrGeneric');
+}
+
+function ensureInvConvertModal() {
+  if (document.getElementById('invConvertModal')) return;
+  const div = document.createElement('div');
+  div.id = 'invConvertModal';
+  div.className = 'modal-overlay';
+  div.style.display = 'none';
+  div.setAttribute('onclick', 'if(event.target===this)closeInvConvert()');
+  div.innerHTML = `
+    <div class="modal inv-convert-modal">
+      <div class="modal-header">
+        <h3><i class="fas fa-user-check"></i> ${t('invoices.convertTitle')}</h3>
+        <button class="modal-close" onclick="closeInvConvert()">&times;</button>
+      </div>
+      <div class="modal-body inv-convert-body">
+        <div id="invConvertSummary" class="inv-convert-summary"></div>
+        <div id="invConvertWarning" class="inv-convert-warning"></div>
+        <div class="inv-convert-tabs" role="tablist">
+          <button type="button" id="invConvertTabExisting" class="inv-convert-tab is-active" onclick="setInvConvertTab('existing')">
+            <i class="fas fa-search"></i> ${t('invoices.convertExisting')}
+          </button>
+          <button type="button" id="invConvertTabNew" class="inv-convert-tab" onclick="setInvConvertTab('new')">
+            <i class="fas fa-user-plus"></i> ${t('invoices.convertNew')}
+          </button>
+        </div>
+
+        <div id="invConvertPaneExisting">
+          <div class="sales-cust-search-row" style="margin-bottom:8px">
+            <div class="sales-cust-search-wrap">
+              <i class="fas fa-search" style="color:var(--silver-500);font-size:12px"></i>
+              <input type="text" id="invConvertSearch" placeholder="${t('invoices.convertSearchPlaceholder')}" dir="rtl" autocomplete="off" oninput="searchInvConvert(this.value)" onkeydown="invConvertKey(event)">
+            </div>
+          </div>
+          <div id="invConvertResults" class="search-results inv-convert-results"></div>
+          <div id="invConvertSelected" class="inv-convert-selected" style="display:none">
+            <i class="fas fa-user-check" style="color:var(--bmw-blue-1);margin-top:2px"></i>
+            <div style="min-width:0;flex:1">
+              <div class="inv-convert-selected-label">${t('invoices.convertSelected')}</div>
+              <strong id="invConvertSelName"></strong>
+              <div id="invConvertPreview" class="inv-convert-preview"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="invConvertPaneNew" style="display:none">
+          <div class="inv-convert-form">
+            <label class="inv-convert-field inv-convert-field-full">
+              <span>${t('invoices.convertNewName')} *</span>
+              <input type="text" id="invConvertNewName" dir="rtl" autocomplete="off" oninput="invConvertNewChanged()">
+            </label>
+            <label class="inv-convert-field">
+              <span>${t('invoices.convertNewPhone')}</span>
+              <input type="text" id="invConvertNewPhone" dir="ltr" autocomplete="off" oninput="invConvertNewChanged()">
+            </label>
+            <label class="inv-convert-field">
+              <span>${t('invoices.convertNewDiscount')}</span>
+              <input type="number" id="invConvertNewDiscount" class="no-spinner" min="0" max="100" step="any" value="0" dir="ltr" oninput="invConvertNewChanged()">
+            </label>
+            <label class="inv-convert-field inv-convert-field-full">
+              <span>${t('invoices.convertNewAddress')}</span>
+              <input type="text" id="invConvertNewAddress" dir="rtl" autocomplete="off" oninput="invConvertNewChanged()">
+            </label>
+            <label class="inv-convert-field inv-convert-field-full">
+              <span>${t('invoices.convertNewType')}</span>
+              <select id="invConvertNewType" onchange="invConvertNewChanged()">
+                <option value="unit">${t('invoices.convertNewTypeUnit')}</option>
+                <option value="whole">${t('invoices.convertNewTypeWhole')}</option>
+              </select>
+            </label>
+          </div>
+          <div id="invConvertNewPreview" class="inv-convert-hint"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeInvConvert()">${t('common.cancel')}</button>
+        <button class="btn btn-primary" id="invConvertConfirmBtn" onclick="confirmInvConvert()" disabled style="opacity:0.5">
+          <i class="fas fa-check"></i> ${t('invoices.convertConfirm')}
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(div);
+}
+
+function openInvConvert(invoiceId) {
+  if (!_canManageInvoices()) { alert(t('invoices.noPermission')); return; }
+  const id = invoiceId || _invDetailId;
+  const inv = id ? DB.getInvoice(id) : null;
+  if (!inv) return;
+  const elig = _invConvertEligibility(inv);
+  if (!elig.ok) { alert(_invConvertErrorText(elig.error)); return; }
+
+  _invConvertInvoiceId = inv.id;
+  _invConvertTargetId = null;
+  _invConvertMatches = [];
+  _invConvertActive = -1;
+
+  ensureInvConvertModal();
+  const m = document.getElementById('invConvertModal');
+  if (!m._host) m._host = m.parentNode;
+  if (m.parentNode !== document.body) document.body.appendChild(m);
+
+  const search = document.getElementById('invConvertSearch');
+  if (search) search.value = '';
+  const results = document.getElementById('invConvertResults');
+  if (results) results.innerHTML = '';
+  const selected = document.getElementById('invConvertSelected');
+  if (selected) selected.style.display = 'none';
+  ['invConvertNewName', 'invConvertNewPhone', 'invConvertNewAddress'].forEach(el => {
+    const input = document.getElementById(el);
+    if (input) input.value = '';
+  });
+  const disc = document.getElementById('invConvertNewDiscount');
+  if (disc) disc.value = '0';
+  const type = document.getElementById('invConvertNewType');
+  if (type) type.value = 'unit';
+
+  setInvConvertTab('existing');
+  renderInvConvertSummary();
+  m.style.display = 'flex';
+  searchInvConvert('');
+  setTimeout(() => { const el = document.getElementById('invConvertSearch'); if (el) el.focus(); }, 150);
+}
+
+function closeInvConvert() {
+  const m = document.getElementById('invConvertModal');
+  if (m) m.style.display = 'none';
+}
+
+function setInvConvertTab(tab) {
+  _invConvertTab = (tab === 'new') ? 'new' : 'existing';
+  const existingBtn = document.getElementById('invConvertTabExisting');
+  const newBtn = document.getElementById('invConvertTabNew');
+  const existingPane = document.getElementById('invConvertPaneExisting');
+  const newPane = document.getElementById('invConvertPaneNew');
+  if (existingBtn) existingBtn.classList.toggle('is-active', _invConvertTab === 'existing');
+  if (newBtn) newBtn.classList.toggle('is-active', _invConvertTab === 'new');
+  if (existingPane) existingPane.style.display = _invConvertTab === 'existing' ? '' : 'none';
+  if (newPane) newPane.style.display = _invConvertTab === 'new' ? '' : 'none';
+  renderInvConvertSummary();
+  if (_invConvertTab === 'new') {
+    setTimeout(() => { const el = document.getElementById('invConvertNewName'); if (el) el.focus(); }, 80);
+  }
+}
+
+function renderInvConvertSummary() {
+  const inv = _invConvertInvoiceId ? DB.getInvoice(_invConvertInvoiceId) : null;
+  if (!inv) return;
+  const ctx = _invConvertContext(inv);
+  const currentName = _invConvertCurrentName(inv);
+
+  const summary = document.getElementById('invConvertSummary');
+  if (summary) {
+    summary.innerHTML = `
+      <span class="inv-convert-chip"><i class="fas fa-hashtag"></i> <b>${escHtml(inv.invoiceNumber || '—')}</b></span>
+      <span class="inv-convert-chip"><i class="fas fa-user"></i> ${escHtml(currentName)}</span>
+      <span class="inv-convert-chip"><i class="fas fa-coins"></i> <b dir="ltr">${_invMoney(ctx.total)}</b></span>
+      ${ctx.recordedCash > 0 ? `<span class="inv-convert-chip inv-convert-chip-cash"><i class="fas fa-money-bill-wave"></i> ${escHtml(t('invoices.convertCashChip'))} <b dir="ltr">${_invMoney(ctx.recordedCash)}</b></span>` : ''}`;
+  }
+
+  const warning = document.getElementById('invConvertWarning');
+  if (warning) {
+    if (ctx.isWalkin) {
+      warning.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${escHtml(
+        t('invoices.convertWalkinNotice')
+          .replace('{amount}', _invMoney(ctx.total))
+          .replace('{cash}', _invMoney(ctx.recordedCash))
+      )}`;
+    } else {
+      const remaining = Math.max(0, _invConvertR2(ctx.total - ctx.effectivePaid));
+      warning.innerHTML = `<i class="fas fa-info-circle"></i> ${escHtml(
+        t('invoices.convertReassignNotice')
+          .replace('{from}', currentName)
+          .replace('{amount}', _invMoney(remaining))
+      )}`;
+    }
+  }
+
+  if (_invConvertTab === 'existing') {
+    const target = _invConvertTargetId ? DB.getCustomers().find(c => c.id === _invConvertTargetId) : null;
+    const sel = document.getElementById('invConvertSelected');
+    if (target && sel) {
+      const nameEl = document.getElementById('invConvertSelName');
+      if (nameEl) nameEl.textContent = target.name;
+      const prev = document.getElementById('invConvertPreview');
+      if (prev) prev.innerHTML = _invConvertPreviewHTML(inv, target);
+      sel.style.display = 'flex';
+    } else if (sel) {
+      sel.style.display = 'none';
+    }
+  } else {
+    const prev = document.getElementById('invConvertNewPreview');
+    if (prev) prev.innerHTML = _invConvertNewPreviewHTML(inv);
+  }
+
+  _invConvertRefreshConfirm();
+}
+
+function _invConvertPreviewHTML(inv, target) {
+  const plan = _invConvertBuildPlan(inv, target.id);
+  if (!plan.ok) {
+    return `<div class="inv-convert-error"><i class="fas fa-ban"></i> ${escHtml(_invConvertErrorText(plan.error))}</div>`;
+  }
+  const bal = parseFloat(target.balance) || 0;
+  const after = _invConvertR2(bal + plan.newCustomerDelta);
+  const moveTxt = plan.mode === 'walkin'
+    ? t('invoices.convertPreviewFull').replace('{amount}', _invMoney(plan.newCustomerDelta))
+    : t('invoices.convertPreviewRemaining').replace('{amount}', _invMoney(plan.newCustomerDelta));
+  const oldTxt = plan.oldCustomerDelta
+    ? `<div class="inv-convert-preview-old">${escHtml(t('invoices.convertPreviewOld').replace('{amount}', _invMoney(Math.abs(plan.oldCustomerDelta))))}</div>`
+    : '';
+  return `${escHtml(moveTxt)}
+    <div class="inv-convert-preview-bal">
+      <span>${escHtml(t('invoices.convertBalanceNow'))}: <b dir="ltr">${_invMoney(bal)}</b></span>
+      <i class="fas fa-arrow-left" style="font-size:10px"></i>
+      <span>${escHtml(t('invoices.convertBalanceAfter'))}: <b dir="ltr">${_invMoney(after)}</b></span>
+    </div>
+    ${oldTxt}`;
+}
+
+function _invConvertNewValues() {
+  const val = (id) => {
+    const el = document.getElementById(id);
+    return el ? String(el.value || '').trim() : '';
+  };
+  const discount = Math.min(100, Math.max(0, parseFloat(val('invConvertNewDiscount')) || 0));
+  return {
+    name: val('invConvertNewName'),
+    phone: val('invConvertNewPhone'),
+    address: val('invConvertNewAddress'),
+    discount: discount,
+    type: val('invConvertNewType') === 'whole' ? 'whole' : 'unit'
+  };
+}
+
+function _invConvertNewPreviewHTML(inv) {
+  const vals = _invConvertNewValues();
+  if (!vals.name) return escHtml(t('invoices.convertNewHint'));
+  const ctx = _invConvertContext(inv);
+  const delta = ctx.isWalkin
+    ? ctx.total
+    : Math.max(0, _invConvertR2(ctx.total - ctx.effectivePaid));
+  return `<i class="fas fa-user-plus"></i> ${escHtml(t('invoices.convertWillCreate').replace('{name}', vals.name))}
+    <div style="margin-top:4px">${escHtml(t('invoices.convertWillMove').replace('{amount}', _invMoney(delta)))}</div>`;
+}
+
+function invConvertNewChanged() {
+  const inv = _invConvertInvoiceId ? DB.getInvoice(_invConvertInvoiceId) : null;
+  if (!inv) return;
+  const prev = document.getElementById('invConvertNewPreview');
+  if (prev) prev.innerHTML = _invConvertNewPreviewHTML(inv);
+  _invConvertRefreshConfirm();
+}
+
+function _invConvertRefreshConfirm() {
+  const btn = document.getElementById('invConvertConfirmBtn');
+  if (!btn) return;
+  let ready = false;
+  if (_invConvertTab === 'new') {
+    ready = !!_invConvertNewValues().name;
+  } else if (_invConvertTargetId) {
+    const inv = _invConvertInvoiceId ? DB.getInvoice(_invConvertInvoiceId) : null;
+    ready = !!(inv && _invConvertBuildPlan(inv, _invConvertTargetId).ok);
+  }
+  btn.disabled = !ready;
+  btn.style.opacity = ready ? '1' : '0.5';
+}
+
+function searchInvConvert(q) {
+  const results = document.getElementById('invConvertResults');
+  if (!results) return;
+  const needle = String((typeof normSearch === 'function' ? normSearch(q || '') : (q || ''))).toLowerCase();
+  const inv = _invConvertInvoiceId ? DB.getInvoice(_invConvertInvoiceId) : null;
+  const currentId = inv ? inv.customerId : null;
+  let matches = DB.getCustomers().filter(c => !needle
+    || String(c.name || '').toLowerCase().includes(needle)
+    || (c.phone && String(c.phone).includes(needle)));
+  matches.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ar'));
+  _invConvertMatches = matches.slice(0, 60);
+  _invConvertActive = _invConvertMatches.length ? 0 : -1;
+  if (!matches.length) {
+    results.innerHTML = `<div class="search-result-item disabled">${t('invoices.convertNoResults')}</div>`;
+    return;
+  }
+  results.innerHTML = _invConvertMatches.map((c, i) => {
+    const isCurrent = c.id === currentId;
+    return `<div class="search-result-item inv-xfer-row${i === _invConvertActive ? ' active' : ''}" data-idx="${i}" onclick="selectInvConvert('${c.id}')">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%">
+        <div style="min-width:0">
+          <strong>${escHtml(c.name)}${isCurrent ? ` <span class="text-muted" style="font-size:10px">(${escHtml(t('invoices.convertCurrentTag'))})</span>` : ''}</strong>
+          <div class="text-muted" style="font-size:11px">${c.phone ? escHtml(c.phone) : ''}${c.address ? ' · ' + escHtml(c.address) : ''}</div>
+        </div>
+        <div class="inv-convert-bal">${invPartyBalanceHTML('customer', c.balance, '11px')}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _invConvertHighlight(idx) {
+  const rows = document.querySelectorAll('#invConvertResults .inv-xfer-row');
+  if (!rows.length) return;
+  if (idx < 0) idx = rows.length - 1;
+  if (idx >= rows.length) idx = 0;
+  _invConvertActive = idx;
+  rows.forEach((r, i) => r.classList.toggle('active', i === idx));
+  if (rows[idx] && rows[idx].scrollIntoView) rows[idx].scrollIntoView({ block: 'nearest' });
+}
+
+function invConvertKey(e) {
+  if (e.key === 'Escape') { e.preventDefault(); closeInvConvert(); return; }
+  if (e.key === 'ArrowDown') { e.preventDefault(); _invConvertHighlight(_invConvertActive + 1); return; }
+  if (e.key === 'ArrowUp') { e.preventDefault(); _invConvertHighlight(_invConvertActive - 1); return; }
+  if (e.key === 'Enter') { e.preventDefault(); pickFirstInvConvert(); return; }
+}
+
+function pickFirstInvConvert() {
+  const rows = document.querySelectorAll('#invConvertResults .inv-xfer-row');
+  if (!rows.length) return;
+  const idx = (_invConvertActive >= 0 && _invConvertActive < rows.length) ? _invConvertActive : 0;
+  const m = (rows[idx].getAttribute('onclick') || '').match(/'([^']+)'/);
+  if (m) selectInvConvert(m[1]);
+}
+
+function selectInvConvert(id) {
+  const c = DB.getCustomers().find(x => x.id === id);
+  if (!c) return;
+  _invConvertTargetId = c.id;
+  const search = document.getElementById('invConvertSearch');
+  if (search) search.value = c.name;
+  const results = document.getElementById('invConvertResults');
+  if (results) results.innerHTML = '';
+  renderInvConvertSummary();
+}
+
+function _invAdjustCustomerBalance(customerId, delta) {
+  const d = _invConvertR2(delta);
+  if (!customerId || !d) return;
+  const customers = DB.getCustomers();
+  const idx = customers.findIndex(c => c.id === customerId);
+  if (idx === -1) return;
+  customers[idx].balance = _invConvertR2((parseFloat(customers[idx].balance) || 0) + d);
+  customers[idx].updatedAt = Date.now();
+  DB.saveCustomers(customers);
+}
+
+// Discount records made at sale time carry the (possibly blank) walk-in
+// customer. Re-attributing them keeps the discounts page/report consistent
+// with the new account holder after a conversion or reassignment.
+function _invConvertRetagDiscounts(invoiceId, customerId, customerName) {
+  if (!invoiceId || !customerId) return;
+  if (typeof DB.getDiscounts !== 'function' || typeof DB.saveDiscounts !== 'function') return;
+  const list = DB.getDiscounts();
+  let changed = false;
+  list.forEach(d => {
+    if (d && d.invoiceId === invoiceId && (d.customerId !== customerId || d.customerName !== customerName)) {
+      d.customerId = customerId;
+      d.customerName = customerName || '';
+      changed = true;
+    }
+  });
+  if (changed) DB.saveDiscounts(list);
+}
+
+function confirmInvConvert() {
+  if (!_invConvertInvoiceId) return;
+  const inv = DB.getInvoice(_invConvertInvoiceId);
+  if (!inv) return;
+
+  let target = null;
+  let isNew = false;
+  if (_invConvertTab === 'new') {
+    const vals = _invConvertNewValues();
+    if (!vals.name) { alert(t('invoices.convertNameRequired')); return; }
+    target = vals;
+    isNew = true;
+  } else {
+    target = DB.getCustomers().find(c => c.id === _invConvertTargetId);
+    if (!target) { alert(t('invoices.convertSelectTarget')); return; }
+  }
+
+  // Validate everything on the untouched invoice before writing anything.
+  const plan = _invConvertBuildPlan(inv, isNew ? '__new_convert_target__' : target.id);
+  if (!plan.ok) { alert(_invConvertErrorText(plan.error)); return; }
+
+  const oldName = _invConvertCurrentName(inv);
+  const msg = (plan.mode === 'walkin')
+    ? t('invoices.convertConfirmWalkin')
+        .replace('{name}', target.name)
+        .replace('{amount}', _invMoney(plan.total))
+        .replace('{cash}', _invMoney(plan.cancelledCash))
+    : t('invoices.convertConfirmReassign')
+        .replace('{from}', oldName)
+        .replace('{to}', target.name)
+        .replace('{amount}', _invMoney(plan.newCustomerDelta));
+  if (!confirm(msg)) return;
+
+  if (isNew) {
+    target = DB.addCustomer({
+      name: target.name,
+      phone: target.phone || '',
+      address: target.address || '',
+      type: target.type || 'unit',
+      discount: target.discount || 0
+    });
+    if (target && typeof DB.logAudit === 'function') {
+      DB.logAudit({ action: 'add', entity: 'customer', entityId: target.id, detail: target.name });
+    }
+  }
+  if (!target || !target.id) return;
+
+  // Capture the old link before DB.updateInvoice mutates the live object.
+  const oldCustomerId = inv.customerId || null;
+
+  if (plan.mode === 'walkin') {
+    // Cancel the anonymous cash receipts and move the full amount to the account.
+    if (plan.cancelPayments && typeof DB.deletePaymentsByInvoice === 'function') {
+      DB.deletePaymentsByInvoice(inv.id);
+    }
+    DB.updateInvoice(inv.id, {
+      customerId: target.id,
+      paidAmount: 0,
+      convertedAt: Date.now(),
+      convertedFromWalkin: true,
+      convertedFromCustomerName: oldName,
+      conversionCancelledPayments: plan.cancelledCash,
+      conversionCancelledCash: plan.cancelledCash,
+      conversionTotal: plan.total
+    });
+    _invAdjustCustomerBalance(target.id, plan.newCustomerDelta);
+  } else {
+    // Reassignment: keep collected money, move only the outstanding remainder.
+    if (plan.retagPayments && plan.recordedCash > 0) {
+      const payments = DB.getPayments();
+      let changed = false;
+      payments.forEach(p => {
+        if (p.invoiceId === inv.id) { p.customerId = target.id; changed = true; }
+      });
+      if (changed && typeof DB.savePayments === 'function') DB.savePayments(payments);
+    }
+    DB.updateInvoice(inv.id, {
+      customerId: target.id,
+      convertedAt: Date.now(),
+      convertedFromWalkin: false,
+      convertedFromCustomerName: oldName,
+      reassignedFromCustomerId: oldCustomerId,
+      conversionCancelledPayments: 0,
+      conversionCancelledCash: 0,
+      conversionTotal: plan.total
+    });
+    _invAdjustCustomerBalance(oldCustomerId, plan.oldCustomerDelta);
+    _invAdjustCustomerBalance(target.id, plan.newCustomerDelta);
+  }
+  _invConvertRetagDiscounts(inv.id, target.id, target.name);
+
+  if (typeof DB.logAudit === 'function') {
+    const moved = (plan.mode === 'walkin') ? plan.total : plan.newCustomerDelta;
+    const cancelTxt = plan.cancelledCash > 0 ? ` (إلغاء مقبوض DA${fmtMoney(plan.cancelledCash)})` : '';
+    DB.logAudit({
+      action: 'update', entity: 'invoice', entityId: inv.id,
+      detail: `تحويل فاتورة بيع: ${oldName} → ${target.name} — DA${fmtMoney(moved)}${cancelTxt}`
+    });
+  }
+
+  closeInvConvert();
+  if (typeof refreshInvoiceList === 'function') refreshInvoiceList();
+  if (typeof filterInvoices === 'function') filterInvoices();
+  if (_invDetailId === inv.id) showInvDetail(inv.id);
+  alert(t('invoices.convertDone').replace('{name}', target.name));
+}
+
+// Quick conversion entry point in the invoice-detail footer (managers and
+// employees with invoice-management permission only).
+function _injectInvConvertFooterButton(inv) {
+  const footer = document.getElementById('invDetailFooter');
+  if (!footer) return;
+  const old = footer.querySelector('#invDetailConvertBtn');
+  if (old) old.remove();
+  if (!inv || !_canManageInvoices() || !_invConvertEligibility(inv).ok) return;
+  const btn = document.createElement('button');
+  btn.id = 'invDetailConvertBtn';
+  btn.className = 'btn';
+  btn.style.cssText = 'display:flex;align-items:center;gap:5px;background:#eefbf3;border:1px solid #bfe6cd;color:#1b7a43';
+  btn.innerHTML = `<i class="fas fa-user-check"></i> ${t('invoices.convertBtn')}`;
+  btn.addEventListener('click', () => openInvConvert(inv.id));
+  const del = footer.querySelector('.btn-danger');
+  if (del) footer.insertBefore(btn, del); else footer.appendChild(btn);
+}
+
+// Return-invoice entry point in the invoice-detail footer. Shown only when the
+// shared returns store still holds at least one return for this invoice, so the
+// button disappears by itself once the last return is deleted.
+function _injectReturnInvoiceFooterButton(inv) {
+  const footer = document.getElementById('invDetailFooter');
+  if (!footer) return;
+  const old = footer.querySelector('#invDetailReturnBtn');
+  if (old) old.remove();
+  if (!inv || !_invHasReturns(inv.id)) return;
+  if (!window.ReturnInvoice || typeof window.ReturnInvoice.print !== 'function') return;
+  const btn = document.createElement('button');
+  btn.id = 'invDetailReturnBtn';
+  btn.className = 'btn';
+  btn.style.cssText = 'display:flex;align-items:center;gap:5px;background:#fff5f5;border:1px solid #f0b8b8;color:#b71c1c';
+  btn.innerHTML = `<i class="fas fa-undo"></i> ${t('invoices.printReturnInvoice')}`;
+  btn.addEventListener('click', () => window.ReturnInvoice.print(inv.id));
+  const del = footer.querySelector('.btn-danger');
+  if (del) footer.insertBefore(btn, del); else footer.appendChild(btn);
+}
+
 function deleteInvoiceFromDetail() {
   if (!_invDetailId) return;
   if (!confirm(t('invoices.deleteConfirm'))) return;
@@ -2529,10 +4764,22 @@ function deleteInvoiceFromDetail() {
     raw.products = allProducts;
     DB._saveRawData(raw);
   } else if (!inv.isProvisional && inv.type !== 'dispatch') {
+    const isSaleType = inv.type === 'customer' || inv.type === 'waybill' || inv.type === 'sup_sale';
     (inv.items || []).forEach(item => {
+      // A bundle row has no card of its own: give back the components the
+      // customer still holds (already-returned pieces stay where they are).
+      if (isSaleType && typeof SaleCore !== 'undefined' && SaleCore.isBundleItem && SaleCore.isBundleItem(item)) {
+        SaleCore.bundleHeldComponents(DB, item).forEach(c => {
+          if (c.heldQty <= 0) return;
+          const cp = DB.getProduct(c.productId);
+          if (!cp || cp.fixed === true) return;
+          DB.updateProduct(c.productId, { quantity: Unit.roundQty((cp.quantity || 0) + c.heldQty) });
+        });
+        return;
+      }
       const prod = DB.getProduct(item.productId);
       if (prod) {
-        if (inv.type === 'customer' || inv.type === 'waybill' || inv.type === 'sup_sale') {
+        if (isSaleType) {
           DB.updateProduct(item.productId, { quantity: prod.quantity + item.qty });
         } else {
           const newQty = prod.quantity - item.qty;
@@ -2639,7 +4886,7 @@ function showTransferEditSection(inv) {
     </p>
     <div style="padding:10px;background:#fff3e0;border:1px solid #ffcc80;border-radius:8px;margin-bottom:14px;font-size:12px;color:#e65100">
       <i class="fas fa-exclamation-triangle" style="margin-left:4px"></i>
-      من: ${escHtml(inv.toName || inv.toCode)} | ${t('invoices.currentTotal')} DA${fmtMoney((inv.totalAmount || 0))}
+      ${t('invoices.transferFromLabel')} ${escHtml(inv.toName || inv.toCode)} | ${t('invoices.currentTotal')} DA${fmtMoney((inv.totalAmount || 0))}
     </div>
     <table class="data-table">
       <thead><tr>
@@ -2843,12 +5090,12 @@ function showWaybillForm(type) {
     document.getElementById('wbRegSection').style.display = 'none';
     document.getElementById('wbFormIcon').className = 'fas fa-file-alt';
     document.getElementById('wbFormTitleText').textContent = t('invoices.typeProforma') + ' — Facture Proforma';
-    document.getElementById('wbConfirmBtnLabel').textContent = 'تسجيل الفاتورة الشكلية';
+    document.getElementById('wbConfirmBtnLabel').textContent = t('invoices.wbConfirmProforma');
   } else {
     document.getElementById('wbRegSection').style.display = 'flex';
     document.getElementById('wbFormIcon').className = 'fas fa-truck';
     document.getElementById('wbFormTitleText').textContent = t('invoices.typeWaybill');
-    document.getElementById('wbConfirmBtnLabel').textContent = 'تسجيل الفاتورة';
+    document.getElementById('wbConfirmBtnLabel').textContent = t('invoices.wbConfirmWaybill');
     document.querySelector('input[name="wbRegMode"][value="real"]').checked = true;
   }
 
@@ -2865,6 +5112,7 @@ function closeWaybillForm() {
 // ===== WAYBILL CUSTOMER =====
 
 function searchWbCustomer(q) {
+  if (q && String(q).trim().length >= 2) { try { DB.logSearch({ query: q, context: 'waybill-customer' }); } catch (e) {} }
   const results = document.getElementById('wbCustResults');
   q = normSearch(q);
   const customers = DB.getCustomers();
@@ -2874,7 +5122,7 @@ function searchWbCustomer(q) {
       ).slice(0, 8)
     : customers.slice(0, 8);
   results.innerHTML = matches.length === 0
-    ? '<div class="search-result-item disabled">لا توجد نتائج</div>'
+    ? '<div class="search-result-item disabled">' + t('invoices.noResults') + '</div>'
     : matches.map(c => `<div class="search-result-item" onclick="selectWbCustomer('${c.id}')">
         <strong>${escHtml(c.name)}</strong>
         <span class="text-muted">${c.phone || ''}</span>
@@ -2916,7 +5164,7 @@ function getWbCustomerData() {
     return c ? { id: c.id, name: c.name, phone: c.phone, address: c.address } : null;
   }
   const name = document.getElementById('wbWalkinName').value.trim();
-  if (!name) { alert('الرجاء إدخال اسم العميل'); return null; }
+  if (!name) { alert(t('invoices.wbCustomerRequired')); return null; }
   return {
     id: null,
     name,
@@ -2943,19 +5191,19 @@ function renderWbProducts(filter) {
       .map(x => x.p);
   }
   if (list.length === 0) {
-    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--silver-500)">لا توجد منتجات</div>';
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--silver-500)">' + t('invoices.wbNoProducts') + '</div>';
     return;
   }
   grid.innerHTML = list.map(p => {
     const inCart = _wbCart.find(i => i.productId === p.id);
-    return `<div class="wb-prod-card" onclick="${p.quantity > 0 ? `addToWbCart('${p.id}')` : ''}" title="${p.quantity <= 0 ? 'غير متوفر' : ''}" style="${p.quantity <= 0 ? 'opacity:0.4;cursor:not-allowed' : ''}">
+    return `<div class="wb-prod-card" onclick="${p.quantity > 0 ? `addToWbCart('${p.id}')` : ''}" title="${p.quantity <= 0 ? t('invoices.wbNotAvailable') : ''}" style="${p.quantity <= 0 ? 'opacity:0.4;cursor:not-allowed' : ''}">
       <div class="wb-prod-name">${escHtml(p.name)}</div>
       <div class="wb-prod-bar">${p.barcode}</div>
       <div class="wb-prod-footer">
         <span class="wb-prod-price">DA${fmtMoney(p.sellPrice)}</span>
         <span class="wb-prod-qty">${p.quantity}</span>
       </div>
-      ${inCart ? '<div style="font-size:10px;color:var(--bmw-blue-1);font-weight:600">✓ في السلة</div>' : ''}
+      ${inCart ? '<div style="font-size:10px;color:var(--bmw-blue-1);font-weight:600">' + t('invoices.wbInCart') + '</div>' : ''}
     </div>`;
   }).join('');
 }
@@ -3102,10 +5350,10 @@ function updateWbPayRemaining() {
   const remaining = Math.max(0, total - paid);
   const el = document.getElementById('wbPayRemaining');
   if (paid >= total) {
-    el.textContent = 'مدفوعة كلياً ✓';
+    el.textContent = t('invoices.wbFullyPaid');
     el.style.color = '#28a745';
   } else if (paid > 0) {
-    el.textContent = 'الباقي: DA' + fmtMoney(remaining);
+    el.textContent = t('invoices.wbRemaining') + fmtMoney(remaining);
     el.style.color = '#e65100';
   } else {
     el.textContent = '';
@@ -3122,7 +5370,7 @@ function setWbFullPay() {
 // ===== WAYBILL CONFIRM =====
 
 function confirmWaybill() {
-  if (_wbCart.length === 0) { alert('السلة فارغة'); return; }
+  if (_wbCart.length === 0) { alert(t('invoices.wbCartEmpty')); return; }
 
   const custData = getWbCustomerData();
   if (!custData) return;
@@ -3201,7 +5449,9 @@ function confirmWaybill() {
   // Calculate waybill profit
   const waybillProfit = items.reduce((s, item) => {
     const prod = DB.getProduct(item.productId);
-    const buyPrice = prod ? (prod.buyPrice || 0) : 0;
+    const buyPrice = (typeof PurchaseCore !== 'undefined' && PurchaseCore && typeof PurchaseCore.itemCost === 'function')
+      ? PurchaseCore.itemCost(item, prod)
+      : (prod ? (prod.buyPrice || 0) : 0);
     return s + ((item.price - buyPrice) * item.qty);
   }, 0);
 
@@ -3226,7 +5476,7 @@ function confirmWaybill() {
       customerId: customerId || null,
       invoiceId: inv.id,
       amount: paidAmount,
-      note: paidAmount >= totalAmount ? 'دفع كامل عند التسليم' : 'دفع جزئي عند التسليم',
+      note: paidAmount >= totalAmount ? t('invoices.wbFullDeliveryNote') : t('invoices.wbPartialDeliveryNote'),
     });
   }
 
@@ -3250,7 +5500,7 @@ function confirmWaybill() {
   if (typeof showInvoicePreview === 'function') {
     showInvoicePreview(inv);
   } else {
-    alert(`تم تسجيل ال${typeLabel} ${inv.invoiceNumber}\nالمبلغ: DA${fmtMoney(totalAmount)}${isProvisional ? '\n(تسجيل شكلي)' : ''}`);
+    alert(t('invoices.wbSavedPrefix') + typeLabel + ' ' + inv.invoiceNumber + '\n' + t('invoices.wbAmountLabel') + fmtMoney(totalAmount) + (isProvisional ? '\n' + t('invoices.wbProvisionalNote') : ''));
   }
 
   // Refresh
@@ -3272,7 +5522,7 @@ function startNewInvoice(type) {
     openInvDispModal();
     return;
   }
-  alert(`سيتم قريباً إضافة نموذج إدخال ${type || ''}`);
+  alert(t('invoices.soonForm').replace('{TYPE}', type || ''));
 }
 
 // ===== DISPATCH INVOICE FORM (فاتورة إرسال) =====
@@ -3361,6 +5611,7 @@ function dispRecalcTotal() {
 
 // --- Supplier search ---
 function searchDispSupplier(q) {
+  if (q && String(q).trim().length >= 2) { try { DB.logSearch({ query: q, context: 'dispatch-supplier' }); } catch (e) {} }
   const results = document.getElementById('dispSupResults');
   q = normSearch(q);
   const suppliers = DB.getSuppliers();
@@ -3370,7 +5621,7 @@ function searchDispSupplier(q) {
       ).slice(0, 8)
     : suppliers.slice(0, 8);
   results.innerHTML = matches.length === 0
-    ? '<div class="search-result-item disabled">لا توجد نتائج</div>'
+    ? '<div class="search-result-item disabled">' + t('invoices.noResults') + '</div>'
     : matches.map(s => `<div class="search-result-item" onclick="selectDispSupplier('${s.id}')">
         <strong>${escHtml(s.name)}</strong>
         <span class="text-muted">${s.phone || ''} ${invPartyBalanceHTML('supplier', s.balance, '11px')}</span>
@@ -3391,6 +5642,7 @@ function selectDispSupplier(id) {
 
 // --- Customer search ---
 function searchDispCustomer(q) {
+  if (q && String(q).trim().length >= 2) { try { DB.logSearch({ query: q, context: 'dispatch-customer' }); } catch (e) {} }
   const results = document.getElementById('dispCustResults');
   q = normSearch(q);
   const customers = DB.getCustomers();
@@ -3400,7 +5652,7 @@ function searchDispCustomer(q) {
       ).slice(0, 8)
     : customers.slice(0, 8);
   results.innerHTML = matches.length === 0
-    ? '<div class="search-result-item disabled">لا توجد نتائج</div>'
+    ? '<div class="search-result-item disabled">' + t('invoices.noResults') + '</div>'
     : matches.map(c => `<div class="search-result-item" onclick="selectDispCustomer('${c.id}')">
         <strong>${escHtml(c.name)}</strong>
         <span class="text-muted">${c.phone || ''} ${invPartyBalanceHTML('customer', c.balance, '11px')}</span>
@@ -3422,21 +5674,21 @@ function selectDispCustomer(id) {
 // --- Confirm ---
 function confirmDispatchInvoice() {
   const totalAmount = parseFloat(document.getElementById('dispAmount').value) || 0;
-  if (totalAmount <= 0) { alert('الرجاء إدخال مبلغ صحيح'); return; }
+  if (totalAmount <= 0) { alert(t('invoices.dispValidAmount')); return; }
 
   // Validate recipient
   let supplierId = null, customerId = null;
   let walkinName = '', walkinPhone = '', walkinAddress = '';
 
   if (_dispRecipientType === 'supplier') {
-    if (!_dispSupplierId) { alert('الرجاء اختيار مورد'); return; }
+    if (!_dispSupplierId) { alert(t('invoices.dispChooseSupplier')); return; }
     supplierId = _dispSupplierId;
   } else if (_dispRecipientType === 'customer') {
-    if (!_dispCustomerId) { alert('الرجاء اختيار عميل'); return; }
+    if (!_dispCustomerId) { alert(t('invoices.dispChooseCustomer')); return; }
     customerId = _dispCustomerId;
   } else {
     walkinName = document.getElementById('dispWalkinName').value.trim();
-    if (!walkinName) { alert('الرجاء إدخال اسم المرسل إليه'); return; }
+    if (!walkinName) { alert(t('invoices.dispRecipientRequired')); return; }
     walkinPhone = document.getElementById('dispWalkinPhone').value.trim();
     walkinAddress = document.getElementById('dispWalkinAddress').value.trim();
   }
@@ -3457,7 +5709,7 @@ function confirmDispatchInvoice() {
   const items = [{
     productId: 'dispatch_' + Date.now(),
     barcode: 'DISPATCH',
-    name: 'مبلغ الإرسال — Montant envoyé',
+    name: t('invoices.dispatchItemName'),
     qty: 1,
     price: invTotal,
     total: invTotal,
@@ -3494,7 +5746,7 @@ function confirmDispatchInvoice() {
       invoiceId: inv.id,
       amount: invTotal,
       type: 'stock_purchase',
-      note: 'فاتورة إرسال — Bon d\'envoi',
+      note: t('invoices.dispatchNoteText'),
       isProvisional: false,
     });
   }
@@ -3510,7 +5762,7 @@ function confirmDispatchInvoice() {
     DB.addPayment({
       amount: invTotal,
       type: 'dispatch',
-      note: 'فاتورة إرسال — Bon d\'envoi',
+      note: t('invoices.dispatchNoteText'),
       isProvisional: false,
     });
 
@@ -3520,7 +5772,7 @@ function confirmDispatchInvoice() {
         customerId,
         invoiceId: inv.id,
         amount: payAmount,
-        note: 'فاتورة إرسال — Bon d\'envoi',
+        note: t('invoices.dispatchNoteText'),
         isProvisional: false,
       });
       // Update invoice paidAmount
@@ -3545,20 +5797,20 @@ function confirmDispatchInvoice() {
     DB.addPayment({
       amount: invTotal,
       type: 'dispatch',
-      note: walkinName ? `فاتورة إرسال — ${walkinName}` : 'فاتورة إرسال — Bon d\'envoi',
+      note: walkinName ? t('invoices.dispatchNoteWalkin').replace('{NAME}', walkinName) : t('invoices.dispatchNoteText'),
       isProvisional: false,
     });
   }
 
   closeInvDispModal();
 
-  let msg = `تم تسجيل فاتورة إرسال بقيمة DA${fmtMoney(invTotal)}`;
-  if (timbreFiscal > 0) msg += ` (طابع جبائي: DA${fmtMoney(timbreFiscal)})`;
-  if (supplierId) msg += '\nالمبلغ خصم من رصيد المورد';
+  let msg = t('invoices.dispSavedPrefix') + fmtMoney(invTotal);
+  if (timbreFiscal > 0) msg += ' ' + t('invoices.dispTimbrePart') + fmtMoney(timbreFiscal) + ')';
+  if (supplierId) msg += '\n' + t('invoices.dispSupplierDeduct');
   if (customerId) {
     const payAmount = Math.min(parseFloat(document.getElementById('dispPayAmount').value) || 0, totalAmount);
-    msg += `\nالمبلغ مسجل كمصروف DA${fmtMoney(invTotal)}`;
-    if (payAmount > 0) msg += `، والدفعة الأولى DA${fmtMoney(payAmount)} إيراد — الباقي DA${fmtMoney((totalAmount - payAmount))} كدين على العميل`;
+    msg += '\n' + t('invoices.dispExpenseLabel') + fmtMoney(invTotal);
+    if (payAmount > 0) msg += t('invoices.dispCustomerSummary').replace('{PAY}', fmtMoney(payAmount)).replace('{REMAIN}', fmtMoney((totalAmount - payAmount)));
   }
   alert(msg);
 
@@ -3570,10 +5822,81 @@ function confirmDispatchInvoice() {
 
 var _purCart = [];
 var _purCartSupplierId = null;
+// Global invoice discount: percentage by default, or a fixed DA amount whose
+// remainder is absorbed by the last line (see purchase-core.js).
+var _purDiscountMode = 'percent';
+var _purSensitiveOn = false;
+
+function _purComputeCart() {
+  const value = parseFloat((document.getElementById('purDiscValue') || {}).value) || 0;
+  if (typeof PurchaseCore !== 'undefined' && PurchaseCore && PurchaseCore.compute) {
+    return PurchaseCore.compute(_purCart, _purDiscountMode, value);
+  }
+  // Defensive fallback: never break the form if the shared core is missing.
+  const lines = _purCart.map((it, i) => {
+    const gross = Math.round((it.qty * it.buyPrice) * 100) / 100;
+    return { index: i, qty: it.qty, buyPrice: it.buyPrice, purchaseDiscountPct: 0, gross: gross, productDiscount: 0, afterProduct: gross, globalDiscount: 0, realTotal: gross, realBuyPrice: it.buyPrice };
+  });
+  const total = Math.round(lines.reduce((s, l) => s + l.realTotal, 0) * 100) / 100;
+  return { mode: 'percent', value: 0, gross: total, productDiscountAmount: 0, subtotal: total, globalDiscountAmount: 0, total, lines };
+}
+
+function purUpdateItemRealPreview() {
+  const buyEl = document.getElementById('purBuyPrice');
+  const discEl = document.getElementById('purItemDisc');
+  const realEl = document.getElementById('purItemReal');
+  if (!buyEl || !discEl || !realEl) return;
+  const buy = parseFloat(buyEl.value) || 0;
+  const pct = Math.min(100, Math.max(0, parseFloat(discEl.value) || 0));
+  const globalValue = parseFloat((document.getElementById('purDiscValue') || {}).value) || 0;
+  let real = buy * (1 - pct / 100);
+  if (typeof PurchaseCore !== 'undefined' && PurchaseCore && PurchaseCore.compute) {
+    // A fixed invoice amount is shared across the whole cart, so preview it on
+    // its own line (the per-unit result is the same for any quantity).
+    const target = _purDiscountMode === 'amount' ? Math.min(globalValue, real) : globalValue;
+    const res = PurchaseCore.compute([{ qty: 1, buyPrice: buy, purchaseDiscountPct: pct }], _purDiscountMode, target);
+    real = res.lines[0].realBuyPrice;
+  } else if (_purDiscountMode === 'percent') {
+    real = real * (1 - Math.min(100, Math.max(0, globalValue)) / 100);
+  }
+  realEl.value = 'DA' + fmtMoney(real);
+}
+
+// "i" is the app-wide reveal key for hidden cost data. It only changes what is
+// shown inside this window: print/PDF builders strip `.inv-print-hide` blocks.
+function togglePurSensitive(force) {
+  _purSensitiveOn = (force === undefined) ? !_purSensitiveOn : !!force;
+  const modal = document.getElementById('invPurModal');
+  if (modal) modal.classList.toggle('pur-sensitive-on', _purSensitiveOn);
+  const btn = document.getElementById('purRevealBtn');
+  if (btn) {
+    btn.classList.toggle('is-on', _purSensitiveOn);
+    btn.setAttribute('aria-pressed', _purSensitiveOn ? 'true' : 'false');
+  }
+  purUpdateItemRealPreview();
+  return _purSensitiveOn;
+}
+
+function setPurDiscountMode(mode) {
+  _purDiscountMode = (mode === 'amount') ? 'amount' : 'percent';
+  const pctBtn = document.getElementById('purDiscModePct');
+  const amtBtn = document.getElementById('purDiscModeAmt');
+  if (pctBtn) pctBtn.classList.toggle('is-active', _purDiscountMode === 'percent');
+  if (amtBtn) amtBtn.classList.toggle('is-active', _purDiscountMode === 'amount');
+  purRecalcTotal();
+}
 
 function openInvPurModal() {
   _purCart = [];
   _purCartSupplierId = null;
+  _purDiscountMode = 'percent';
+  const discVal = document.getElementById('purDiscValue');
+  if (discVal) discVal.value = '0';
+  const pctBtn = document.getElementById('purDiscModePct');
+  const amtBtn = document.getElementById('purDiscModeAmt');
+  if (pctBtn) pctBtn.classList.add('is-active');
+  if (amtBtn) amtBtn.classList.remove('is-active');
+  togglePurSensitive(false);
   resetPurForm();
   populatePurBrands();
   renderPurCart();
@@ -3607,6 +5930,20 @@ function setPurBrand(brandId) {
   }
 }
 
+// Extra sale price fields (ExtraPrices) inside the purchase form. Repainting
+// from `rec` also clears the values when the form is reset between lines.
+function _purRenderExtraInputs(rec) {
+  const wrap = document.getElementById('purExtraPricesWrap');
+  if (!wrap) return;
+  if (typeof ExtraPrices === 'undefined' || !ExtraPrices) { wrap.innerHTML = ''; return; }
+  const html = ExtraPrices.inputsHTML('pur', rec);
+  if (!html) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = `<div class="extra-price-section">
+    <div class="extra-price-section-title"><i class="fas fa-tags"></i> ${t('inventory.extraPricesTitle')}</div>
+    ${html}
+  </div>`;
+}
+
 function resetPurForm() {
   const sc = document.getElementById('purBarcodeScanner');
   if (sc && !sc._zmtCleanBound) {
@@ -3617,7 +5954,7 @@ function resetPurForm() {
     });
   }
   sc.value = '';
-  document.getElementById('purScannerStatus').textContent = 'جاهز للمسح';
+  document.getElementById('purScannerStatus').textContent = t('inventory.scannerReady');
   document.getElementById('purScannerResult').style.display = 'none';
   document.getElementById('purProdSearch').value = '';
   document.getElementById('purSearchResults').innerHTML = '';
@@ -3629,6 +5966,9 @@ function resetPurForm() {
   document.getElementById('purBuyPrice').value = '0';
   document.getElementById('purSellPrice').value = '0';
   document.getElementById('purWholePrice').value = '0';
+  const purItemDiscEl = document.getElementById('purItemDisc');
+  if (purItemDiscEl) purItemDiscEl.value = '0';
+  purUpdateItemRealPreview();
   const purExpiryEl = document.getElementById('purExpiry');
   if (purExpiryEl) purExpiryEl.value = '';
   const purFamilyEl = document.getElementById('purFamily');
@@ -3638,6 +5978,7 @@ function resetPurForm() {
   document.getElementById('purSelectedSupplier').style.display = 'none';
   document.getElementById('purTimbreCheck').checked = false;
   document.getElementById('purTimbreAmount').style.display = 'none';
+  _purRenderExtraInputs(null);
 }
 
 // --- Barcode scan ---
@@ -3649,18 +5990,18 @@ function handlePurBarcodeScan(e) {
   const result = document.getElementById('purScannerResult');
   const prod = DB.getProductByBarcode(val);
   if (prod) {
-    status.textContent = '✓ تم العثور على المنتج';
+    status.textContent = t('invoices.purScannerFound');
     status.style.color = '#28a745';
     result.style.display = '';
     result.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
       <span><strong>${escHtml(prod.name)}</strong></span>
-      <span style="font-size:11px;color:var(--silver-500)">${Auth.isManager() ? 'DA' + fmtMoney(prod.buyPrice) + ' / ' : ''}DA${fmtMoney(prod.sellPrice)} | المخزون: ${prod.quantity}</span>
-    </div><button class="btn btn-sm" onclick="fillPurFromScan('${prod.id}')" style="font-size:11px"><i class="fas fa-check"></i> استخدام هذا المنتج</button>`;
+      <span style="font-size:11px;color:var(--silver-500)">${Auth.isManager() ? 'DA' + fmtMoney(prod.buyPrice) + ' / ' : ''}DA${fmtMoney(prod.sellPrice)} | ${t('invoices.purStockLabel')}: ${prod.quantity}</span>
+    </div><button class="btn btn-sm" onclick="fillPurFromScan('${prod.id}')" style="font-size:11px"><i class="fas fa-check"></i> ${t('invoices.purUseProduct')}</button>`;
   } else {
-    status.textContent = '✗ منتج غير موجود — سيتم إدخال منتج جديد';
+    status.textContent = t('invoices.purNotFoundNew');
     status.style.color = '#e65100';
     result.style.display = '';
-    result.innerHTML = `<div style="font-size:12px;color:var(--silver-600);padding:4px 0">الباركود: <strong dir="ltr">${val}</strong></div>`;
+    result.innerHTML = `<div style="font-size:12px;color:var(--silver-600);padding:4px 0">${t('invoices.purBarcodeLabel')} <strong dir="ltr">${val}</strong></div>`;
     document.getElementById('purProdBar').value = val;
     document.getElementById('purProdName').focus();
   }
@@ -3671,7 +6012,7 @@ function fillPurFromScan(id) {
   if (!p) return;
   document.getElementById('purBarcodeScanner').value = '';
   document.getElementById('purScannerResult').style.display = 'none';
-  document.getElementById('purScannerStatus').textContent = 'جاهز للمسح';
+  document.getElementById('purScannerStatus').textContent = t('inventory.scannerReady');
   document.getElementById('purScannerStatus').style.color = '';
   document.getElementById('purProdSearch').value = p.name;
   document.getElementById('purSelName').textContent = p.name;
@@ -3683,15 +6024,20 @@ function fillPurFromScan(id) {
   document.getElementById('purBuyPrice').value = p.buyPrice;
   document.getElementById('purSellPrice').value = p.sellPrice;
   document.getElementById('purWholePrice').value = p.wholesalePrice || 0;
+  const purItemDiscScan = document.getElementById('purItemDisc');
+  if (purItemDiscScan) purItemDiscScan.value = String(parseFloat(p.purchaseDiscountPct) || 0);
+  purUpdateItemRealPreview();
   setPurBrand(p.brandId);
   const purExpiryScan = document.getElementById('purExpiry');
   if (purExpiryScan) purExpiryScan.value = p.expiryDate || '';
   const purFamilyScan = document.getElementById('purFamily');
   if (purFamilyScan) purFamilyScan.value = p.family || '';
+  _purRenderExtraInputs(p);
 }
 
 // --- Product search ---
 function searchPurProduct(q) {
+  if (q && String(q).trim().length >= 2) { try { DB.logSearch({ query: q, context: 'purchase-product' }); } catch (e) {} }
   const results = document.getElementById('purSearchResults');
   q = normSearch(q);
   const products = DB.getProducts();
@@ -3704,7 +6050,7 @@ function searchPurProduct(q) {
         .map(x => x.p)
     : products.slice(0, 8);
   results.innerHTML = matches.length === 0
-    ? '<div class="search-result-item disabled">لا توجد نتائج</div>'
+    ? '<div class="search-result-item disabled">' + t('invoices.noResults') + '</div>'
     : matches.map(p => `<div class="search-result-item" onclick="fillPurFromSearch('${p.id}')">
         <strong>${escHtml(p.name)}</strong>
         <span class="text-muted">${p.barcode}</span>
@@ -3725,15 +6071,20 @@ function fillPurFromSearch(id) {
   document.getElementById('purBuyPrice').value = p.buyPrice;
   document.getElementById('purSellPrice').value = p.sellPrice;
   document.getElementById('purWholePrice').value = p.wholesalePrice || 0;
+  const purItemDiscSearch = document.getElementById('purItemDisc');
+  if (purItemDiscSearch) purItemDiscSearch.value = String(parseFloat(p.purchaseDiscountPct) || 0);
+  purUpdateItemRealPreview();
   setPurBrand(p.brandId);
   const purExpirySearch = document.getElementById('purExpiry');
   if (purExpirySearch) purExpirySearch.value = p.expiryDate || '';
   const purFamilySearch = document.getElementById('purFamily');
   if (purFamilySearch) purFamilySearch.value = p.family || '';
+  _purRenderExtraInputs(p);
 }
 
 // --- Supplier search ---
 function searchPurSupplier(q) {
+  if (q && String(q).trim().length >= 2) { try { DB.logSearch({ query: q, context: 'purchase-supplier' }); } catch (e) {} }
   const results = document.getElementById('purSupResults');
   q = normSearch(q);
   const suppliers = DB.getSuppliers();
@@ -3743,7 +6094,7 @@ function searchPurSupplier(q) {
       ).slice(0, 8)
     : suppliers.slice(0, 8);
   results.innerHTML = matches.length === 0
-    ? '<div class="search-result-item disabled">لا توجد نتائج</div>'
+    ? '<div class="search-result-item disabled">' + t('invoices.noResults') + '</div>'
     : matches.map(s => `<div class="search-result-item" onclick="selectPurSupplier('${s.id}')">
         <strong>${escHtml(s.name)}</strong>
         <span class="text-muted">${s.phone || ''}</span>
@@ -3770,13 +6121,15 @@ function purAddToCart() {
   const buyPrice = parseFloat(document.getElementById('purBuyPrice').value) || 0;
   const sellPrice = parseFloat(document.getElementById('purSellPrice').value) || 0;
   const wholesalePrice = parseFloat(document.getElementById('purWholePrice').value) || 0;
+  const extraPrices = (typeof ExtraPrices !== 'undefined' && ExtraPrices) ? ExtraPrices.readInputs('pur') : {};
+  const purchaseDiscountPct = Math.min(100, Math.max(0, parseFloat((document.getElementById('purItemDisc') || {}).value) || 0));
   const purExpiryEl = document.getElementById('purExpiry');
   const expiryDate = purExpiryEl ? purExpiryEl.value : '';
   const family = (document.getElementById('purFamily')?.value || '').trim();
 
-  if (!name) { alert('الرجاء إدخال اسم المنتج'); return; }
-  if (!barcode) { alert('الرجاء إدخال الباركود'); return; }
-  if (!(qty > 0)) { alert(t('inventory.qtyInvalid') || 'الكمية يجب أن تكون أكبر من صفر'); return; }
+  if (!name) { alert(t('invoices.purProductRequired')); return; }
+  if (!barcode) { alert(t('invoices.purBarcodeRequired')); return; }
+  if (!(qty > 0)) { alert(t('inventory.qtyInvalid')); return; }
   if (window.getPharmacyMode() && !family) { alert(t('inventory.familyRequired')); return; }
 
   const expSettings = getExpirySettings();
@@ -3784,11 +6137,11 @@ function purAddToCart() {
 
   const conflict = DB.findProductsByBarcode(barcode).find(p => !DB.isSameProductIdentity(p, { name, brandId }));
   if (conflict) {
-    alert(`هذا الباركود مسجّل لمنتج آخر: ${conflict.name} (${conflict.barcode})`);
+    alert(t('invoices.barcodeConflict').replace('{NAME}', conflict.name).replace('{CODE}', conflict.barcode));
     return;
   }
 
-  _purCart.push({ name, barcode, brandId, qty: Unit.roundQty(qty), unit: unitSnap.unit, unitLabel: unitSnap.unitLabel, buyPrice, sellPrice, wholesalePrice, family, expiryDate });
+  _purCart.push({ name, barcode, brandId, qty: Unit.roundQty(qty), unit: unitSnap.unit, unitLabel: unitSnap.unitLabel, buyPrice, sellPrice, wholesalePrice, extraPrices, purchaseDiscountPct, family, expiryDate });
   renderPurCart();
   resetPurForm();
   setTimeout(() => document.getElementById('purBarcodeScanner').focus(), 200);
@@ -3798,31 +6151,45 @@ function renderPurCart() {
   const section = document.getElementById('purCartSection');
   const container = document.getElementById('purCartItems');
   const countEl = document.getElementById('purCartCount');
-  const totalEl = document.getElementById('purCartTotal');
 
   if (_purCart.length === 0) {
     section.style.display = 'none';
+    if (container) container.innerHTML = '';
+    if (countEl) countEl.textContent = '(0)';
+    purRecalcTotal();
     return;
   }
   section.style.display = '';
 
   countEl.textContent = `(${_purCart.length})`;
-  const total = _purCart.reduce((sum, item) => sum + item.qty * item.buyPrice, 0);
-  totalEl.textContent = `DA${fmtMoney(total)}`;
+  const computed = _purComputeCart();
+  // Keep the live real cost on every cart row: purConfirmInvoice and
+  // DB.addOrMergeProduct use it to split stock batches.
+  _purCart.forEach((item, i) => {
+    const line = computed.lines[i];
+    if (line) { item.realBuyPrice = line.realBuyPrice; item.realTotal = line.realTotal; }
+  });
 
-  container.innerHTML = _purCart.map((item, i) =>
-    `<div class="cart-item">
+  container.innerHTML = _purCart.map((item, i) => {
+    const line = computed.lines[i] || {};
+    return `<div class="cart-item pur-cart-item">
       <div class="cart-item-info">
         <strong>${item.name}</strong>
         <span class="text-muted">${item.barcode}</span>
       </div>
       <div class="cart-item-details">
-        <span>${Unit.qtyUnit(item.qty, item)} × DA${Auth.isManager() ? fmtMoney(item.buyPrice) : fmtMoney(item.price)}</span>
-        <span class="cart-item-total">DA${fmtMoney((item.qty * (Auth.isManager() ? item.buyPrice : item.price)))}</span>
+        <span>${Unit.qtyUnit(item.qty, item)} × DA${fmtMoney(item.buyPrice)}</span>
+        <span class="cart-item-total">DA${fmtMoney((item.qty * item.buyPrice))}</span>
+      </div>
+      <div class="cart-item-extra pur-sensitive">
+        <div class="pur-line-row"><span>${t('invoices.purProductDiscount')}</span><b>${fmtMoney(line.purchaseDiscountPct || 0)}%</b></div>
+        <div class="pur-line-row"><span>${t('invoices.purLineInvoiceDiscount')}</span><b>DA${fmtMoney(line.globalDiscount || 0)}</b></div>
+        <div class="pur-line-row"><span>${t('invoices.realCost')}</span><b>DA${fmtMoney(line.realBuyPrice || 0)}</b></div>
+        <div class="pur-line-row"><span>${t('invoices.purRealLineCost')}</span><b>DA${fmtMoney(line.realTotal || 0)}</b></div>
       </div>
       <button class="btn btn-sm btn-danger" onclick="purRemoveFromCart(${i})"><i class="fas fa-times"></i></button>
-    </div>`
-  ).join('');
+    </div>`;
+  }).join('');
   purRecalcTotal();
 }
 
@@ -3833,23 +6200,28 @@ function purRemoveFromCart(idx) {
 
 function purClearCart() {
   if (_purCart.length === 0) return;
-  if (!confirm('تفريغ سلة الفاتورة؟')) return;
+  if (!confirm(t('invoices.purClearConfirm'))) return;
   _purCart = [];
   renderPurCart();
 }
 
 // --- Timbre & Total ---
 function purRecalcTotal() {
-  const subtotal = _purCart.reduce((s, i) => s + i.qty * i.buyPrice, 0);
+  const computed = _purComputeCart();
+  _purCart.forEach((item, i) => {
+    const line = computed.lines[i];
+    if (line) { item.realBuyPrice = line.realBuyPrice; item.realTotal = line.realTotal; }
+  });
+
   const timbreEnabled = document.getElementById('purTimbreCheck').checked;
   const timbreRate = parseFloat(localStorage.getItem('zmt_timbre_rate') || '1');
   let timbreAmount = 0;
   if (timbreEnabled) {
-    timbreAmount = subtotal * (timbreRate / 100);
+    timbreAmount = computed.total * (timbreRate / 100);
     if (timbreAmount < 5) timbreAmount = 5;
     if (timbreAmount > 10000) timbreAmount = 10000;
   }
-  const total = subtotal + timbreAmount;
+  const total = computed.total + timbreAmount;
   document.getElementById('purCartTotal').textContent = 'DA' + fmtMoney(total);
   const timbreEl = document.getElementById('purTimbreAmount');
   if (timbreEnabled && timbreAmount > 0) {
@@ -3858,14 +6230,30 @@ function purRecalcTotal() {
   } else {
     timbreEl.style.display = 'none';
   }
+
+  const summary = document.getElementById('purDiscSummary');
+  if (summary) {
+    const modeLabel = computed.mode === 'amount'
+      ? t('invoices.purFixedDiscountLabel')
+      : t('invoices.purPctDiscountLabel').replace('{VAL}', fmtMoney(computed.value));
+    summary.innerHTML = `
+      <div class="pur-sum-row"><span>${t('invoices.purGrossTotal')}</span><b>DA${fmtMoney(computed.gross)}</b></div>
+      <div class="pur-sum-row"><span>${t('invoices.purProductsDiscount')}</span><b>DA${fmtMoney(computed.productDiscountAmount)}</b></div>
+      <div class="pur-sum-row"><span>${modeLabel}</span><b>DA${fmtMoney(computed.globalDiscountAmount)}</b></div>
+      <div class="pur-sum-row"><span>${t('invoices.purNetBeforeDiscount')}</span><b>DA${fmtMoney(computed.subtotal)}</b></div>
+      <div class="pur-sum-row pur-sum-real"><span>${t('invoices.purRealTotal')}</span><b>DA${fmtMoney(computed.total)}</b></div>`;
+  }
+
+  purUpdateItemRealPreview();
 }
 
 // --- Confirm ---
 function purConfirmInvoice() {
-  if (_purCart.length === 0) { alert('سلة الفاتورة فارغة'); return; }
+  if (_purCart.length === 0) { alert(t('invoices.purCartEmpty')); return; }
 
   const supplierId = _purCartSupplierId;
-  let totalAmount = 0;
+  const computed = _purComputeCart();
+  let totalAmount = computed.total;
   const invoiceItems = [];
 
   for (const item of _purCart) {
@@ -3876,32 +6264,37 @@ function purConfirmInvoice() {
         _purCartSupplierId = null;
         renderPurCart();
         closeInvPurModal();
-        alert(`هذا الباركود مسجّل لمنتج آخر: ${conflict.name} (${conflict.barcode})`);
+        alert(t('invoices.barcodeConflict').replace('{NAME}', conflict.name).replace('{CODE}', conflict.barcode));
         return;
       }
     }
   }
 
-  _purCart.forEach(item => {
+  _purCart.forEach((item, index) => {
+    const line = computed.lines[index] || {};
+    const realBuyPrice = line.realBuyPrice || 0;
+    const realTotal = line.realTotal || 0;
     const itemTotal = item.qty * item.buyPrice;
-    totalAmount += itemTotal;
 
     const res = DB.addOrMergeProduct({
       name: item.name, barcode: item.barcode,
       brandId: item.brandId,
       buyPrice: item.buyPrice, sellPrice: item.sellPrice,
       wholesalePrice: item.wholesalePrice || 0,
+      extraPrices: item.extraPrices || {},
+      purchaseDiscountPct: item.purchaseDiscountPct || 0,
+      realBuyPrice,
       quantity: item.qty, supplierId,
       unit: item.unit, unitLabel: item.unitLabel,
       family: item.family || '',
       expiryDate: item.expiryDate || '',
-    });
+    }, { source: 'purchase-invoice' });
     if (!res.ok) {
       _purCart = [];
       _purCartSupplierId = null;
       renderPurCart();
       closeInvPurModal();
-      alert(res.existing ? `هذا الباركود مسجّل لمنتج آخر: ${res.existing.name} (${res.existing.barcode})` : 'الباركود غير صالح');
+      alert(res.existing ? t('invoices.barcodeConflict').replace('{NAME}', res.existing.name).replace('{CODE}', res.existing.barcode) : t('invoices.barcodeInvalid'));
       return;
     }
 
@@ -3909,7 +6302,13 @@ function purConfirmInvoice() {
     invoiceItems.push(Object.assign({
       productId: prod.id, barcode: prod.barcode,
       name: item.name, qty: Unit.roundQty(item.qty),
+      // The printed invoice keeps showing the displayed buy price…
       price: item.buyPrice, total: itemTotal,
+      // …while the accounting uses the real cost (hidden, print-stripped).
+      purchaseDiscountPct: item.purchaseDiscountPct || 0,
+      realBuyPrice,
+      realTotal,
+      globalDiscount: line.globalDiscount || 0,
     }, Unit.snapshot(prod || item)));
   });
 
@@ -3922,8 +6321,18 @@ function purConfirmInvoice() {
     if (timbreFiscal > 10000) timbreFiscal = 10000;
   }
 
+  const discountFields = {
+    purchaseDiscountMode: computed.mode,
+    purchaseDiscountValue: computed.value,
+    purchaseDiscountAmount: computed.globalDiscountAmount,
+    purchaseProductDiscount: computed.productDiscountAmount,
+    purchaseGross: computed.gross,
+  };
+
   if (supplierId) {
-    DB.addInvoice({ supplierId, type: 'supplier', date: Date.now(), items: invoiceItems, totalAmount, timbreFiscal });
+    DB.addInvoice(Object.assign({
+      supplierId, type: 'supplier', date: Date.now(), items: invoiceItems, totalAmount, timbreFiscal,
+    }, discountFields));
     const suppliers = DB.getSuppliers();
     const idx = suppliers.findIndex(s => s.id === supplierId);
     if (idx !== -1) {
@@ -3931,7 +6340,9 @@ function purConfirmInvoice() {
       DB.saveSuppliers(suppliers);
     }
   } else {
-    DB.addInvoice({ supplierId: null, type: 'purchase', date: Date.now(), items: invoiceItems, totalAmount, timbreFiscal });
+    DB.addInvoice(Object.assign({
+      supplierId: null, type: 'purchase', date: Date.now(), items: invoiceItems, totalAmount, timbreFiscal,
+    }, discountFields));
   }
 
   _purCart = [];
@@ -3942,9 +6353,9 @@ function purConfirmInvoice() {
 
   const cnt = invoiceItems.length;
   const totalQty = invoiceItems.reduce((s, it) => s + it.qty, 0);
-  let msg = `تم تسجيل فاتورة بقيمة DA${fmtMoney(totalAmount)}`;
-  if (timbreFiscal > 0) msg += ` + طابع جبائي DA${fmtMoney(timbreFiscal)}`;
-  msg += ` تشمل ${cnt} منتج (${Unit.fmtQty(totalQty)} قطعة)`;
+  let msg = t('invoices.purSavedPrefix') + fmtMoney(totalAmount);
+  if (timbreFiscal > 0) msg += t('invoices.purTimbreSuffix') + fmtMoney(timbreFiscal);
+  msg += t('invoices.purSavedIncludes').replace('{CNT}', cnt).replace('{QTY}', Unit.fmtQty(totalQty));
   alert(msg);
 
   refreshInvoiceList();
@@ -3987,13 +6398,18 @@ window._pageSyncHandlers['invoices'] = function invoicesSyncData() {
 };
 
 // ===== PDF SAVE + EMAIL SENDING =====
-function buildInvoicePrintDocHTML(inv) {
+// `opts.printBasis` mirrors the print dialog: 'net' (190, with remise lines)
+// or 'gross' (200) for a discounted purchase invoice. Defaults to the basis
+// last chosen for this invoice.
+function buildInvoicePrintDocHTML(inv, opts) {
   const isPayment = inv.type === 'payment';
   const paidAmount = isPayment ? (inv.totalAmount || 0) : DB.getInvoiceEffectivePaid(inv);
   const typeLabel = _invTypeLabel(inv);
-  const raw = isPayment ? buildPaymentInvoiceHTML(inv) : buildInvoiceDetailHTML(inv, typeLabel, paidAmount);
+  const basis = (opts && opts.printBasis) || _invPrintBasisFor(inv);
+  const raw = isPayment ? buildPaymentInvoiceHTML(inv) : buildInvoiceDetailHTML(inv, typeLabel, paidAmount, { printBasis: basis });
   const inner = stripInvPrintHidden(raw);
-  const css = '@page{size:A4;margin:0}html,body{margin:0;padding:0;background:#fff}*{box-sizing:border-box}table{border-collapse:collapse}img{max-width:100%}';
+  const ppRule = (typeof PrintPaper !== 'undefined' && PrintPaper) ? PrintPaper.pageRule(0) : '@page{size:A4;margin:0}';
+  const css = ppRule + 'html,body{margin:0;padding:0;background:#fff}*{box-sizing:border-box}table{border-collapse:collapse}img{max-width:100%}';
   return '<!DOCTYPE html><html dir="ltr"><head><meta charset="utf-8"><title>Facture</title><style>' + css + '</style></head><body>' + inner + '</body></html>';
 }
 
@@ -4020,15 +6436,15 @@ async function saveInvoicePdf() {
     if (window.InvoiceLogo && window.InvoiceLogo.isEnabled()) { try { await window.InvoiceLogo.warm(); } catch (e) {} }
     const html = buildInvoicePrintDocHTML(inv);
     const res = await window.electronAPI.generateInvoicePdf(html);
-    if (!res || !res.success) { invToast('تعذّر توليد ملف PDF', 'error'); return; }
+    if (!res || !res.success) { invToast(t('invoices.pdfGenerateFail'), 'error'); return; }
     const defaultPath = (inv.invoiceNumber || inv.id) + '.pdf';
     const result = await window.electronAPI.saveFile({ defaultPath: defaultPath, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
     if (!result || !result.filePath) return;
     const wr = await window.electronAPI.writeFileBinary(result.filePath, res.data);
-    if (wr && wr.success) invToast('تم حفظ ملف PDF بنجاح', 'success');
-    else invToast('فشل حفظ الملف', 'error');
+    if (wr && wr.success) invToast(t('invoices.pdfSavedOk'), 'success');
+    else invToast(t('invoices.pdfSaveFail'), 'error');
   } catch (e) {
-    invToast('خطأ: ' + (e && e.message ? e.message : e), 'error');
+    invToast(t('invoices.pdfErrorPrefix') + (e && e.message ? e.message : e), 'error');
   }
 }
 
@@ -4079,8 +6495,8 @@ async function sendInvoiceEmail() {
   const inv = DB.getInvoice(_invDetailId);
   if (!inv) return;
   const to = document.getElementById('invEmailTo').value.trim();
-  if (!to) { showInvEmailError('الرجاء إدخال بريد المرسل إليه'); return; }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { showInvEmailError('صيغة البريد الإلكتروني غير صحيحة'); return; }
+  if (!to) { showInvEmailError(t('invoices.emailRequired')); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { showInvEmailError(t('invoices.emailInvalid')); return; }
   const num = inv.invoiceNumber || inv.id;
   const subject = document.getElementById('invEmailSubject').value.trim() || ('Facture ' + num);
   const message = document.getElementById('invEmailMessage').value.trim();
@@ -4103,7 +6519,7 @@ async function sendInvoiceEmail() {
   const gmailUrl = 'https://mail.google.com/mail/?view=cm&to=' + encodeURIComponent(to)
     + '&su=' + encodeURIComponent(subject) + '&body=' + body;
   try { await window.electronAPI.openExternal(gmailUrl); } catch (e) {}
-  invToast('تم فتح Gmail — أرفق ملف PDF ثم أرسل', 'success');
+  invToast(t('invoices.gmailOpened'), 'success');
   closeInvoiceEmail();
 }
 

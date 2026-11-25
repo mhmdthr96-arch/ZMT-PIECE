@@ -16,6 +16,7 @@
   // ids of the modals already declared inside the page templates.
   var PAGE_MODAL_IDS = [
     'addSupplierModal', 'editSupplierModal', 'addCustomerModal',
+    'qeAddSupplierModal',
     'inventoryAddProductModal', 'quickEntryModal', 'barcodePrintModal',
     'addProductModal', 'catQuickAddModal',
     'invAddModal', 'invAddDirectModal', 'invQuickAddModal',
@@ -244,7 +245,11 @@
         { id: '_zmtSupName',    label: t('suppliers.formName') || 'اسم المورد', required: true },
         { id: '_zmtSupPhone',   label: t('suppliers.formPhone') || 'رقم الهاتف', placeholder: '05XXXXXXXX', dir: 'ltr' },
         { id: '_zmtSupAddress', label: t('suppliers.formAddress') || 'العنوان' },
-        { id: '_zmtSupEmail',   label: t('suppliers.formEmail') || 'البريد الإلكتروني (اختياري)', type: 'email', placeholder: 'example@domain.com', dir: 'ltr' }
+        { id: '_zmtSupEmail',   label: t('suppliers.formEmail') || 'البريد الإلكتروني (اختياري)', type: 'email', placeholder: 'example@domain.com', dir: 'ltr' },
+        { id: '_zmtSupRc',      label: t('partyLegal.rc') || 'RC (اختياري)', dir: 'ltr' },
+        { id: '_zmtSupNif',     label: t('partyLegal.nif') || 'NIF (اختياري)', dir: 'ltr' },
+        { id: '_zmtSupNis',     label: t('partyLegal.nis') || 'NIS (اختياري)', dir: 'ltr' },
+        { id: '_zmtSupArticle', label: t('partyLegal.article') || 'N° article (اختياري)', dir: 'ltr' }
       ],
       onSave: submitSupplier
     });
@@ -253,15 +258,17 @@
   function submitSupplier() {
     var name = $id('_zmtSupName').value.trim();
     if (!name) { alert(t('suppliers.prompts.nameRequired') || 'أدخل اسم المورد'); return false; }
+    var legal = (window.ZmtPartyLegal && typeof window.ZmtPartyLegal.read === 'function')
+      ? window.ZmtPartyLegal.read('_zmtSup') : {};
     var suppliers = DB.getSuppliers();
-    suppliers.push({
+    suppliers.push(Object.assign({
       id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
       name: name,
       phone: $id('_zmtSupPhone').value.trim(),
       address: $id('_zmtSupAddress').value.trim(),
       email: $id('_zmtSupEmail').value.trim(),
       balance: 0
-    });
+    }, legal));
     DB.saveSuppliers(suppliers);
     var added = suppliers[suppliers.length - 1];
     DB.logAudit({ action: 'add', entity: 'supplier', entityId: added.id, detail: name });
@@ -289,9 +296,14 @@
         { id: '_zmtCustPhone',    label: t('customers.formPhone') || 'رقم الهاتف', placeholder: '0555123456', dir: 'ltr' },
         { id: '_zmtCustAddress',  label: t('customers.formAddress') || 'العنوان' },
         { id: '_zmtCustEmail',    label: t('customers.formEmail') || 'البريد الإلكتروني (اختياري)', type: 'email', placeholder: 'example@domain.com', dir: 'ltr' },
+        { id: '_zmtCustRc',       label: t('partyLegal.rc') || 'RC (اختياري)', dir: 'ltr' },
+        { id: '_zmtCustNif',      label: t('partyLegal.nif') || 'NIF (اختياري)', dir: 'ltr' },
+        { id: '_zmtCustNis',      label: t('partyLegal.nis') || 'NIS (اختياري)', dir: 'ltr' },
+        { id: '_zmtCustArticle',  label: t('partyLegal.article') || 'N° article (اختياري)', dir: 'ltr' },
         { id: '_zmtCustType',     kind: 'select', label: t('customers.formType') || 'نوع العميل',
           options: [['unit', t('customers.typeUnit') || 'قطاعي'], ['whole', t('customers.typeWhole') || 'جملة']] },
         { id: '_zmtCustDiscount', label: t('customers.formDiscount') || 'الخصم (%)', type: 'number', value: '0', min: '0', max: '100', step: '0.001' },
+        { id: '_zmtCustCreditLimit', label: t('customers.formCreditLimit') || 'سقف الدين (اختياري)', type: 'number', value: '0', min: '0', step: '0.01' },
         { id: '_zmtCustPhoto',    kind: 'file', previewId: '_zmtCustPhotoPreview', label: t('customers.formPhoto') || 'صورة العميل (اختياري)' }
       ],
       onSave: submitCustomer
@@ -320,15 +332,21 @@
     if (!name) { alert(t('customers.prompts.nameRequired') || 'أدخل اسم العميل'); return false; }
     var discount = parseFloat($id('_zmtCustDiscount').value) || 0;
     if (discount < 0 || discount > 100) { alert(t('customers.prompts.invalidDiscount') || 'الخصم يجب أن يكون بين 0 و 100'); return false; }
-    var cust = DB.addCustomer({
+    var creditLimitEl = $id('_zmtCustCreditLimit');
+    var creditLimit = creditLimitEl ? (parseFloat(creditLimitEl.value) || 0) : 0;
+    if (creditLimit < 0) { alert(t('customers.prompts.invalidCreditLimit') || 'سقف الدين يجب أن يكون موجباً أو صفراً (بلا حد)'); return false; }
+    var legal = (window.ZmtPartyLegal && typeof window.ZmtPartyLegal.read === 'function')
+      ? window.ZmtPartyLegal.read('_zmtCust') : {};
+    var cust = DB.addCustomer(Object.assign({
       name: name,
       phone: $id('_zmtCustPhone').value.trim(),
       address: $id('_zmtCustAddress').value.trim(),
       email: $id('_zmtCustEmail').value.trim(),
       type: $id('_zmtCustType').value === 'whole' ? 'whole' : 'unit',
       discount: discount,
+      creditLimit: creditLimit,
       photo: window._zmtCustPhoto || ''
-    });
+    }, legal));
     if (cust) DB.logAudit({ action: 'add', entity: 'customer', entityId: cust.id, detail: name });
     try {
       if (typeof renderCustomers === 'function' && $id('customersList')) renderCustomers();
@@ -417,20 +435,9 @@
   // ---------- wire up -------------------------------------------------------
 
   document.addEventListener('keydown', function (e) {
-    // F9: on sales page, if cart non-empty -> clear cart and reset totals to zero
-    if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key === 'F9') {
-      const cur = window._currentPageId || '';
-      if (cur === 'sales') {
-        const cart = Array.isArray(window._salesCart) ? window._salesCart : [];
-        if (cart.length > 0) {
-          e.preventDefault();
-          if (typeof window.clearSalesCart === 'function') {
-            try { window.clearSalesCart(); } catch (err) {}
-          }
-        }
-      }
-      return;
-    }
+    // F9 is owned by the sales page handler (pages/sales.js): it also clears an
+    // empty cart and is guarded against typing fields and open overlays. Binding
+    // it here too would double-fire clearSalesCart() on the same document node.
 
     // F6: open "Add Expense" modal from anywhere
     if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key === 'F6') {

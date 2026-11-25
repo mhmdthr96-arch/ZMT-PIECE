@@ -187,10 +187,10 @@ has(appJs, "'zmt_pd_settings'") ? ok('bootApp يقرأ zmt_pd_settings') : bad('
 has(appJs, 'Auth.loginAsUser(') ? ok('bootApp يستدعي loginAsUser') : bad('bootApp لا يستدعي loginAsUser');
 has(appJs, 'window.__pdKioskMode = true') ? ok('يضبط __pdKioskMode') : bad('لا يضبط __pdKioskMode');
 {
-  const i = appJs.indexOf('A kiosk (price display) boot');
-  const seg = i >= 0 ? appJs.slice(i, i + 420) : '';
-  has(seg, "navigateTo('price-display')") ? ok('الإقلاع يفتح price-display مباشرة') : bad('الإقلاع لا يفتح price-display');
+  const i = appJs.indexOf('__pdKioskMode &&');
+  const seg = i >= 0 ? appJs.slice(i, i + 300) : '';
   has(seg, 'Auth.canView') ? ok('يحترم canView قبل الدخول') : bad('لا يفحص canView');
+  has(seg, "navigateTo('price-display')") ? ok('الإقلاع يفتح price-display مباشرة') : bad('الإقلاع لا يفتح price-display');
 }
 {
   const i = appJs.indexOf('_pdAutoLoggedIn');

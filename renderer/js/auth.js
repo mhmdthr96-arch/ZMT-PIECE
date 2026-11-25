@@ -4,6 +4,11 @@
 
 const Auth = (() => {
   const STORAGE_KEY = 'zmt_auth_user';
+  // Company processes are launched with ?company=<id>. Their session must stay
+  // bound to that id for the entire lifetime of the process — no in-app switch,
+  // no "exit company", no inherited session from the shared main instance.
+  const LAUNCH_COMPANY_ID = (typeof window !== 'undefined' && window.__zmtLaunchCompanyId) || '';
+  const IS_COMPANY_PROCESS = !!LAUNCH_COMPANY_ID;
 
   // ===== SHA-256 PASSWORD HASHING =====
   async function _hashPassword(password, salt) {
@@ -662,12 +667,15 @@ const Auth = (() => {
     'customers': { view: true, edit: true, del: true },
     'employees': { view: true, edit: true, del: true },
     'suppliers': { view: true, edit: true, del: true },
+    'customer-movements': { view: true, edit: false, del: false },
+    'supplier-movements': { view: true, edit: false, del: false },
     'brands': { view: true, edit: true, del: true },
     'inventory': { view: true, edit: true, del: true },
     'expiry': { view: true, edit: true, del: false },
     'quick-entry': { view: true, edit: true, del: false },
     'supplier-returns': { view: true, edit: true, del: true },
     'debts': { view: true, edit: true, del: true },
+    'debt-details': { view: true, edit: false, del: false },
     'returns': { view: true, edit: true, del: false },
     'discounts': { view: true, edit: true, del: true },
     'reports': { view: true, edit: false, del: false },
@@ -682,6 +690,16 @@ const Auth = (() => {
     'shared-inventory': { view: true, edit: false, del: false },
     'product-details': { view: false, edit: false, del: false },
     'price-display': { view: false, edit: false, del: false },
+    // Pages reached from other screens (not the sidebar) — listed so a manager
+    // can restrict them too. Defaults keep today's access, except the two
+    // already-manager-only/sensitive tools.
+    'transfer': { view: true, edit: true, del: false },
+    'category-products': { view: true, edit: true, del: false },
+    'customer-detail': { view: true, edit: false, del: false },
+    'supplier-detail': { view: true, edit: false, del: false },
+    'activity-log': { view: false, edit: false, del: false },
+    'theme-settings': { view: true, edit: false, del: false },
+    'data-migration': { view: false, edit: false, del: false },
   };
 
   const PAGE_NAMES = {
@@ -693,12 +711,15 @@ const Auth = (() => {
     'customers': 'العملاء',
     'employees': 'الموظفين',
     'suppliers': 'الموردين',
+    'customer-movements': 'حركات العملاء',
+    'supplier-movements': 'حركات الموردين',
     'brands': 'العلامات التجارية',
     'inventory': 'المخزون',
     'expiry': 'انتهاء الصلاحية',
     'quick-entry': 'الإدخال السريع',
     'supplier-returns': 'السلع الفاسدة',
     'debts': 'الديون',
+    'debt-details': 'تفاصيل الديون',
     'returns': 'المرتجعات',
     'discounts': 'التخفيضات',
     'reports': 'التقارير',
@@ -713,6 +734,13 @@ const Auth = (() => {
     'shared-inventory': 'المخزون المشترك',
     'product-details': 'تفاصيل المنتج',
     'price-display': 'شاشة عرض السعر',
+    'transfer': 'نقل المنتجات',
+    'category-products': 'منتجات الفئة',
+    'customer-detail': 'تفاصيل العميل',
+    'supplier-detail': 'تفاصيل المورّد',
+    'activity-log': 'سجل النشاطات',
+    'theme-settings': 'إعدادات الألوان',
+    'data-migration': 'ترحيل البيانات',
   };
 
   function _getUsersKey() {
@@ -1146,6 +1174,32 @@ const Auth = (() => {
     return false;
   }
 
+  // Called after every successful login in a company process. Re-binds the
+  // session to the launched company even if requirePasswordOnStart() restored
+  // a different remembered company from the shared profile.
+  function enforceLaunchCompany() {
+    if (!IS_COMPANY_PROCESS) return false;
+    const user = getCurrentUser();
+    if (!user) return false;
+    const needsSave = user.companyId !== LAUNCH_COMPANY_ID || !user.enteredCompany;
+    if (needsSave) {
+      const bound = Object.assign({}, user, {
+        companyId: LAUNCH_COMPANY_ID,
+        enteredCompany: true,
+      });
+      saveUser(bound);
+    }
+    try { localStorage.setItem('zmt_active_company', LAUNCH_COMPANY_ID); } catch (e) {}
+    try {
+      const code = getUserCode();
+      if (code) {
+        localStorage.setItem('zmt_remembered_company', JSON.stringify({ code, companyId: LAUNCH_COMPANY_ID }));
+      }
+    } catch (e) {}
+    reportScope('company-process-binding');
+    return true;
+  }
+
   function getDeviceId() {
     let deviceId = localStorage.getItem('zmt_device_id');
     if (!deviceId) {
@@ -1478,12 +1532,22 @@ const Auth = (() => {
     getCompanyId,
     getCompanyName,
     getActiveCompany,
-    setActiveCompany,
+    // In an isolated company window these methods are intentionally inert for
+    // any id other than the launched one — the profile has no other dataset.
+    setActiveCompany: (id) => (IS_COMPANY_PROCESS && id !== LAUNCH_COMPANY_ID)
+      ? false
+      : setActiveCompany(IS_COMPANY_PROCESS ? LAUNCH_COMPANY_ID : id),
+    enforceLaunchCompany,
     getCompaniesForThisDevice,
     getLoginCompaniesForUser,
     getDeviceId,
     verifyCompanyPassword,
-    enterCompany,
+    enterCompany: (id, password) => {
+      if (IS_COMPANY_PROCESS && id !== LAUNCH_COMPANY_ID) {
+        return Promise.reject(new Error('هذه النافذة مخصصة لشركة واحدة فقط.'));
+      }
+      return enterCompany(IS_COMPANY_PROCESS ? LAUNCH_COMPANY_ID : id, password);
+    },
     reportScope,
     DEFAULT_PAGES,
     PAGE_NAMES,

@@ -44,7 +44,7 @@ function updateDashboardStats() {
   document.getElementById('statCustomers').textContent = totalCustomers;
   document.getElementById('statSales').textContent = `DA${fmtMoney(totalSales)}`;
 
-  document.getElementById('dashLowStock').textContent = products.filter(p => p.quantity > 0 && p.quantity <= 5).length;
+  document.getElementById('dashLowStock').textContent = DB.getLowStockProducts(DB.getLowStockThreshold()).length;
   document.getElementById('dashMonthSales').textContent = `DA${fmtMoney(thisMonthTotal)}`;
   document.getElementById('dashProfit').textContent = `DA${fmtMoney(invoices.filter(i => i.type === 'customer' && DB.getInvoiceEffectivePaid(i) >= (i.totalAmount || 0)).reduce((s, i) => s + (i.profit || 0), 0))}`;
 }
@@ -179,9 +179,14 @@ function renderProfitChart() {
   });
 }
 
+// Snapshot shown in the modal — the count in the banner and the rows in the
+// dialog always come from the same DB helper, so they can never disagree.
+var _lowStockModalRows = [];
+
 function renderLowStockAlert() {
   const threshold = DB.getLowStockThreshold();
   const low = DB.getLowStockProducts(threshold);
+  _lowStockModalRows = low;
   const container = document.getElementById('lowStockAlert');
   if (!container) return;
   if (low.length === 0) { container.style.display = 'none'; return; }
@@ -190,6 +195,9 @@ function renderLowStockAlert() {
     <div class="low-stock-header">
       <i class="fas fa-exclamation-triangle"></i>
       <span>${low.length} ${t('dash.lowStockItems')}(${threshold})</span>
+      <button class="btn btn-sm low-stock-view-btn" onclick="openLowStockModal()">
+        <i class="fas fa-eye"></i> ${t('dash.view') || 'عرض'}
+      </button>
       <button class="btn btn-sm" onclick="document.getElementById('lowStockAlert').style.display='none'" style="background:transparent;color:white;padding:2px 8px"><i class="fas fa-times"></i></button>
     </div>
     <div class="low-stock-list">
@@ -199,6 +207,99 @@ function renderLowStockAlert() {
       ${low.length > 10 ? `<span class="low-stock-item">${t('dash.andMore')} ${low.length - 10} ${t('dash.moreItems')}</span>` : ''}
     </div>`;
 }
+
+function _lowStockEsc(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _lowStockIdentity(p) {
+  return [p && p.barcode, p && p.mark, p && p.reference, p && p.code]
+    .filter(v => v !== null && v !== undefined && String(v).trim() !== '')
+    .map(v => _lowStockEsc(v))
+    .join(' · ');
+}
+
+function openLowStockModal() {
+  const threshold = DB.getLowStockThreshold();
+  const low = DB.getLowStockProducts(threshold);
+  _lowStockModalRows = low;
+  const body = document.getElementById('lowStockModalBody');
+  const summary = document.getElementById('lowStockModalSummary');
+  const modal = document.getElementById('lowStockModal');
+  if (!body || !modal) return;
+
+  if (summary) {
+    summary.innerHTML = `<i class="fas fa-circle-info"></i> ${low.length} ${t('dash.lowStockItems')}(${_lowStockEsc(threshold)})`;
+  }
+  if (!low.length) {
+    body.innerHTML = `<tr><td colspan="5" class="low-stock-modal-empty">${t('common.noResults') || 'لا توجد نتائج'}</td></tr>`;
+  } else {
+    body.innerHTML = low.map(p => `
+      <tr>
+        <td class="low-stock-modal-name">${_lowStockEsc(p.name)}</td>
+        <td dir="ltr" class="low-stock-modal-code">${_lowStockIdentity(p) || '—'}</td>
+        <td><strong class="low-stock-modal-qty">${_lowStockEsc(p.quantity)}</strong></td>
+        <td>${_lowStockEsc(threshold)}</td>
+        <td>
+          <button type="button" class="btn btn-sm btn-primary low-stock-open-product"
+            data-id="${_lowStockEsc(p.id)}" onclick="openLowStockProduct(this.dataset.id)">
+            <i class="fas fa-external-link-alt"></i> ${t('dash.openProduct') || 'فتح المنتج'}
+          </button>
+        </td>
+      </tr>`).join('');
+  }
+  modal.style.display = 'flex';
+}
+
+function closeLowStockModal() {
+  const modal = document.getElementById('lowStockModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function openLowStockProduct(id) {
+  closeLowStockModal();
+  if (typeof window.openProductEditor === 'function') window.openProductEditor(id);
+}
+
+function printLowStockReport() {
+  if (!window.PrintMode || typeof window.PrintMode.openPreview !== 'function') {
+    alert(t('movements.allowPopups') || 'يرجى السماح بالنوافذ المنبثقة للطباعة');
+    return;
+  }
+  const threshold = DB.getLowStockThreshold();
+  // Read fresh data at print time: the list may have changed while the modal
+  // was open, and the printed sheet must reflect the current stock.
+  const rows = DB.getLowStockProducts(threshold);
+  const title = t('dash.lowStockPrintTitle') || t('dash.lowStockModalTitle') || 'المنتجات تحت حد المخزون';
+  const dateText = new Date().toLocaleString('ar-EG-u-nu-latn');
+  const head = (label) => `<th style="border:1px solid #000;padding:6px 8px;text-align:right;background:#ececec">${_lowStockEsc(label)}</th>`;
+  const html = `
+    <div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;font-size:12px;color:#000">
+      <div style="text-align:center;margin-bottom:14px">
+        <h2 style="margin:0 0 4px;font-size:18px">${_lowStockEsc(title)}</h2>
+        <div style="font-size:11px">${_lowStockEsc(t('dash.colThreshold') || 'الحد')}: ${_lowStockEsc(threshold)} &nbsp;·&nbsp; ${_lowStockEsc(t('dash.printDate') || 'تاريخ الطباعة')}: ${_lowStockEsc(dateText)}</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr>${head(t('dash.colProduct') || 'المنتج')}${head(t('dash.colCode') || 'الباركود / المارك')}${head(t('common.qty') || 'الكمية')}${head(t('dash.colThreshold') || 'الحد')}</tr></thead>
+        <tbody>${rows.map(p => `
+          <tr>
+            <td style="border:1px solid #000;padding:6px 8px">${_lowStockEsc(p.name)}</td>
+            <td dir="ltr" style="border:1px solid #000;padding:6px 8px;text-align:left">${_lowStockIdentity(p) || '—'}</td>
+            <td style="border:1px solid #000;padding:6px 8px;text-align:center">${_lowStockEsc(p.quantity)}</td>
+            <td style="border:1px solid #000;padding:6px 8px;text-align:center">${_lowStockEsc(threshold)}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+      <div style="margin-top:12px;font-size:11px">${_lowStockEsc(t('dash.printCount') || 'عدد المنتجات')}: ${rows.length}</div>
+    </div>`;
+  window.PrintMode.openPreview(title, html, { mode: 'bw' });
+}
+
+window.openLowStockModal = openLowStockModal;
+window.closeLowStockModal = closeLowStockModal;
+window.openLowStockProduct = openLowStockProduct;
+window.printLowStockReport = printLowStockReport;
 
 window.renderChart = renderChart;
 

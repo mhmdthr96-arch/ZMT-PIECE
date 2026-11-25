@@ -1,0 +1,50 @@
+/* ============================================================================
+   ZMT PIECE — Debt alerts: start-up reminder window
+   ----------------------------------------------------------------------------
+   The critical-debts reminder is shown at start-up, BEFORE the «تفاصيل الديون»
+   page (and its scoped styles) has ever been injected. These rules therefore
+   live in a globally-loaded stylesheet so the reminder is always fully styled.
+   Everything else for the feature stays scoped to the page itself.
+   ============================================================================ */
+
+/* ===== Start-up reminder ===== */
+.dd-reminder-overlay{position:fixed;inset:0;z-index:99998;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(2px);animation:ddFade .18s ease}
+.dd-reminder{width:100%;max-width:520px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 24px 70px rgba(15,23,42,.45);animation:ddPop .22s ease}
+.dd-reminder-head{display:flex;align-items:center;gap:11px;padding:16px 18px;background:linear-gradient(135deg,#ef4444,#b91c1c);color:#fff}
+.dd-reminder-ic{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0}
+.dd-reminder-head h3{margin:0;font-size:16px;font-weight:900}
+.dd-reminder-body{padding:18px}
+.dd-reminder-body p{margin:0 0 8px;font-size:13.5px;color:var(--silver-700,#374151);line-height:1.6}
+.dd-reminder-total{color:#b91c1c !important;font-weight:700}
+.dd-reminder-split{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 4px !important}
+.dd-rem-split-item{flex:1;min-width:150px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 11px;border-radius:9px;font-size:12px;font-weight:800;border:1px solid transparent}
+.dd-rem-split-cust{background:rgba(37,99,235,.08);color:#1d4ed8;border-color:rgba(37,99,235,.18)}
+.dd-rem-split-sup{background:rgba(13,148,136,.08);color:#0f766e;border-color:rgba(13,148,136,.18)}
+.dd-rem-split-amt{font-weight:700;color:inherit;opacity:.9}
+.dd-reminder-list{list-style:none;margin:12px 0 0;padding:0;max-height:220px;overflow:auto;border:1px solid var(--silver-200,#e5e7eb);border-radius:10px}
+.dd-reminder-list li{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;border-bottom:1px solid var(--silver-100,#f1f5f9)}
+.dd-reminder-list li:last-child{border-bottom:none}
+.dd-rem-type{font-size:10.5px;font-weight:800;color:#0f766e;background:rgba(13,148,136,.12);border-radius:8px;padding:1px 8px;flex-shrink:0}
+.dd-rem-name{flex:1;font-weight:700;color:var(--silver-800,#1f2937);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dd-rem-amt{color:#16a34a;font-weight:900;white-space:nowrap}
+.dd-rem-age{color:#b91c1c;font-weight:800;white-space:nowrap;font-size:11px}
+.dd-rem-more{justify-content:center;color:var(--silver-500,#64748b);font-weight:700}
+.dd-reminder-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 18px;border-top:1px solid var(--silver-200,#e5e7eb)}
+.dd-reminder-foot button{padding:10px 22px;border-radius:10px;border:none;cursor:pointer;font-size:13.5px;font-weight:800;font-family:inherit}
+.dd-rem-view{background:linear-gradient(135deg,#ef4444,#b91c1c);color:#fff;box-shadow:0 3px 10px rgba(185,28,28,.3)}
+.dd-rem-view:hover{filter:brightness(1.07)}
+.dd-rem-later{background:var(--silver-100,#f1f5f9);color:var(--silver-700,#374151)}
+.dd-rem-later:hover{background:var(--silver-200,#e5e7eb)}
+@keyframes ddFade{from{opacity:0}to{opacity:1}}
+@keyframes ddPop{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
+
+/* ===== Dark mode ===== */
+html[data-theme="dark"] .dd-reminder{background:#1e2530}
+html[data-theme="dark"] .dd-reminder-body p{color:#cbd5e1}
+html[data-theme="dark"] .dd-rem-name{color:#e2e8f0}
+html[data-theme="dark"] .dd-reminder-list{border-color:#2b3542}
+html[data-theme="dark"] .dd-reminder-list li{border-color:#2b3542}
+html[data-theme="dark"] .dd-reminder-foot{border-color:#2b3542}
+html[data-theme="dark"] .dd-rem-later{background:#2b3542;color:#cbd5e1}
+html[data-theme="dark"] .dd-rem-split-cust{background:rgba(37,99,235,.18);color:#93c5fd;border-color:rgba(37,99,235,.3)}
+html[data-theme="dark"] .dd-rem-split-sup{background:rgba(13,148,136,.18);color:#5eead4;border-color:rgba(13,148,136,.3)}

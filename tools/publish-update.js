@@ -15,6 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
@@ -143,6 +144,15 @@ async function main() {
 
   const title = 'ZMT PIECE ' + version;
 
+  // Pass the notes through a UTF-8 file instead of a command-line argument.
+  // Windows command-line quoting/encoding mangles long Arabic notes, which made
+  // `gh release create --notes` fail even though the network was healthy.
+  const notesFile = path.join(os.tmpdir(), 'zmt-release-notes-' + process.pid + '.md');
+  fs.writeFileSync(notesFile, notes, 'utf8');
+  process.on('exit', function () {
+    try { fs.unlinkSync(notesFile); } catch (e) { /* best effort */ }
+  });
+
   // Create the release shell first (no assets), then upload each installer
   // INDIVIDUALLY with retries: a single 400 MB `release create` dies entirely
   // on one connection blip, while per-file retries keep finished files and
@@ -150,7 +160,7 @@ async function main() {
   let created = false;
   for (let attempt = 1; attempt <= 3 && !created; attempt++) {
     log('creating release ' + tag + ' (shell, attempt ' + attempt + '/3)…');
-    const res = run('gh', ['release', 'create', tag, '--repo', REPO, '--title', title, '--notes', notes], { allowFail: true });
+    const res = run('gh', ['release', 'create', tag, '--repo', REPO, '--title', title, '--notes-file', notesFile], { allowFail: true });
     created = res.status === 0;
     if (!created) {
       run('gh', ['release', 'delete', tag, '--repo', REPO, '--yes', '--cleanup-tag'], { allowFail: true });

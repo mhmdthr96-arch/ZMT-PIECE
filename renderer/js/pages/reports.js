@@ -62,14 +62,35 @@ function getDateRange() {
   return { from: fromTs };
 }
 
+function inReportRange(ts, range) {
+  const t = ts || 0;
+  if (range && range.from && t < range.from) return false;
+  if (range && range.to && t > range.to) return false;
+  return true;
+}
+
 function filterByDate(items, range) {
   if (!items || items.length === 0) return [];
-  return items.filter(item => {
-    const t = item.createdAt || item.date || 0;
-    if (range.from && t < range.from) return false;
-    if (range.to && t > range.to) return false;
-    return true;
+  return items.filter(item => inReportRange(item.createdAt || item.date || 0, range));
+}
+
+// Margin follows the day an invoice was FULLY settled, not the sale date.
+// Partial collections still appear as revenue in their own period.
+function filterByCompletion(items, range) {
+  if (!items || items.length === 0) return [];
+  return items.filter(inv => {
+    const ts = DB.getInvoiceCompletionTs(inv);
+    return ts > 0 && inReportRange(ts, range);
   });
+}
+
+// Cost of a sale line: the snapshot frozen at sale time, then the product's
+// real batch cost (displayed buy price after purchase discounts).
+function _reportLineCost(line, prod) {
+  if (typeof PurchaseCore !== 'undefined' && PurchaseCore && typeof PurchaseCore.itemCost === 'function') {
+    return PurchaseCore.itemCost(line, prod);
+  }
+  return prod ? (prod.buyPrice || 0) : 0;
 }
 
 function getProfitMargin(invoices, productMap) {
@@ -78,18 +99,38 @@ function getProfitMargin(invoices, productMap) {
     if (DB.getInvoiceEffectivePaid(inv) < (inv.totalAmount || 0)) return s;
     (inv.items || []).forEach(it => {
       const prod = productMap[it.productId];
-      const buyPrice = prod ? (prod.buyPrice || 0) : 0;
+      const buyPrice = _reportLineCost(it, prod);
       s += (it.price - buyPrice) * it.qty;
     });
     return s;
   }, 0);
 }
 
+// «مصروف يدوي» فقط كما في net-account: net_expense دون Tag (الرواتب
+// tag:'salary' والزكاة tag:'zakat' خارج الخصم ولا تُمس totalExpenses).
+function _reportManualExpenseSplit(payments, from, to) {
+  const out = { cash: 0, ccp: 0 };
+  (payments || []).forEach(p => {
+    if (!p || p.isProvisional || p.type !== 'net_expense' || p.tag) return;
+    const ts = p.createdAt || 0;
+    if (from != null && ts < from) return;
+    if (to != null && ts > to) return;
+    const a = isFinite(Number(p.amount)) ? Number(p.amount) : 0;
+    if (p.cashAmount != null || p.ccpAmount != null) {
+      out.cash += isFinite(Number(p.cashAmount)) ? Number(p.cashAmount) : 0;
+      out.ccp += isFinite(Number(p.ccpAmount)) ? Number(p.ccpAmount) : 0;
+    } else if (p.method === 'ccp') out.ccp += a;
+    else if (p.method === 'mixed') { out.cash += a / 2; out.ccp += a / 2; }
+    else out.cash += a;
+  });
+  return out;
+}
+
 function formatDA(v) {
   return 'DA' + fmtMoney((v || 0));
 }
 
-function getProfitMarginSplit(invoices, productMap) {
+function getProfitMarginSplit(invoices, productMap, manualExpenses) {
   let marginCash = 0, marginCcp = 0, collectedCash = 0, collectedCcp = 0;
   invoices.forEach(inv => {
     if (inv.isProvisional) return;
@@ -97,7 +138,7 @@ function getProfitMarginSplit(invoices, productMap) {
     let margin = 0;
     (inv.items || []).forEach(it => {
       const prod = productMap[it.productId];
-      const buyPrice = prod ? (prod.buyPrice || 0) : 0;
+      const buyPrice = _reportLineCost(it, prod);
       margin += (it.price - buyPrice) * it.qty;
     });
     const m = DB.getInvoicePaymentMethods(inv.id);
@@ -112,6 +153,11 @@ function getProfitMarginSplit(invoices, productMap) {
       marginCash += margin;
     }
   });
+  // خصم المصروفات اليدوية من سطر النقد/CCP فقط (وليس من سطر الهامش)،
+  // دون أن تنزل القناة إلى ما تحت الصفر.
+  const me = manualExpenses || { cash: 0, ccp: 0 };
+  collectedCash = Math.max(0, collectedCash - (Number(me.cash) || 0));
+  collectedCcp = Math.max(0, collectedCcp - (Number(me.ccp) || 0));
   return { margin: { cash: marginCash, ccp: marginCcp }, collected: { cash: collectedCash, ccp: collectedCcp } };
 }
 
@@ -253,8 +299,10 @@ function renderReports() {
   const salesInvoices = filterByDate(allInvoices.filter(inv => inv.type === 'customer'), range);
   const allReturns = DB.getReturns();
   const filteredReturns = filterByDate(allReturns, range);
-  const allPayments = DB.getPayments().filter(p => p.customerId);
-  const filteredPayments = filterByDate(allPayments, range);
+  // All money actually collected in the period: invoice payments, walk-in,
+  // direct customer payments and «سند قبض» vouchers (no double counting).
+  const allCashIn = DB.getCashInEvents();
+  const filteredCashIn = allCashIn.filter(c => inReportRange(c.ts, range));
 
   // Build lookup maps for O(1) access
   const invoiceMap = {};
@@ -264,10 +312,8 @@ function renderReports() {
 
   // === SALES STATS (from invoice totals — real value of goods sold) ===
   const totalSalesAmount = salesInvoices.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
-  const paidSales = salesInvoices.filter(inv => DB.getInvoiceEffectivePaid(inv) >= (inv.totalAmount || 0));
-  const totalSalesProfit = paidSales.reduce((s, inv) => s + (inv.profit || 0), 0);
   const totalSalesQty = salesInvoices.reduce((s, inv) => s + inv.items.reduce((si, it) => si + it.qty, 0), 0);
-  const totalSalesPaid = filteredPayments.reduce((s, p) => s + p.amount, 0);
+  const totalSalesPaid = filteredCashIn.reduce((s, c) => s + c.amount, 0);
   const totalSalesDue = totalSalesAmount - totalSalesPaid;
 
   // === RETURNS STATS ===
@@ -287,13 +333,27 @@ function renderReports() {
   const netSales = totalSalesAmount - totalReturnsValue;
   const returnRate = totalSalesAmount > 0 ? (totalReturnsValue / totalSalesAmount * 100) : 0;
 
-  // هامش الربح = (سعر البيع - سعر الشراء) لكل قطعة — للفترة + الإجمالي العام
+  // هامش الربح = (سعر البيع - سعر الشراء) لكل قطعة. ربح الفاتورة يظهر في
+  // الفترة التي اكتمل فيها سدادها، لا في تاريخ إصدارها.
   const allCustomerInvoices = allInvoices.filter(inv => inv.type === 'customer');
+  const periodPaidSales = filterByCompletion(allCustomerInvoices, range);
+  const totalSalesProfit = periodPaidSales.reduce((s, inv) => s + (inv.profit || 0), 0);
   const totalProfitMargin = getProfitMargin(allCustomerInvoices, productMap);
-  const periodProfitMargin = getProfitMargin(salesInvoices, productMap);
-  const totalProfitSplit = getProfitMarginSplit(allCustomerInvoices, productMap);
-  const periodProfitSplit = getProfitMarginSplit(salesInvoices, productMap);
-  const paidSalesAmount = paidSales.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
+  const periodProfitMargin = getProfitMargin(periodPaidSales, productMap);
+  // خصم المصروفات اليدوية (net_expense بلا Tag) من سطر النقد/CCP فقط:
+  // البطاقة الكلية بكل المصروفات، وبطاقة الفترة بمصروفات الفترة. نستعمل
+  // دوال net-account المشتركة عندما تكون محمّلة، وإلا حساباً مطابقاً محلياً
+  // حتى يبقى ملف reports.js مستقلاً إن فُتح وحده.
+  const allPaymentsRaw = DB.getPayments();
+  const meTotal = (typeof _manualExpenseSplit === 'function')
+    ? _manualExpenseSplit(allPaymentsRaw, null, null)
+    : _reportManualExpenseSplit(allPaymentsRaw, null, null);
+  const mePeriod = (typeof _manualExpenseSplit === 'function')
+    ? _manualExpenseSplit(allPaymentsRaw, range && range.from, range && range.to)
+    : _reportManualExpenseSplit(allPaymentsRaw, range && range.from, range && range.to);
+  const totalProfitSplit = getProfitMarginSplit(allCustomerInvoices, productMap, meTotal);
+  const periodProfitSplit = getProfitMarginSplit(periodPaidSales, productMap, mePeriod);
+  const paidSalesAmount = periodPaidSales.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
   const profitMargin = paidSalesAmount > 0 ? (periodProfitMargin / paidSalesAmount * 100) : 0;
 
   document.getElementById('rSalesAmount').textContent = formatDA(totalSalesAmount);
@@ -315,23 +375,26 @@ function renderReports() {
 
   // Top product
   const prodMap = {};
+  const prodName = {};
   salesInvoices.forEach(inv => (inv.items || []).forEach(it => {
-    if (!prodMap[it.productId]) prodMap[it.productId] = 0;
-    prodMap[it.productId] += it.qty;
+    const rid = it.productId || ('free:' + (it.name || ''));
+    if (!prodMap[rid]) { prodMap[rid] = 0; prodName[rid] = it.name || ''; }
+    prodMap[rid] += it.qty;
   }));
   const topProd = Object.entries(prodMap).sort((a, b) => b[1] - a[1])[0];
-  document.getElementById('rTopProduct').textContent = topProd ? (productMap[topProd[0]]?.name || '—') : '—';
+  document.getElementById('rTopProduct').textContent = topProd
+    ? ((productMap[topProd[0]] && productMap[topProd[0]].name) || prodName[topProd[0]] || '—') : '—';
 
   // === CHARTS ===
   renderComparisonPie(totalSalesAmount, totalReturnsValue);
   renderComparisonBar(salesInvoices, filteredReturns, invoiceMap);
-  renderSalesTrend(salesInvoices);
+  renderSalesTrend(salesInvoices, range);
   renderReturnsTrend(filteredReturns);
   renderReturnsReasonPie(filteredReturns);
 
   // === TABLES ===
   renderBestSellers(salesInvoices, productMap);
-  renderDailyBreakdown(salesInvoices, filteredReturns, invoiceMap);
+  renderDailyBreakdown(salesInvoices, filteredReturns, invoiceMap, range);
 }
 
 // ===== COMPARISON PIE (Doughnut) =====
@@ -434,17 +497,25 @@ function renderComparisonBar(salesInvoices, returns, invoiceMap) {
 }
 
 // ===== SALES TREND (Line) =====
-function renderSalesTrend(invoices) {
+function renderSalesTrend(invoices, range) {
   const canvas = document.getElementById('salesTrendChart');
   if (!canvas) return;
   destroyChart('salesTrend');
 
+  const dayKey = (ts) => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   const daily = {};
-  invoices.forEach(inv => {
-    const d = new Date(inv.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const bucket = (ts) => {
+    const d = dayKey(ts);
     if (!daily[d]) daily[d] = { sales: 0, profit: 0 };
-    daily[d].sales += inv.totalAmount;
-    if (DB.getInvoiceEffectivePaid(inv) >= (inv.totalAmount || 0)) daily[d].profit += inv.profit || 0;
+    return daily[d];
+  };
+  // المبيعات = التحصيل الفعلي بتاريخه (دفعات فواتير + سندات قبض + دفع مباشر).
+  DB.getCashInEvents().forEach(c => { if (inReportRange(c.ts, range)) bucket(c.ts).sales += c.amount; });
+  // الربح = ربح الفاتورة كاملاً في يوم اكتمال سدادها.
+  (invoices || []).forEach(inv => {
+    if (inv.isProvisional) return;
+    const ts = DB.getInvoiceCompletionTs(inv);
+    if (ts) bucket(ts).profit += (inv.profit || 0);
   });
 
   const labels = Object.keys(daily).sort();
@@ -611,12 +682,16 @@ function renderBestSellers(invoices, productMap) {
   const container = document.getElementById('bestSellersBody');
   const prodMap = {};
   invoices.forEach(inv => (inv.items || []).forEach(item => {
-    if (!prodMap[item.productId]) prodMap[item.productId] = { qty: 0, total: 0, profit: 0 };
-    prodMap[item.productId].qty += item.qty;
-    prodMap[item.productId].total += item.total;
+    // An unlisted (F10) line has no product id, so every one of them would
+    // collapse into a single "null" row. Group them by the name typed at the
+    // till instead, and keep that name for the label.
+    const rid = item.productId || ('free:' + (item.name || ''));
+    if (!prodMap[rid]) prodMap[rid] = { qty: 0, total: 0, profit: 0, name: item.name || '', free: !item.productId };
+    prodMap[rid].qty += item.qty;
+    prodMap[rid].total += item.total;
     const prod = productMap[item.productId];
-    const buyPrice = prod ? (prod.buyPrice || 0) : 0;
-    prodMap[item.productId].profit += (item.price - buyPrice) * item.qty;
+    const buyPrice = _reportLineCost(item, prod);
+    prodMap[rid].profit += (item.price - buyPrice) * item.qty;
   }));
 
   const sorted = Object.entries(prodMap).sort((a, b) => b[1].qty - a[1].qty).slice(0, 20);
@@ -630,7 +705,7 @@ function renderBestSellers(invoices, productMap) {
     const prod = productMap[prodId];
     return '<tr>' +
       '<td>' + (i + 1) + '</td>' +
-      '<td><strong>' + (prod ? escHtml(prod.name) : prodId) + '</strong></td>' +
+      '<td><strong>' + (prod ? escHtml(prod.name) : escHtml(data.name)) + (data.free ? ' <span class="sc-free-badge">' + t('sales.freeNoCost') + '</span>' : '') + '</strong></td>' +
       '<td dir="ltr">' + (prod ? escHtml(prod.barcode) : '-') + '</td>' +
       '<td>' + Unit.fmtQty(data.qty) + '</td>' +
       '<td>' + formatDA(data.total) + '</td>' +
@@ -640,27 +715,33 @@ function renderBestSellers(invoices, productMap) {
 }
 
 // ===== DAILY BREAKDOWN TABLE =====
-function renderDailyBreakdown(salesInvoices, returns, invoiceMap) {
+function renderDailyBreakdown(salesInvoices, returns, invoiceMap, range) {
   const container = document.getElementById('dailyBreakdownBody');
   const daily = {};
+  const bucket = (ts) => {
+    const d = new Date(ts).toLocaleDateString('ar-EG-u-nu-latn');
+    if (!daily[d]) daily[d] = { invCount: 0, salesQty: 0, salesAmount: 0, returnCount: 0, returnQty: 0, returnValue: 0 };
+    return daily[d];
+  };
 
   salesInvoices.forEach(inv => {
-    const d = new Date(inv.createdAt).toLocaleDateString('ar-EG-u-nu-latn');
-    if (!daily[d]) daily[d] = { invCount: 0, salesQty: 0, salesAmount: 0, returnCount: 0, returnQty: 0, returnValue: 0 };
-    daily[d].invCount++;
-    daily[d].salesQty += inv.items.reduce((s, it) => s + it.qty, 0);
-    daily[d].salesAmount += inv.totalAmount;
+    const b = bucket(inv.createdAt || inv.date || 0);
+    b.invCount++;
+    b.salesQty += inv.items.reduce((s, it) => s + it.qty, 0);
+  });
+  // عمود التحصيل يُسجَّل بتاريخ استلام المال فعلياً، لا تاريخ إصدار الفاتورة.
+  DB.getCashInEvents().forEach(c => {
+    if (inReportRange(c.ts, range)) bucket(c.ts).salesAmount += c.amount;
   });
 
   returns.forEach(r => {
-    const d = new Date(r.createdAt).toLocaleDateString('ar-EG-u-nu-latn');
-    if (!daily[d]) daily[d] = { invCount: 0, salesQty: 0, salesAmount: 0, returnCount: 0, returnQty: 0, returnValue: 0 };
-    daily[d].returnCount++;
-    daily[d].returnQty += r.qty || 0;
+    const b = bucket(r.createdAt || r.date || 0);
+    b.returnCount++;
+    b.returnQty += r.qty || 0;
     const inv = invoiceMap[r.invoiceId];
     if (inv && inv.items) {
       const match = inv.items.find(it => it.productId === r.productId);
-      if (match) daily[d].returnValue += (match.price || 0) * (r.qty || 0);
+      if (match) b.returnValue += (match.price || 0) * (r.qty || 0);
     }
   });
 
@@ -704,11 +785,10 @@ function exportReportsPDF() {
 
   const salesInv = filterByDate(allInvoices.filter(inv => inv.type === 'customer'), range);
   const ret = filterByDate(DB.getReturns(), range);
-  const payments = filterByDate(DB.getPayments().filter(p => p.customerId), range);
+  const cashIn = DB.getCashInEvents().filter(c => inReportRange(c.ts, range));
 
-  const totalSales = payments.reduce((s, p) => s + p.amount, 0);
-  const totalProfit = salesInv
-    .filter(inv => DB.getInvoiceEffectivePaid(inv) >= (inv.totalAmount || 0))
+  const totalSales = cashIn.reduce((s, c) => s + c.amount, 0);
+  const totalProfit = filterByCompletion(allInvoices.filter(inv => inv.type === 'customer'), range)
     .reduce((s, inv) => s + (inv.profit || 0), 0);
   const totalReturns = ret.reduce((s, r) => s + (r.qty || 0), 0);
 
@@ -734,12 +814,13 @@ function exportReportsPDF() {
   header += '-'.repeat(40) + '\n';
 
   const dailySales = {};
-  salesInv.forEach(inv => {
-    const d = new Date(inv.createdAt).toLocaleDateString('ar-EG-u-nu-latn');
+  const dailyBucket = (ts) => {
+    const d = new Date(ts).toLocaleDateString('ar-EG-u-nu-latn');
     if (!dailySales[d]) dailySales[d] = { count: 0, amount: 0 };
-    dailySales[d].count++;
-    dailySales[d].amount += inv.totalAmount;
-  });
+    return dailySales[d];
+  };
+  salesInv.forEach(inv => { dailyBucket(inv.createdAt || inv.date || 0).count++; });
+  cashIn.forEach(c => { dailyBucket(c.ts).amount += c.amount; });
 
   Object.entries(dailySales).sort((a, b) => new Date(b[0]) - new Date(a[0])).slice(0, 50).forEach(([date, d]) => {
     header += date + ': ' + d.count + t('reports.invoicesWord') + ', ' + formatDA(d.amount) + '\n';

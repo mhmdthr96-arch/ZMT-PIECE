@@ -19,7 +19,7 @@
         <div class="sd-info-details" id="sdDetails"></div>
       </div>
       <div class="sd-info-actions">
-        <button class="btn btn-sm" onclick="openBalanceEditModal('supplier', _sdSupplierId)" title="تعديل الرصيد" id="sdBalEditBtn"><i class="fas fa-coins"></i></button>
+        <button class="btn btn-sm" onclick="openBalanceEditModal('supplier', _sdSupplierId)" title="تعديل الرصيد" id="sdBalEditBtn" data-i18n-title="balanceTools.editTitle"><i class="fas fa-coins"></i></button>
         <button class="btn btn-sm" onclick="showSdEditForm()" title="تعديل" data-i18n-title="common.edit"><i class="fas fa-edit"></i></button>
         <button class="btn btn-sm btn-danger" onclick="confirmSdDelete()" title="حذف" data-i18n-title="common.delete"><i class="fas fa-trash"></i></button>
       </div>
@@ -59,7 +59,7 @@
         <i class="fas fa-money-bill-wave"></i> <span data-i18n="debts.payments">الدفعات</span> <span class="sd-badge" id="sdPayCount">0</span>
       </button>
       <button class="sd-tab" data-tab="records" onclick="switchSdTab('records')">
-        <i class="fas fa-clipboard-list"></i> السجل <span class="sd-badge" id="sdRecCount">0</span>
+        <i class="fas fa-clipboard-list"></i><span data-i18n="supplier.history"> السجل </span><span class="sd-badge" id="sdRecCount">0</span>
       </button>
     </div>
 
@@ -132,16 +132,55 @@
       </div>
       <div class="form-group">
         <label data-i18n="common.total">المبلغ</label> <span class="required">*</span>
-        <input type="number" class="form-input no-spinner" id="sdPayAmount" placeholder="0.00" min="0" dir="ltr">
+        <input type="number" class="form-input no-spinner sd-pay-amount" id="sdPayAmount" placeholder="0.00" min="0" dir="ltr" oninput="updateSdPayAmountColor(this)">
       </div>
       <div class="form-group">
         <label data-i18n="common.name">ملاحظة</label>
-        <input type="text" class="form-input" id="sdPayNote" placeholder="مثال: دفعة نقدية">
+        <input type="text" class="form-input" id="sdPayNote" placeholder="مثال: دفعة نقدية" data-i18n-placeholder="sales.paymentExample">
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="closePayModal()"><span data-i18n="common.cancel">إلغاء</span></button>
       <button class="btn btn-success" onclick="confirmPay()"><i class="fas fa-check"></i> <span data-i18n="common.confirmPay">تأكيد الدفع</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit / Delete Payment Modal -->
+<div class="modal-overlay" id="sdEditPayModal">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-header">
+      <h3><i class="fas fa-edit"></i> <span data-i18n="sdPayment.editTitle">تعديل الدفعة</span></h3>
+      <button class="modal-close" onclick="closeSdEditPay()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="sd-pay-summary">
+        <span data-i18n="common.remaining">الرصيد الحالي:</span>
+        <strong id="sdEditPayBalance">DA0</strong>
+        <small class="sd-pay-balance-note" data-i18n="sdPayment.balanceNote">يُحدَّث رصيد المورد تلقائياً بمقدار الفرق.</small>
+      </div>
+      <div class="form-group">
+        <label><span data-i18n="common.total">المبلغ</span> <span class="required">*</span></label>
+        <input type="number" class="form-input no-spinner" id="sdEditPayAmount" min="0" step="any" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="sdPayment.date">تاريخ الدفع</label>
+        <input type="datetime-local" class="form-input" id="sdEditPayDate" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="sdPayment.note">الملاحظة</label>
+        <input type="text" class="form-input" id="sdEditPayNote" data-i18n-placeholder="sales.paymentExample" placeholder="مثال: دفعة نقدية">
+      </div>
+    </div>
+    <div class="modal-footer" style="flex-wrap:wrap;gap:8px">
+      <button class="btn btn-danger" onclick="deleteSdPaymentFromModal()">
+        <i class="fas fa-trash"></i> <span data-i18n="common.delete">حذف</span>
+      </button>
+      <div style="flex:1"></div>
+      <button class="btn" onclick="closeSdEditPay()"><span data-i18n="common.cancel">إلغاء</span></button>
+      <button class="btn btn-primary" onclick="saveSdPaymentEdit()">
+        <i class="fas fa-check"></i> <span data-i18n="common.save">حفظ</span>
+      </button>
     </div>
   </div>
 </div>
@@ -169,6 +208,22 @@
       <div class="form-group">
         <label><span data-i18n="suppliers.formEmail">البريد الإلكتروني (اختياري)</span></label>
         <input type="email" class="form-input" id="editSupEmail" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.rc">RC (اختياري)</label>
+        <input type="text" class="form-input" id="editSupRc" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.nif">NIF (اختياري)</label>
+        <input type="text" class="form-input" id="editSupNif" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.nis">NIS (اختياري)</label>
+        <input type="text" class="form-input" id="editSupNis" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.article">N° article (اختياري)</label>
+        <input type="text" class="form-input" id="editSupArticle" dir="ltr">
       </div>
       <input type="hidden" id="editSupId">
     </div>

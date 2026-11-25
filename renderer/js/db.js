@@ -1,10 +1,18 @@
 const DB = (() => {
   const DB_NAME = 'zmt_piece_db';
-  const DB_VERSION = 7;
-  const STORES = ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'meta', 'supplierReturns', 'auditLogs', 'companies', 'employees', 'attendance'];
+  const DB_VERSION = 10;
+  const STORES = ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'meta', 'supplierReturns', 'auditLogs', 'searchLogs', 'companies', 'employees', 'attendance', 'routeDocs', 'bundles'];
   const AUDIT_CAP = 2000;
+  const SEARCH_CAP = 5000;
   let db = null;
   let _ready = false;
+
+  // Monotonic data revision. Every persisted mutation (write, delete, index
+  // rebuild) advances it, so read-only consumers such as the movements ledger
+  // can memoise their derived data and still invalidate the moment anything
+  // changes — including an in-place updateInvoice() that has no index rebuild.
+  let _dataVersion = 0;
+  function _bumpDataVersion() { _dataVersion++; }
 
   // ===== IN-MEMORY CACHE + INDEXES =====
   const _cache = {};
@@ -117,6 +125,7 @@ const DB = (() => {
   }
 
   function _rebuildIndex(store) {
+    _bumpDataVersion();
     _idx[store] = {};
     const arr = _cache[store] || [];
     if (store === 'products') {
@@ -219,6 +228,23 @@ const DB = (() => {
           _idx.attendance[key].push(a);
         }
       }
+    } else if (store === 'bundles') {
+      for (const b of arr) {
+        if (!b || b.id == null) continue;
+        _idx.bundles[b.id] = b;
+        if (b.barcode) {
+          _idx.bundles['bc:' + b.barcode] = b;
+          _idx.bundles['bcn:' + canonBarcode(b.barcode)] = b;
+        }
+      }
+    } else if (store === 'routeDocs') {
+      // Cosmetic bon-de-route copies are only ever fetched by id (edit, print,
+      // delete), so the plain id key is the whole index. Without this branch
+      // _rebuildIndex leaves the map empty and getRouteDoc() finds nothing.
+      for (const r of arr) {
+        if (!r || r.id == null) continue;
+        _idx.routeDocs[r.id] = r;
+      }
     }
   }
 
@@ -270,6 +296,33 @@ const DB = (() => {
   function _getStoreId() {
     if (typeof Auth !== 'undefined' && Auth.isLoggedIn()) return Auth.getUserCode() || '';
     return localStorage.getItem('zmt_store_code') || '';
+  }
+
+  // Who is holding the keyboard. A cashier session carries a username; a
+  // manager session can be built offline by Auth.startLocalSession() and then
+  // holds none — which used to print '—' in the audit log for the shop owner.
+  // The role is the fallback label, so an operation is never left anonymous.
+  function _operatorTag() {
+    let user = null;
+    try { user = (typeof Auth !== 'undefined' && Auth.getCurrentUser) ? Auth.getCurrentUser() : null; } catch (e) { user = null; }
+    if (!user) return null;
+    const role = user.role || (user.storeType === 'branch' ? 'manager' : 'admin');
+    const raw = String(user.username || user.name || user.storeName || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (role === 'user') return { role: 'user', name: raw || 'كارشير' };
+    return { role: 'manager', name: raw || 'المدير' };
+  }
+
+  // Stamp once, at creation: a caller that already knows the operator (phone
+  // sales, LAN replay of a branch record) keeps its own value.
+  function _stampOperator(rec) {
+    if (!rec || rec.operatorName) return rec;
+    // A sale relayed from a phone names its own seller; the desktop session that
+    // merely received it must not claim the operation. The role stays blank —
+    // only the name is guaranteed, so the UI shows the name without a title.
+    if (rec.seller) { rec.operatorName = String(rec.seller).slice(0, 60); return rec; }
+    const op = _operatorTag();
+    if (op) { rec.operatorName = op.name; rec.operatorRole = op.role; }
+    return rec;
   }
 
   // Normalize a timestamp (number ms or ISO string) to ms; 0 if invalid.
@@ -426,12 +479,14 @@ const DB = (() => {
   let _batchTimer = null;
 
   function _queueWrite(store, item) {
+    _bumpDataVersion();
     if (!_batchQueue[store]) _batchQueue[store] = { put: [], del: [] };
     _batchQueue[store].put.push(item);
     _scheduleFlush();
   }
 
   function _queueDelete(store, id) {
+    _bumpDataVersion();
     if (!_batchQueue[store]) _batchQueue[store] = { put: [], del: [] };
     _batchQueue[store].del.push(id);
     _recordTombstone(store, id, Date.now());
@@ -455,24 +510,38 @@ const DB = (() => {
   let _auditPending = [];
   let _auditDropped = [];
   function _dropAuditPending() { _auditPending = []; _auditDropped = []; }
+  let _searchPending = [];
+  let _searchDropped = [];
+  function _dropSearchPending() { _searchPending = []; _searchDropped = []; }
+  let _searchTimer = null;
+  function _scheduleSearchFlush() {
+    if (_searchTimer) return;
+    _searchTimer = setTimeout(async () => {
+      _searchTimer = null;
+      try {
+        if (!db) return;
+        const put = _searchPending; const del = _searchDropped;
+        _searchPending = []; _searchDropped = [];
+        if (put.length) await _idbPut('searchLogs', put);
+        if (del.length) await _idbDelete('searchLogs', del);
+      } catch (e) {}
+    }, 1500);
+  }
+
+  // Audit flush: mirrors _scheduleSearchFlush. Records appended since the last
+  // flush are written as a delta (and ids that fell off the capped ring buffer
+  // are deleted), so a long-running session never re-puts the whole log.
   function _scheduleAuditFlush() {
     if (_auditTimer) return;
     _auditTimer = setTimeout(async () => {
       _auditTimer = null;
       try {
         if (!db) return;
-        // auditLogs is a capped ring buffer. The old flush re-wrote the ENTIRE
-        // array on every action — a single recorded action re-serialised up to
-        // AUDIT_CAP records into IndexedDB. The store is keyed on `id`, so only
-        // the rows appended since the last flush need putting, and only the rows
-        // shifted off the front need deleting.
-        const put = _auditPending;
-        const del = _auditDropped;
-        _auditPending = [];
-        _auditDropped = [];
+        const put = _auditPending; const del = _auditDropped;
+        _auditPending = []; _auditDropped = [];
         if (put.length) await _idbPut('auditLogs', put);
         if (del.length) await _idbDelete('auditLogs', del);
-      } catch (e) { /* best effort */ }
+      } catch (e) {}
     }, 1500);
   }
 
@@ -480,6 +549,9 @@ const DB = (() => {
     _batchTimer = null;
     const queue = _batchQueue;
     _batchQueue = {};
+    // After close() (factory reset) background timers can still queue writes;
+    // dropping them is the point — they must not reopen or resync wiped data.
+    if (!db) return;
     for (const [store, ops] of Object.entries(queue)) {
       try {
         if (ops.put.length) await _idbPut(store, ops.put);
@@ -498,6 +570,7 @@ const DB = (() => {
     if (_batchTimer) { clearTimeout(_batchTimer); _batchTimer = null; }
     const queue = _batchQueue;
     _batchQueue = {};
+    if (!db) return;
     for (const [store, ops] of Object.entries(queue)) {
       try {
         if (ops.put.length) await _idbPut(store, ops.put);
@@ -643,6 +716,7 @@ const DB = (() => {
     _backfillMissingStoreId();
     await _ensureDefaultCompany();
     _backfillCompanyIds();
+    await _repairImportedInvoiceDates();
     _rebuildAll();
     _ready = true;
     _reportDataIntegrity();
@@ -684,6 +758,7 @@ const DB = (() => {
     const backfilledStoreId = _backfillMissingStoreId();
     await _ensureDefaultCompany();
     _backfillCompanyIds();
+    await _repairImportedInvoiceDates();
     if (backfilledStoreId) {
       _rebuildIndex('products');
       _rebuildIndex('invoices');
@@ -720,6 +795,45 @@ const DB = (() => {
     }
     return prodOut.length + invOut.length;
   }
+
+  // The old-program importer used to store the real historical date in `date`
+  // but let addInvoice() stamp `createdAt` with the IMPORT day. The invoice list
+  // and reports read `createdAt`, so every imported invoice appeared on 24/11.
+  // Repair ONLY those rows, ONLY when the two fields disagree. Nothing else is
+  // touched: no items, amounts, numbers, notes, parties, payments, balances,
+  // modifiedAt or audit entries. Idempotent — a no-op once the data is fixed.
+  const _IMPORTED_INVOICE_NOTES = [
+    'فاتورة مستوردة من البرنامج القديم',
+    'فاتورة شراء مستوردة'
+  ];
+
+  async function _repairImportedInvoiceDates() {
+    const changed = [];
+    for (const inv of (_cache.invoices || [])) {
+      if (!inv) continue;
+      const note = String(inv.note || '');
+      let imported = false;
+      for (const prefix of _IMPORTED_INVOICE_NOTES) {
+        if (note.indexOf(prefix) === 0) { imported = true; break; }
+      }
+      if (!imported) continue;
+      const d = Number(inv.date);
+      if (!Number.isFinite(d) || d <= 0) continue;
+      if (Number(inv.createdAt) === d) continue;
+      inv.createdAt = d;
+      changed.push(inv);
+    }
+    if (!changed.length) return 0;
+    if (db) {
+      try {
+        await _idbPut('invoices', changed);
+      } catch (e) {
+        console.error('[DB] imported invoice date repair could not be persisted:', e && e.message);
+      }
+    }
+    return changed.length;
+  }
+  // END imported invoice date repair
 
   // Fixed, stable id for the "default" company created from the general-settings
   // fields (the first company device data is attributed to). Persisted so it can
@@ -913,6 +1027,9 @@ async function _ensureDefaultCompany() {
   }
 
   function _triggerCloudSync() {
+    // A company process is a local-only profile; the main instance owns cloud
+    // sync so two companies can never write to the same remote store path.
+    if (typeof window !== 'undefined' && window.__zmtCompanyIsolated) return;
     if (typeof CloudService !== 'undefined' && CloudService.isCloudConnected() && CloudService.hasData() && localStorage.getItem('zmt_cloud_autosync') === '1') {
       CloudService.triggerSync();
     }
@@ -922,9 +1039,48 @@ async function _ensureDefaultCompany() {
   // the delta channel. NOT gated by autosync: the website should see desktop
   // changes within seconds even when full-backup auto-upload is off.
   function _pushLocalChange(kind, op, record) {
+    if (typeof window !== 'undefined' && window.__zmtCompanyIsolated) return;
     if (typeof CloudService !== 'undefined' && typeof CloudService.pushLocalChange === 'function') {
       try { CloudService.pushLocalChange(kind, op, record); } catch (e) { console.warn('[DB] pushLocalChange:', e); }
     }
+  }
+
+  // Real batch cost: the stored real buy price, or the displayed buy price
+  // after the product-level discount for rows saved before feature 5.
+  function _realCostOf(p) {
+    if (!p) return 0;
+    if (typeof PurchaseCore !== 'undefined' && PurchaseCore && typeof PurchaseCore.productRealCost === 'function') {
+      return PurchaseCore.productRealCost(p);
+    }
+    const bp = parseFloat(p.buyPrice) || 0;
+    const pct = Math.min(100, Math.max(0, parseFloat(p.purchaseDiscountPct) || 0));
+    return Math.round(bp * (1 - pct / 100) * 100) / 100;
+  }
+
+  // Aggregation key for the inventory «i» details: same name + barcode +
+  // reference. Brand / country / mark are deliberately left out — a restock
+  // ordered from another supplier is still the same article for the cashier.
+  function detailsIdentityKey(p) {
+    if (!p) return '';
+    return [
+      String(p.name || '').trim().toLowerCase(),
+      canonBarcode(p.barcode || ''),
+      String(p.reference || '').trim().toLowerCase(),
+    ].join('\u0001');
+  }
+
+  // PLU = the digits the scale prints for an article. Stored and looked-up
+  // values are folded to bare ASCII digits with leading zeros dropped, so a
+  // card keyed "00123" matches the slice "123" (and "00123") cut out of a
+  // scanned code. Same rule as ScaleCore.pluKey — kept here so db.js answers a
+  // PLU lookup even when the caller loaded it standalone.
+  function _pluKey(v) {
+    const d = String(v == null ? '' : v)
+      .replace(/[\u0660-\u0669]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x0660 + 48))
+      .replace(/[\u06F0-\u06F9]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x06F0 + 48))
+      .replace(/[\uFF10-\uFF19]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFF10 + 48))
+      .replace(/[^0-9]/g, '');
+    return d.replace(/^0+(?=\d)/, '');
   }
 
   // Two products are the "same product" only when name, brand, barcode, country of origin, and mark match.
@@ -942,6 +1098,41 @@ async function _ensureDefaultCompany() {
     const ra = String(a.reference || '').trim().toLowerCase();
     const rb = String(b.reference || '').trim().toLowerCase();
     return na === nb && ba === bb && bc === bd && ca === cb && ma === mb && ra === rb;
+  }
+
+  // Per-field price/cost differences between two cards — the exact set of fields
+  // `addOrMergeProduct` tests to decide merge vs. split. Returned as field names
+  // so a diagnostic report can name the reason a restock was kept separate.
+  function _priceDiffs(a, b) {
+    const out = [];
+    if ((parseFloat(a && a.buyPrice) || 0) !== (parseFloat(b && b.buyPrice) || 0)) out.push('buyPrice');
+    if ((parseFloat(a && a.sellPrice) || 0) !== (parseFloat(b && b.sellPrice) || 0)) out.push('sellPrice');
+    if ((parseFloat(a && a.wholesalePrice) || 0) !== (parseFloat(b && b.wholesalePrice) || 0)) out.push('wholesalePrice');
+    if ((parseFloat(a && a.purchaseDiscountPct) || 0) !== (parseFloat(b && b.purchaseDiscountPct) || 0)) out.push('purchaseDiscountPct');
+    if (_realCostOf(a) !== _realCostOf(b)) out.push('realCost');
+    return out;
+  }
+
+  // Identity-field differences (the fields `isSameProductIdentity` compares).
+  // A non-empty result means the two cards are treated as DIFFERENT products.
+  function _identityDiffs(a, b) {
+    const out = [];
+    const eq = (x, y) => String(x == null ? '' : x).trim().toLowerCase() === String(y == null ? '' : y).trim().toLowerCase();
+    if (!eq(a && a.name, b && b.name)) out.push('name');
+    if (!eq(a && a.brandId, b && b.brandId)) out.push('brandId');
+    if (!eq(a && a.barcode, b && b.barcode)) out.push('barcode');
+    if (!eq(a && a.countryOfOrigin, b && b.countryOfOrigin)) out.push('countryOfOrigin');
+    if (!eq(a && a.mark, b && b.mark)) out.push('mark');
+    if (!eq(a && a.reference, b && b.reference)) out.push('reference');
+    return out;
+  }
+
+  // The reason `addOrMergeProduct` would keep an incoming row as a separate card
+  // instead of merging it into `same`: the differing price fields plus expiry.
+  function _splitReason(same, item, sameExpiry) {
+    const parts = _priceDiffs(same, item);
+    if (!sameExpiry) parts.push('expiryDate');
+    return parts.join('+') || 'unknown';
   }
 
   // Returns the product (if any) that already holds the same canonical barcode
@@ -1087,6 +1278,21 @@ async function _ensureDefaultCompany() {
     return _scopeFilterWith(_scopeSnapshot(), list);
   }
 
+  // Indexed, scope-aware lookup for the movements/debt ledgers. `_rebuildIndex`
+  // already maintains `sup:<id>` / `cust:<id>` buckets for invoices and
+  // payments. Reading those buckets turns a per-party full-cache scan into an
+  // O(matches) lookup; the scope/store predicates below are IDENTICAL to the
+  // ones the old getters applied, so results never change.
+  function _partyRows(store, prefix, id) {
+    const key = prefix + id;
+    const arr = (_idx[store] && _idx[store][key]) || [];
+    const s = _scopeSnapshot();
+    // Always return a fresh array: with no companies _scopeFilterWith returns
+    // its input by reference, and callers must not be able to mutate the index
+    // bucket itself (the old full-scan getters also returned a new array).
+    return { s: s, rows: _scopeFilterWith(s, arr).slice() };
+  }
+
   // A product is visible when it is in the active company scope AND (if any store
   // is currently active) belongs to that store. Mirrors getProducts() so single-
   // record lookups (by id / barcode) never surface a product of another store of
@@ -1152,6 +1358,10 @@ async function _ensureDefaultCompany() {
   return {
     ready() { return _ready; },
 
+    // Read-only revision counter used by the movements/debt ledgers to reuse
+    // derived results until the underlying data actually changes.
+    dataVersion() { return _dataVersion; },
+
     async waitForReady() {
       if (_ready) return;
       return new Promise(r => { const t = setInterval(() => { if (_ready) { clearInterval(t); r(); } }, 20); });
@@ -1171,6 +1381,64 @@ async function _ensureDefaultCompany() {
       return scoped.filter(p => !p.storeId || p.storeId === s.sid);
     },
 
+    getBundles() {
+      const s = _scopeSnapshot();
+      return _scopeFilterWith(s, _cache.bundles || []);
+    },
+    getBundle(id) {
+      const b = _idx.bundles ? _idx.bundles[id] : null;
+      if (!b) return null;
+      return _inProductScopeWith(_scopeSnapshot(), b) ? b : null;
+    },
+    getBundleByBarcode(code) {
+      if (!code) return null;
+      const canon = canonBarcode(code);
+      const idx = _idx.bundles || {};
+      const b = idx['bc:' + code] || idx['bcn:' + canon] || idx[code];
+      if (b && _inProductScopeWith(_scopeSnapshot(), b)) return b;
+      const s = _scopeSnapshot();
+      return (_cache.bundles || []).find(x => _inProductScopeWith(s, x) && x.barcode && canonBarcode(x.barcode) === canon) || null;
+    },
+    addBundle(bundle) {
+      bundle.id = bundle.id || _genId();
+      bundle.createdAt = bundle.createdAt || Date.now();
+      bundle.updatedAt = Date.now();
+      if (bundle.barcode) bundle.barcode = normBarcode(bundle.barcode);
+      _tagCompany(bundle);
+      const sid = _getStoreId();
+      if (sid) bundle.storeId = sid;
+      if (!_cache.bundles) _cache.bundles = [];
+      _cache.bundles.push(bundle);
+      _rebuildIndex('bundles');
+      _queueWrite('bundles', bundle);
+      this.logAudit({ action: 'add', entity: 'bundle', entityId: bundle.id, detail: bundle.name || '' });
+      return bundle;
+    },
+    updateBundle(id, changes) {
+      const b = (_cache.bundles || []).find(x => x.id === id);
+      if (!b) return { ok: false, reason: 'not_found' };
+      const s = _scopeSnapshot();
+      if (!_inProductScopeWith(s, b)) return { ok: false, reason: 'scope' };
+      Object.assign(b, changes || {});
+      b.updatedAt = Date.now();
+      if (b.barcode) b.barcode = normBarcode(b.barcode);
+      _rebuildIndex('bundles');
+      _queueWrite('bundles', b);
+      this.logAudit({ action: 'update', entity: 'bundle', entityId: id, detail: b.name || '' });
+      return { ok: true, bundle: b };
+    },
+    deleteBundle(id) {
+      const idx = (_cache.bundles || []).findIndex(x => x.id === id);
+      if (idx < 0) return { ok: false, reason: 'not_found' };
+      const b = _cache.bundles[idx];
+      const s = _scopeSnapshot();
+      if (!_inProductScopeWith(s, b)) return { ok: false, reason: 'scope' };
+      _cache.bundles.splice(idx, 1);
+      _rebuildIndex('bundles');
+      _queueDelete('bundles', id);
+      this.logAudit({ action: 'delete', entity: 'bundle', entityId: id, detail: b.name || '' });
+      return { ok: true };
+    },
     getProduct(id) {
       const p = _idx.products[id];
       if (!p) return null;
@@ -1205,6 +1473,28 @@ async function _ensureDefaultCompany() {
       return _cache.products.filter(p => _inProductScopeWith(s, p) && p.barcode && canonBarcode(p.barcode) === canon);
     },
 
+    // Scale PLU lookup. Deliberately a scan instead of another index slot: the
+    // products index is only maintained for barcodes, `updateProduct` does not
+    // re-index, and an edit to the PLU field would otherwise go unnoticed until
+    // the next reload. Cards keep the digits exactly as typed (00123 stays
+    // 00123); only the comparison is canonicalised.
+    getProductByPlu(plu) {
+      const k = _pluKey(plu);
+      if (!k) return null;
+      const s = _scopeSnapshot();
+      for (const p of _cache.products) {
+        if (_inProductScopeWith(s, p) && _pluKey(p.plu) === k) return p;
+      }
+      return null;
+    },
+
+    findProductsByPlu(plu) {
+      const k = _pluKey(plu);
+      if (!k) return [];
+      const s = _scopeSnapshot();
+      return _cache.products.filter(p => _inProductScopeWith(s, p) && _pluKey(p.plu) === k);
+    },
+
     isSameProductIdentity(a, b) { return isSameProductIdentity(a, b); },
 
     // Add a product to stock following the barcode reuse rules:
@@ -1212,25 +1502,34 @@ async function _ensureDefaultCompany() {
     //  - same product + same buy/sell/wholesale price -> merge quantity into it (one row)
     //  - same product but different prices            -> separate stock row, same barcode
     //  - brand new barcode                            -> new product
-    addOrMergeProduct(item) {
+    // `opts.source` (optional) tags the creating UI path for the audit trail and
+    // the per-product diagnosis; it is never stored on the product itself except
+    // as `createdVia` on a freshly created card.
+    addOrMergeProduct(item, opts) {
+      const source = opts && opts.source ? String(opts.source) : '';
       const barcode = normBarcode(item.barcode);
       if (!barcode) return { ok: false, conflict: true, existing: null };
 
       const conflict = _findBarcodeConflict({ id: item.id, barcode, name: item.name, brandId: item.brandId });
-      if (conflict) return { ok: false, conflict: true, existing: conflict };
+      if (conflict) {
+        this.logAudit({ action: 'product_conflict', entity: 'product', entityId: (item && item.id) || '', detail: (item.name || '') + ' / ' + barcode + ' -> ' + (conflict.name || '') + ' (' + (conflict.barcode || '') + ')', source, reason: 'barcode_conflict', hadExisting: true });
+        return { ok: false, conflict: true, existing: conflict };
+      }
 
       const candidates = this.findProductsByBarcode(barcode);
       const same = candidates.find(c => isSameProductIdentity(c, item)) || null;
 
       if (!same) {
-        const prod = this.addProduct(Object.assign({}, item, { barcode }));
+        const prod = this.addProduct(Object.assign({}, item, { barcode }), { source });
         return { ok: true, created: true, product: prod };
       }
 
       const samePrices =
         (parseFloat(same.buyPrice) || 0) === (parseFloat(item.buyPrice) || 0) &&
         (parseFloat(same.sellPrice) || 0) === (parseFloat(item.sellPrice) || 0) &&
-        (parseFloat(same.wholesalePrice) || 0) === (parseFloat(item.wholesalePrice) || 0);
+        (parseFloat(same.wholesalePrice) || 0) === (parseFloat(item.wholesalePrice) || 0) &&
+        (parseFloat(same.purchaseDiscountPct) || 0) === (parseFloat(item.purchaseDiscountPct) || 0) &&
+        _realCostOf(same) === _realCostOf(item);
 
       // الفصل الذكي يشمل أيضاً تاريخ انتهاء الصلاحية: إذا اختلف التاريخ بين
       // المنتج الموجود والمنتج الوارد (وقيمة الواردة غير فارغة) يُفصلان كدفعتين
@@ -1252,11 +1551,38 @@ async function _ensureDefaultCompany() {
         }
         // العائلة ربط تصنيفي تنتقل مع المنتج عند الدمج (لا تدخل في الهوية).
         if (item.family != null && String(item.family).trim()) changes.family = String(item.family).trim();
+        // PLU (رمز الميزان) ربطٍ تصنيفي أيضاً: يُعتمد عند الدمج فقط إذا كان
+        // المخزون الحالي بلا رمز — ربط قائم لا يُستبدل بصمت.
+        if (!same.plu && item.plu) changes.plu = String(item.plu).trim();
+        // السعر الأدنى حدّ بيع حقيقي: يُعتمد عند الدمج فقط عندما يصل رقم موجب.
+        // الصفر/الفراغ يعني «لا حدّ» ولا يمحو حدّاً محفوظاً (المسح يتم من نافذة
+        // تعديل المنتج وحدها).
+        const incomingMin = parseFloat(item.minPrice);
+        if (isFinite(incomingMin) && incomingMin > 0) changes.minPrice = incomingMin;
+        // Extra sale prices (feature 3) are a sale-side setting, not part of the
+        // batch identity: adopt an incoming non-empty map but never wipe one.
+        if (item.extraPrices && typeof item.extraPrices === 'object' && Object.keys(item.extraPrices).length) {
+          changes.extraPrices = item.extraPrices;
+        }
+        // Backfill the real cost on legacy rows so profit/cost reports have it.
+        if (same.realBuyPrice === undefined || same.realBuyPrice === null || same.realBuyPrice === '') {
+          changes.realBuyPrice = _realCostOf(same);
+        }
+        if (same.purchaseDiscountPct === undefined || same.purchaseDiscountPct === null) {
+          changes.purchaseDiscountPct = parseFloat(item.purchaseDiscountPct) || 0;
+        }
         this.updateProduct(same.id, changes);
+        this.logAudit({ action: 'merge', entity: 'product', entityId: same.id, detail: (same.name || '') + ' / ' + barcode + ' +' + incomingQty, source, reason: 'same_prices', hadExisting: true });
         return { ok: true, created: false, merged: true, product: Object.assign({}, same, changes) };
       }
 
-      const prod = this.addProduct(Object.assign({}, item, { barcode }));
+      // Different price/cost/expiry: keep a separate stock row for this batch.
+      // The new card remembers which card it was split from so the diagnostic can
+      // show the pair (the original keeps its own supplierId, hence a card with a
+      // supplier and one without).
+      const splitReason = _splitReason(same, item, sameExpiry);
+      const prod = this.addProduct(Object.assign({}, item, { barcode, splitFromId: same.id }), { source });
+      this.logAudit({ action: 'split', entity: 'product', entityId: prod.id, detail: (item.name || '') + ' / ' + barcode + ' | ' + splitReason, source, reason: splitReason, hadExisting: true });
       return { ok: true, created: true, separate: true, product: prod };
     },
 
@@ -1266,10 +1592,13 @@ async function _ensureDefaultCompany() {
       return scoped.filter(p => p.brandId === brandId && (!s.sid || !p.storeId || p.storeId === s.sid));
     },
 
-    addProduct(prod) {
+    addProduct(prod, opts) {
       prod.id = _genId();
       prod.createdAt = Date.now();
       prod.updatedAt = Date.now();
+      // Record which UI path created this card (diagnostic provenance). Written
+      // once at creation; never part of the product identity or of any merge.
+      if (opts && opts.source) prod.createdVia = String(opts.source);
       if (prod.barcode) prod.barcode = normBarcode(prod.barcode);
       _tagCompany(prod);
       const sid = _getStoreId();
@@ -1277,18 +1606,20 @@ async function _ensureDefaultCompany() {
       _cache.products.push(prod);
       _indexSingle('products', prod);
       _queueWrite('products', prod);
-      this.logAudit({ action: 'add', entity: 'product', entityId: prod.id, detail: prod.name || '' });
+      this.logAudit({ action: 'add', entity: 'product', entityId: prod.id, detail: prod.name || '', source: opts && opts.source, hadExisting: false });
       return prod;
     },
 
-    async addProductsBatch(prods, onProgress) {
+    async addProductsBatch(prods, onProgress, opts) {
       const sid = _getStoreId();
+      const source = opts && opts.source ? String(opts.source) : '';
       const now = Date.now();
       const added = [];
       for (const prod of prods) {
         prod.id = _genId() + Math.random().toString(36).substr(2, 3);
         prod.createdAt = now;
         prod.updatedAt = now;
+        if (source) prod.createdVia = source;
         if (prod.barcode) prod.barcode = normBarcode(prod.barcode);
         if (sid) prod.storeId = sid;
         _tagCompany(prod);
@@ -1311,7 +1642,7 @@ async function _ensureDefaultCompany() {
       }
       _triggerCloudSync();
       debounceAutoBackup();
-      this.logAudit({ action: 'add', entity: 'product', detail: `${added.length} منتج (جماعي)` });
+      this.logAudit({ action: 'add', entity: 'product', detail: `${added.length} منتج (جماعي)`, source, hadExisting: false });
       return added;
     },
 
@@ -1330,6 +1661,16 @@ async function _ensureDefaultCompany() {
         console.warn('[DB] updateProduct: product out of active scope — save skipped', id, { productCompany: p.companyId, productStore: p.storeId, activeCompany: s.cid, activeStore: s.sid });
         _notifyDbWarning('product_out_of_scope', { id, productCompany: p.companyId, productStore: p.storeId, activeCompany: s.cid, activeStore: s.sid });
         return { ok: false, reason: 'scope', company: p.companyId, store: p.storeId };
+      }
+      // Manual buy-price edits (inventory / brand cards) keep the real cost in
+      // sync. Quantity-only edits leave the batch's real cost untouched, so a
+      // global invoice discount is never silently erased.
+      if (changes.hasOwnProperty('buyPrice') && !changes.hasOwnProperty('realBuyPrice') &&
+          (parseFloat(changes.buyPrice) || 0) !== (parseFloat(p.buyPrice) || 0)) {
+        const pct = Math.min(100, Math.max(0, parseFloat(
+          changes.hasOwnProperty('purchaseDiscountPct') ? changes.purchaseDiscountPct : p.purchaseDiscountPct
+        ) || 0));
+        changes.realBuyPrice = Math.round((parseFloat(changes.buyPrice) || 0) * (1 - pct / 100) * 100) / 100;
       }
       this.logAudit({ action: 'update', entity: 'product', entityId: id, detail: p.name || '' });
       if (changes.barcode != null) {
@@ -1405,21 +1746,31 @@ async function _ensureDefaultCompany() {
     },
 
     getInvoicesBySupplier(supplierId) {
-      const sid = _getStoreId();
-      return _scopeFilter(_cache.invoices).filter(inv => inv.supplierId === supplierId && (!sid || !inv.storeId || inv.storeId === sid));
+      if (!supplierId) {
+        const sid = _getStoreId();
+        return _scopeFilter(_cache.invoices).filter(inv => inv.supplierId === supplierId && (!sid || !inv.storeId || inv.storeId === sid));
+      }
+      const got = _partyRows('invoices', 'sup:', supplierId);
+      return got.rows.filter(inv => !got.s.sid || !inv.storeId || inv.storeId === got.s.sid);
     },
 
     addInvoice(inv, opts) {
       inv.id = _genId();
-      inv.createdAt = Date.now();
+      // `opts.keepCreatedAt` lets the data-migration importer keep the REAL
+      // historical timestamp of an imported invoice (so reports, which read
+      // `createdAt`, show it on its true date instead of the import day).
+      // Every other caller omits it and keeps today's timestamp, exactly as
+      // before.
+      inv.createdAt = (opts && opts.keepCreatedAt && inv.createdAt) ? inv.createdAt : Date.now();
       inv.invoiceNumber = opts && opts.payment ? this.getNextPaymentInvoiceNumber() : inv.type === 'sup_sale' ? this.getNextSupSaleNumber() : this.getNextInvoiceNumber(opts && opts.numberYear);
       _tagCompany(inv);
       const sid = _getStoreId();
       if (sid) inv.storeId = sid;
+      _stampOperator(inv);
       _cache.invoices.push(inv);
       _rebuildIndex('invoices');
       _queueWrite('invoices', inv);
-      this.logAudit({ action: 'add', entity: 'invoice', entityId: inv.id, detail: inv.invoiceNumber || '' });
+      this.logAudit({ action: 'add', entity: 'invoice', entityId: inv.id, detail: (inv.invoiceNumber || '') + ' [' + (inv.type || '') + ']' });
       return inv;
     },
 
@@ -1478,7 +1829,7 @@ async function _ensureDefaultCompany() {
       if (!_inScope(inv)) return null;
       Object.assign(inv, changes);
       _queueWrite('invoices', inv);
-      this.logAudit({ action: 'update', entity: 'invoice', entityId: id, detail: inv.invoiceNumber || '' });
+      this.logAudit({ action: 'update', entity: 'invoice', entityId: id, detail: (inv.invoiceNumber || '') + ' [' + (inv.type || '') + ']' });
       return inv;
     },
 
@@ -1487,7 +1838,7 @@ async function _ensureDefaultCompany() {
       if (idx === -1) return false;
       const inv = _cache.invoices[idx];
       if (!_inScope(inv)) return false;
-      this.logAudit({ action: 'delete', entity: 'invoice', entityId: id, detail: (inv && inv.invoiceNumber) || '' });
+      this.logAudit({ action: 'delete', entity: 'invoice', entityId: id, detail: ((inv && inv.invoiceNumber) || '') + ' [' + ((inv && inv.type) || '') + ']' });
       _cache.invoices.splice(idx, 1);
       _rebuildIndex('invoices');
       _queueDelete('invoices', id);
@@ -1523,6 +1874,7 @@ async function _ensureDefaultCompany() {
       pmt.id = _genId();
       pmt.createdAt = pmt.createdAt || Date.now();
       _tagCompany(pmt);
+      _stampOperator(pmt);
       _cache.payments.push(pmt);
       _rebuildIndex('payments');
       _queueWrite('payments', pmt);
@@ -1541,8 +1893,32 @@ async function _ensureDefaultCompany() {
       return true;
     },
 
+    // Additive companion to addPayment/deletePayment. Mutates the SAME cached
+    // record (company/scope tags, invoice link and id are never replaced), then
+    // refreshes the lookup index and queues a single upsert — so a payment can
+    // be corrected without dropping the rest of the payments store.
+    updatePayment(id, changes) {
+      const p = _cache.payments.find(x => x.id === id);
+      if (!p || !_inScope(p)) return null;
+      if (!changes || typeof changes !== 'object') return p;
+      const beforeAmount = p.amount;
+      const EDITABLE = ['amount', 'note', 'method', 'createdAt', 'date'];
+      for (const key of EDITABLE) {
+        if (Object.prototype.hasOwnProperty.call(changes, key)) p[key] = changes[key];
+      }
+      p.modifiedAt = Date.now();
+      _rebuildIndex('payments');
+      _queueWrite('payments', p);
+      this.logAudit({
+        action: 'update', entity: 'payment', entityId: id,
+        detail: ((p.note || p.method || '') + ' [' + (beforeAmount || 0) + ' -> ' + (p.amount || 0) + ']'),
+      });
+      return p;
+    },
+
     getSupplierPayments(supplierId) {
-      return _scopeFilter(_cache.payments).filter(p => p.supplierId === supplierId);
+      if (!supplierId) return _scopeFilter(_cache.payments).filter(p => p.supplierId === supplierId);
+      return _partyRows('payments', 'sup:', supplierId).rows;
     },
 
     getInvoicePayments(invoiceId) {
@@ -1583,6 +1959,91 @@ async function _ensureDefaultCompany() {
       ).reduce((s, inv) => s + (inv.totalAmount || 0), 0);
     },
 
+    // ===== CASH COLLECTIONS — SINGLE SOURCE FOR PERIOD REVENUE =============
+    // Everything that puts money INTO the till is normalised here, whether it
+    // came from a customer, a walk-in or a supplier (قبض من مورد). Two physical
+    // shapes exist in the legacy data:
+    //   1) a Payment row linked to a sale invoice (customer detail / POS),
+    //   2) a «سند قبض» voucher invoice (type:'payment', direction:'in').
+    // A voucher invoice never creates a Payment row on its own, but a few
+    // imported rows do carry one — those linked rows are skipped so an amount
+    // is never counted twice. Expenses, supplier PAYMENTS, explicit supplier
+    // debt notes (isDebtNote / direction:'out'), net-account manual entries and
+    // supplier-sale compensation are deliberately excluded.
+    getCashInEvents(opts) {
+      opts = opts || {};
+      const from = opts.from == null ? -Infinity : opts.from;
+      const to = opts.to == null ? Infinity : opts.to;
+      const invById = {};
+      const voucherIds = {};
+      _scopeFilter(_cache.invoices).forEach(inv => {
+        if (!inv) return;
+        invById[inv.id] = inv;
+        if (inv.type === 'payment') voucherIds[inv.id] = true;
+      });
+      const out = [];
+      _scopeFilter(_cache.payments).forEach(p => {
+        if (!p || p.isProvisional || p.isSupSaleExpense) return;
+        if (p.type === 'net_expense' || p.type === 'net_purchase' ||
+            p.type === 'stock_purchase' || p.type === 'dispatch') return;
+        if (p.invoiceId && voucherIds[p.invoiceId]) return;
+        const linked = p.invoiceId ? invById[p.invoiceId] : null;
+        if (linked && (linked.type === 'supplier' || linked.type === 'purchase')) return;
+        if (p.supplierId && !(linked && (linked.type === 'sup_sale' || linked.type === 'customer'))) return;
+        const amt = Number(p.amount) || 0;
+        if (!amt) return;
+        const ts = p.createdAt || p.date || 0;
+        if (ts < from || ts > to) return;
+        out.push({
+          id: p.id, source: p.type === 'customer_direct' ? 'direct' : 'payment',
+          amount: amt, ts: ts, customerId: p.customerId || null,
+          invoiceId: p.invoiceId || null, method: p.method || 'cash', note: p.note || ''
+        });
+      });
+      _scopeFilter(_cache.invoices).forEach(inv => {
+        if (!inv || inv.type !== 'payment' || inv.direction !== 'in' || inv.isProvisional) return;
+        // An explicit debt note carries NO money even if a legacy row stored
+        // direction:'in'. Supplier debt notes are direction:'out' today.
+        if (inv.isDebtNote) return;
+        const amt = Number(inv.totalAmount) || 0;
+        if (!amt) return;
+        const ts = inv.createdAt || inv.date || 0;
+        if (ts < from || ts > to) return;
+        out.push({
+          id: inv.id, source: 'voucher', amount: amt, ts: ts,
+          customerId: inv.customerId || null,
+          supplierId: inv.supplierId || null,
+          kind: inv.kind || (inv.supplierId ? 'supplier-receipt' : 'customer-receipt'),
+          invoiceId: null,
+          method: inv.method || 'cash', note: inv.note || ''
+        });
+      });
+      return out;
+    },
+
+    // Timestamp on which a sale invoice became FULLY paid. Money received in
+    // later periods still counts as revenue on its own date, but the invoice's
+    // whole margin belongs to the period of the payment that completed it.
+    // Returns 0 while the invoice is still partially unpaid.
+    getInvoiceCompletionTs(inv) {
+      const invoice = typeof inv === 'string' ? this.getInvoice(inv) : inv;
+      if (!invoice || invoice.type !== 'customer' || invoice.isProvisional) return 0;
+      const invoiceTs = invoice.createdAt || invoice.date || 0;
+      const total = Number(invoice.totalAmount) || 0;
+      let running = Number(invoice.creditUsed) || 0;
+      if (running >= total - 0.005) return invoiceTs;
+      const pays = this.getInvoicePayments(invoice.id)
+        .slice()
+        .sort((a, b) => (a.createdAt || a.date || 0) - (b.createdAt || b.date || 0));
+      for (const p of pays) {
+        running += Number(p.amount) || 0;
+        if (running >= total - 0.005) {
+          return p.createdAt || p.date || invoiceTs;
+        }
+      }
+      return 0;
+    },
+
     getInvoicePaymentMethods(invoiceId) {
       let cash = 0, ccp = 0;
       this.getInvoicePayments(invoiceId).forEach(p => {
@@ -1614,6 +2075,46 @@ async function _ensureDefaultCompany() {
       this.savePayments(all);
     },
 
+    // Reconcile the cash/CCP actually paid on an invoice to an exact target.
+    // The payment rows are the single source of truth for every financial view
+    // (net account, expenses, sales, reports, party balances), so a corrected
+    // "paid" MUST be written here — updating only the invoice mirror would leave
+    // the ledger wrong.
+    //   increase -> one extra, clearly labelled row
+    //   decrease -> newest-first reduction, emptied rows dropped
+    // The invoice's legacy paidAmount mirror is kept in sync. Over-payment is
+    // allowed: the caller decides how the excess hits the party's balance.
+    setInvoicePaid(invoiceId, target, opts) {
+      opts = opts || {};
+      const inv = _idx.invoices[invoiceId];
+      if (!inv || !_inScope(inv)) return { ok: false, error: 'no_invoice', paid: 0, delta: 0 };
+      const round2 = (n) => Math.round((n + (n >= 0 ? 1e-9 : -1e-9)) * 100) / 100;
+      const want = Math.max(0, round2(parseFloat(target) || 0));
+      const current = round2(this.getInvoicePaidAmount(invoiceId));
+      const delta = round2(want - current);
+      if (Math.abs(delta) < 0.005) {
+        this.updateInvoice(invoiceId, { paidAmount: want });
+        return { ok: true, paid: want, delta: 0 };
+      }
+      if (delta > 0) {
+        const rows = this.getInvoicePayments(invoiceId)
+          .slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        const last = rows.length ? rows[rows.length - 1] : null;
+        this.addPayment({
+          invoiceId: invoiceId,
+          customerId: inv.customerId || undefined,
+          supplierId: inv.supplierId || undefined,
+          amount: delta,
+          method: opts.method || (last && last.method) || 'cash',
+          note: opts.note || 'تعديل المبلغ المدفوع',
+        });
+      } else {
+        this.reduceInvoicePayments(invoiceId, want);
+      }
+      this.updateInvoice(invoiceId, { paidAmount: want });
+      return { ok: true, paid: want, delta: delta };
+    },
+
     deletePaymentsByInvoice(invoiceId) {
       const toDelete = this.getInvoicePayments(invoiceId).map(p => p.id);
       _cache.payments = _cache.payments.filter(p => p.invoiceId !== invoiceId);
@@ -1636,6 +2137,13 @@ async function _ensureDefaultCompany() {
       c.createdAt = Date.now();
       c.balance = 0;
       c.totalPurchases = 0;
+      c.creditLimit = (c && c.creditLimit != null) ? (parseFloat(c.creditLimit) || 0) : 0;
+      // Optional legal identity: always store the four keys as plain strings so
+      // every entry point (page form, F3, sales quick-add) has the same shape.
+      ['rc', 'nif', 'nis', 'article'].forEach(function (k) {
+        c[k] = (c[k] == null) ? '' : String(c[k]).trim();
+      });
+      c.discount = c.discount || 0;
       _tagCompany(c);
       _cache.customers.push(c);
       _rebuildIndex('customers');
@@ -1668,12 +2176,17 @@ async function _ensureDefaultCompany() {
     },
 
     getInvoicesByCustomer(customerId) {
-      const sid = _getStoreId();
-      return _scopeFilter(_cache.invoices).filter(inv => inv.customerId === customerId && (!sid || !inv.storeId || inv.storeId === sid));
+      if (!customerId) {
+        const sid = _getStoreId();
+        return _scopeFilter(_cache.invoices).filter(inv => inv.customerId === customerId && (!sid || !inv.storeId || inv.storeId === sid));
+      }
+      const got = _partyRows('invoices', 'cust:', customerId);
+      return got.rows.filter(inv => !got.s.sid || !inv.storeId || inv.storeId === got.s.sid);
     },
 
     getCustomerPayments(customerId) {
-      return _scopeFilter(_cache.payments).filter(p => p.customerId === customerId);
+      if (!customerId) return _scopeFilter(_cache.payments).filter(p => p.customerId === customerId);
+      return _partyRows('payments', 'cust:', customerId).rows;
     },
 
     // ===== EMPLOYEES =====
@@ -1873,6 +2386,7 @@ async function _ensureDefaultCompany() {
       r.id = _genId();
       r.createdAt = Date.now();
       _tagCompany(r);
+      _stampOperator(r);
       _cache.returns.push(r);
       _queueWrite('returns', r);
       return r;
@@ -1923,10 +2437,221 @@ async function _ensureDefaultCompany() {
       return true;
     },
 
+    // ===== ROUTE DOCS (bon de route / FACTURE) =====
+    // Cosmetic copies of a sales invoice. They live in their OWN store, so no
+    // sales total, stock level, customer balance or net-account figure can
+    // reach them — those all read `invoices`. Numbers come from a separate BR-
+    // sequence for the same reason: a route doc must never consume or reorder
+    // the shop's real invoice numbers.
+    getRouteDocs() { return _scopeFilter(_cache.routeDocs); },
+
+    getRouteDoc(id) {
+      const r = _idx.routeDocs[id];
+      if (!r) return null;
+      return _inScope(r) ? r : null;
+    },
+
+    addRouteDoc(r) {
+      r.id = _genId();
+      r.createdAt = Date.now();
+      r.updatedAt = r.createdAt;
+      r.routeNumber = this.getNextRouteDocNumber();
+      _tagCompany(r);
+      const sid = _getStoreId();
+      if (sid) r.storeId = sid;
+      _stampOperator(r);
+      _cache.routeDocs.push(r);
+      _rebuildIndex('routeDocs');
+      _queueWrite('routeDocs', r);
+      this.logAudit({ action: 'add', entity: 'routeDoc', entityId: r.id, detail: r.routeNumber || '' });
+      return r;
+    },
+
+    updateRouteDoc(id, changes) {
+      const r = _cache.routeDocs.find(x => x.id === id);
+      if (!r || !_inScope(r)) return null;
+      changes.updatedAt = Date.now();
+      Object.assign(r, changes);
+      _rebuildIndex('routeDocs');
+      _queueWrite('routeDocs', r);
+      return r;
+    },
+
+    deleteRouteDoc(id) {
+      const r = _cache.routeDocs.find(x => x.id === id);
+      if (!r || !_inScope(r)) return false;
+      const idx = _cache.routeDocs.indexOf(r);
+      _cache.routeDocs.splice(idx, 1);
+      _queueDelete('routeDocs', id);
+      this.logAudit({ action: 'delete', entity: 'routeDoc', entityId: id, detail: (r && r.routeNumber) || '' });
+      return true;
+    },
+
+    getNextRouteDocNumber() {
+      const counter = (_cache.meta.nextRouteCounter || 0) + 1;
+      _updateMeta('nextRouteCounter', counter);
+      const year = new Date().getFullYear();
+      return `BR-${year}-${String(counter).padStart(4, '0')}`;
+    },
+
     // ===== PRODUCT HISTORY HELPERS =====
+    // Every in-scope product that shares the selected product's name + barcode
+    // + reference. Several rows can therefore be one article: a smart split
+    // creates them when a restock arrives at a different real cost. The «i»
+    // details modal shows the article as a whole, not one of its batches.
+    getProductIdentityGroup(productId) {
+      const prod = (typeof productId === 'object' && productId) ? productId : this.getProduct(productId);
+      if (!prod) return [];
+      const key = detailsIdentityKey(prod);
+      return (this.getProducts() || []).filter(p => detailsIdentityKey(p) === key);
+    },
+
+    // ===== PRODUCT DIAGNOSIS (read-only) =====
+    // Explains a stock card and whether it is duplicated. Returns, for the given
+    // product: its scope, every sibling card that shares its identity key or
+    // canonical barcode (with the per-field reason a split would/did separate
+    // them and each card's creation source/time), the product's own audit trail,
+    // and a quantity cross-check against the purchase-invoice lines that
+    // reference it. It never mutates anything.
+    diagnoseProduct(id) {
+      const prod = this.getProduct(id);
+      if (!prod) return { ok: false, reason: 'not_found' };
+      const s = _scopeSnapshot();
+      const scope = {
+        companyId: s.cid || '',
+        storeId: s.sid || '',
+        productCompanyId: prod.companyId || '',
+        productStoreId: prod.storeId || '',
+        inScope: _inProductScopeWith(s, prod),
+      };
+
+      const supNames = {};
+      (_scopeFilter(_cache.suppliers) || []).forEach(x => { supNames[x.id] = x.name || ''; });
+
+      // Siblings = same identity key (name+barcode+reference) OR same canonical
+      // barcode. This is the exact set that shows up as "two cards" in the list.
+      const idKey = detailsIdentityKey(prod);
+      const canon = prod.barcode ? canonBarcode(prod.barcode) : '';
+      const group = (this.getProducts() || []).filter(p =>
+        p && (
+          p.id === prod.id ||
+          detailsIdentityKey(p) === idKey ||
+          (canon && p.barcode && canonBarcode(p.barcode) === canon)
+        )
+      );
+
+      const seen = {};
+      const rows = [];
+      for (const p of group) {
+        if (!p || seen[p.id]) continue;
+        seen[p.id] = 1;
+        const priceDiffs = _priceDiffs(p, prod);
+        const expiryDiff = (p.expiryDate || '') !== (prod.expiryDate || '');
+        rows.push({
+          id: p.id,
+          isCurrent: p.id === prod.id,
+          name: p.name || '',
+          barcode: p.barcode || '',
+          brandId: p.brandId || '',
+          supplierId: p.supplierId || '',
+          supplierName: p.supplierId ? (supNames[p.supplierId] || '') : '',
+          quantity: parseFloat(p.quantity) || 0,
+          buyPrice: parseFloat(p.buyPrice) || 0,
+          sellPrice: parseFloat(p.sellPrice) || 0,
+          wholesalePrice: parseFloat(p.wholesalePrice) || 0,
+          purchaseDiscountPct: parseFloat(p.purchaseDiscountPct) || 0,
+          realCost: _realCostOf(p),
+          expiryDate: p.expiryDate || '',
+          reference: p.reference || '',
+          countryOfOrigin: p.countryOfOrigin || '',
+          mark: p.mark || '',
+          createdAt: p.createdAt || 0,
+          updatedAt: p.updatedAt || 0,
+          createdVia: p.createdVia || '',
+          splitFromId: p.splitFromId || '',
+          barcodeSame: !!(canon && p.barcode && canonBarcode(p.barcode) === canon),
+          identitySame: isSameProductIdentity(p, prod),
+          identityDiffs: _identityDiffs(p, prod),
+          priceDiffs,
+          expiryDiff,
+          // The exact reason addOrMergeProduct separates this card from the current one.
+          splitReason: _splitReason(p, prod, !expiryDiff),
+        });
+      }
+      rows.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+
+      // Audit trail recorded for THIS product id (add/merge/split/update/...).
+      const audit = (this.getAuditLogs() || [])
+        .filter(a => a && a.entity === 'product' && String(a.entityId) === String(id))
+        .slice(0, 80)
+        .map(a => ({
+          ts: a.ts || 0,
+          manager: a.manager || '',
+          action: a.action || '',
+          detail: a.detail || '',
+          source: a.source || '',
+          reason: a.reason || '',
+          hadExisting: a.hadExisting,
+        }));
+
+      // Quantity cross-check: the card quantity vs. the purchase lines linked to
+      // it. A mismatch flags a manual edit / double entry rather than a split.
+      const purchases = this.getProductPurchaseHistory(id) || [];
+      const purchaseQty = purchases.reduce((sum, r) => sum + (parseFloat(r.qty) || 0), 0);
+      const groupQty = rows.reduce((sum, r) => sum + (parseFloat(r.quantity) || 0), 0);
+
+      const supplierSet = {};
+      rows.forEach(r => { supplierSet[r.supplierId || ''] = 1; });
+
+      // Plain-language verdict on WHY there is more than one card:
+      //   single              – one card only
+      //   split               – a smart split (price/cost/expiry difference)
+      //   independent_creation– identical identity, but created twice (stale
+      //                         cache / second window / different path)
+      //   identity_mismatch   – the cards differ in an identity field, so the app
+      //                         treats them as different products
+      let verdict = 'single';
+      if (rows.length > 1) {
+        const anySplit = rows.some(r => r.splitFromId);
+        const allSameIdentity = rows.every(r => r.identitySame);
+        verdict = anySplit ? 'split' : (allSameIdentity ? 'independent_creation' : 'identity_mismatch');
+      }
+
+      return {
+        ok: true,
+        product: {
+          id: prod.id,
+          name: prod.name || '',
+          barcode: prod.barcode || '',
+          quantity: parseFloat(prod.quantity) || 0,
+          createdAt: prod.createdAt || 0,
+          updatedAt: prod.updatedAt || 0,
+          createdVia: prod.createdVia || '',
+          splitFromId: prod.splitFromId || '',
+        },
+        scope,
+        group: rows,
+        groupCount: rows.length,
+        duplicate: rows.length > 1,
+        verdict,
+        supplierDiffers: Object.keys(supplierSet).length > 1,
+        audit,
+        linkedPurchases: purchases.map(r => ({
+          invoiceNumber: r.invoiceNumber || '',
+          date: r.date || 0,
+          qty: parseFloat(r.qty) || 0,
+          price: parseFloat(r.price) || 0,
+          supplierName: r.supplierName || '',
+        })),
+        totals: { groupQty, purchaseQty, purchaseLineCount: purchases.length },
+      };
+    },
+
     // Purchase invoices (type supplier/purchase) containing the product. One row
-    // per purchase line, with buy price and date.
+    // per purchase line, with buy price and date. Accepts an id or an array of
+    // ids so the details modal can union every batch of the same article.
     getProductPurchaseHistory(productId) {
+      const ids = Array.isArray(productId) ? new Set(productId) : new Set([productId]);
       const sid = _getStoreId();
       const supNames = {};
       (_scopeFilter(_cache.suppliers) || []).forEach(s => { supNames[s.id] = s.name || ''; });
@@ -1936,19 +2661,21 @@ async function _ensureDefaultCompany() {
         (!sid || !inv.storeId || inv.storeId === sid)
       );
       for (const inv of invoices) {
-        const line = (inv.items || []).find(it => it.productId === productId);
-        if (!line) continue;
+        const lines = (inv.items || []).filter(it => ids.has(it.productId));
+        if (!lines.length) continue;
         const supId = inv.supplierId || null;
-        out.push({
-          invoiceId: inv.id,
-          invoiceNumber: inv.invoiceNumber || '',
-          date: inv.date || inv.createdAt || 0,
-          supplierId: supId,
-          supplierName: inv.supplierName || (supId ? (supNames[supId] || '') : ''),
-          qty: line.qty || 0,
-          price: line.price || 0,
-          total: line.total || (line.qty || 0) * (line.price || 0),
-        });
+        for (const line of lines) {
+          out.push({
+            invoiceId: inv.id,
+            invoiceNumber: inv.invoiceNumber || '',
+            date: inv.date || inv.createdAt || 0,
+            supplierId: supId,
+            supplierName: inv.supplierName || (supId ? (supNames[supId] || '') : ''),
+            qty: line.qty || 0,
+            price: line.price || 0,
+            total: line.total || (line.qty || 0) * (line.price || 0),
+          });
+        }
       }
       out.sort((a, b) => _normTs(b.date) - _normTs(a.date));
       return out;
@@ -1956,6 +2683,7 @@ async function _ensureDefaultCompany() {
 
     // Sale invoices (type customer) containing the product. One row per sale line.
     getProductSalesHistory(productId) {
+      const ids = Array.isArray(productId) ? new Set(productId) : new Set([productId]);
       const sid = _getStoreId();
       const custNames = {};
       (_scopeFilter(_cache.customers) || []).forEach(c => { custNames[c.id] = c.name || ''; });
@@ -1965,20 +2693,22 @@ async function _ensureDefaultCompany() {
         (!sid || !inv.storeId || inv.storeId === sid)
       );
       for (const inv of invoices) {
-        const line = (inv.items || []).find(it => it.productId === productId);
-        if (!line) continue;
+        const lines = (inv.items || []).filter(it => ids.has(it.productId));
+        if (!lines.length) continue;
         const custId = inv.customerId || null;
-        out.push({
-          invoiceId: inv.id,
-          invoiceNumber: inv.invoiceNumber || '',
-          date: inv.date || inv.createdAt || 0,
-          customerId: custId,
-          customerName: inv.customerName || (custId ? (custNames[custId] || '') : (inv.walkinName || '')),
-          qty: line.qty || 0,
-          price: line.price || 0,
-          total: line.total || ((line.qty || 0) * (line.price || 0)),
-          discount: line.lineDiscount || line.discount || 0,
-        });
+        for (const line of lines) {
+          out.push({
+            invoiceId: inv.id,
+            invoiceNumber: inv.invoiceNumber || '',
+            date: inv.date || inv.createdAt || 0,
+            customerId: custId,
+            customerName: inv.customerName || (custId ? (custNames[custId] || '') : (inv.walkinName || '')),
+            qty: line.qty || 0,
+            price: line.price || 0,
+            total: line.total || ((line.qty || 0) * (line.price || 0)),
+            discount: line.lineDiscount || line.discount || 0,
+          });
+        }
       }
       out.sort((a, b) => _normTs(b.date) - _normTs(a.date));
       return out;
@@ -1986,13 +2716,14 @@ async function _ensureDefaultCompany() {
 
     // Combined returns count for a product: customer returns + supplier returns.
     getProductReturnsCount(productId) {
+      const ids = Array.isArray(productId) ? new Set(productId) : new Set([productId]);
       const sid = _getStoreId();
       let n = 0;
       (this.getReturns() || []).forEach(r => {
-        if (r.productId === productId && (!sid || !r.storeId || r.storeId === sid)) n++;
+        if (ids.has(r.productId) && (!sid || !r.storeId || r.storeId === sid)) n++;
       });
       (this.getSupplierReturns() || []).forEach(r => {
-        if (r.productId === productId && (!sid || !r.storeId || r.storeId === sid)) n++;
+        if (ids.has(r.productId) && (!sid || !r.storeId || r.storeId === sid)) n++;
       });
       return n;
     },
@@ -2179,8 +2910,11 @@ async function _ensureDefaultCompany() {
     // ===== EXPORT TO EXCEL (.xlsx) WITH FULL STYLES =====
     // Same visual language as FACULITE: title line, meta line, styled blue
     // header row, thin borders on every cell, RTL view.
-    exportProductsXLSX(includeBuyPrice, labels) {
-      const products = this.getProducts();
+    exportProductsXLSX(includeBuyPrice, labels, opts) {
+      let products = this.getProducts();
+      // Feature 7: the caller may pre-filter (e.g. exclude zero-quantity rows)
+      // and pass the exact list to export, so the totals match the sheet.
+      if (opts && Array.isArray(opts.products)) products = opts.products;
       const brands = [...BRANDS.global, ...BRANDS.chinese];
       labels = labels || {};
 
@@ -2222,7 +2956,7 @@ async function _ensureDefaultCompany() {
 
       const totalCount = products.length;
       const totalQty = products.reduce((s, p) => s + (p.quantity || 0), 0);
-      const totalBuy = products.reduce((s, p) => s + (p.buyPrice || 0), 0);
+      const totalBuy = products.reduce((s, p) => s + ((p.quantity || 0) * _realCostOf(p)), 0);
       const totalSell = products.reduce((s, p) => s + (p.sellPrice || 0), 0);
       const totalWhole = products.reduce((s, p) => s + (p.wholesalePrice || 0), 0);
       const totalRow = [labels.total || ''];
@@ -2402,7 +3136,7 @@ async function _ensureDefaultCompany() {
         totalCost += qty * buyPrice;
       }
 
-      this.addProductsBatch(batchProducts);
+      this.addProductsBatch(batchProducts, null, { source: 'import-csv' });
 
       if (totalCost > 0) {
         const items = productMeta.map(p => ({
@@ -2531,7 +3265,7 @@ async function _ensureDefaultCompany() {
           const changedMeta = [];
           for (const item of filtered) {
             if (!item || !item.id) continue;
-            if (item.id === 'nextBarcode' || item.id === 'nextInvoiceCounter' || item.id === 'nextPaymentCounter') {
+            if (item.id === 'nextBarcode' || item.id === 'nextInvoiceCounter' || item.id === 'nextPaymentCounter' || item.id === 'nextRouteCounter') {
               const cur = Number(_cache.meta[item.id]) || 0;
               const val = Number(item.val) || 0;
               if (val > cur) { _cache.meta[item.id] = val; changedMeta.push(item); }
@@ -2640,6 +3374,7 @@ async function _ensureDefaultCompany() {
       _cache.transfers = [];
       _cache.orders = [];
       _cache.supplierReturns = [];
+      _cache.routeDocs = [];
       _cache.auditLogs = [];
       _dropAuditPending();
       _cache.companies = [];
@@ -2668,12 +3403,19 @@ async function _ensureDefaultCompany() {
         transfers: _cache.transfers.slice(),
         orders: _cache.orders.slice(),
         supplierReturns: _cache.supplierReturns.slice(),
+        routeDocs: _cache.routeDocs.slice(),
         companies: (_cache.companies || []).slice(),
         employees: (_cache.employees || []).slice(),
         attendance: (_cache.attendance || []).slice(),
         auditLogs: _cache.auditLogs.slice(),
         meta: { ..._cache.meta },
       };
+    },
+
+    // The active store code (the 10-digit store identity). Exposed so UI code
+    // (e.g. the restore dialog) can display it and label the re-tag option.
+    currentStoreCode() {
+      return _getStoreId() || '';
     },
 
     // Incremental LAN delta: only records with updatedAt newer than `ts`, per
@@ -2683,7 +3425,7 @@ async function _ensureDefaultCompany() {
       const since = Math.max(0, Number(ts) || 0);
       if (!since) return undefined;
       const out = {};
-      for (const s of ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'supplierReturns', 'companies', 'employees', 'attendance']) {
+      for (const s of ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'supplierReturns', 'routeDocs', 'companies', 'employees', 'attendance']) {
         const rows = (_cache[s] || []).filter(r => r && r.updatedAt && r.updatedAt > since);
         if (rows.length) out[s] = rows;
       }
@@ -2695,17 +3437,25 @@ async function _ensureDefaultCompany() {
     // active session automatically; `entry` carries { action, entity, entityId, detail }.
     logAudit(entry) {
       try {
-        const user = (typeof Auth !== 'undefined' && Auth.getCurrentUser && Auth.getCurrentUser()) || null;
+        const op = _operatorTag();
         const rec = {
           id: _genId(),
           ts: Date.now(),
-          manager: user ? (user.username || user.name || '—') : '—',
+          manager: op ? op.name : '—',
+          operatorRole: op ? op.role : '',
           storeCode: (typeof Auth !== 'undefined' && Auth.getUserCode && Auth.getUserCode()) || '',
           action: (entry && entry.action) || 'unknown',
           entity: (entry && entry.entity) || '',
           entityId: entry && entry.entityId != null ? String(entry.entityId) : '',
           detail: (entry && entry.detail) || '',
         };
+        // Optional provenance fields: which UI path created the row, why a
+        // split/merge happened, and whether a same-barcode card already existed.
+        // Supplied only by callers that pass them; older entries simply lack
+        // them, so every existing reader keeps working unchanged.
+        if (entry && entry.source) rec.source = String(entry.source);
+        if (entry && entry.reason) rec.reason = String(entry.reason);
+        if (entry && entry.hadExisting != null) rec.hadExisting = !!entry.hadExisting;
         const cid = _getCompanyId();
         if (cid) rec.companyId = cid;
         if (!_cache.auditLogs) _cache.auditLogs = [];
@@ -2740,6 +3490,51 @@ async function _ensureDefaultCompany() {
       try { if (db) _idbClear('auditLogs'); } catch (e) {}
     },
 
+    // ===== SEARCH LOG (per-manager search trail) =====
+    logSearch(entry) {
+      try {
+        const op = _operatorTag();
+        const rec = {
+          id: _genId(),
+          ts: Date.now(),
+          manager: op ? op.name : '—',
+          operatorRole: op ? op.role : '',
+          storeCode: (typeof Auth !== 'undefined' && Auth.getUserCode && Auth.getUserCode()) || '',
+          query: String((entry && entry.query) || '').slice(0, 200),
+          context: String((entry && entry.context) || '').slice(0, 60),
+        };
+        const cid = _getCompanyId();
+        if (cid) rec.companyId = cid;
+        if (!_cache.searchLogs) _cache.searchLogs = [];
+        _cache.searchLogs.push(rec);
+        _searchPending.push(rec);
+        while (_cache.searchLogs.length > SEARCH_CAP) {
+          const gone = _cache.searchLogs.shift();
+          if (gone && gone.id) _searchDropped.push(gone.id);
+        }
+        _scheduleSearchFlush();
+        return rec;
+      } catch (e) { return null; }
+    },
+    getSearchLogs() {
+      const cid = _getCompanyId() || _defaultCompanyId();
+      const defId = _defaultCompanyId();
+      let list = (_cache.searchLogs || []).slice();
+      if (cid) {
+        list = list.filter(r => {
+          if (r.companyId) return r.companyId === cid;
+          return cid === defId;
+        });
+      }
+      list.sort((a, b) => b.ts - a.ts);
+      return list;
+    },
+    clearSearchLogs() {
+      _cache.searchLogs = [];
+      _dropSearchPending();
+      try { if (db) _idbClear('searchLogs'); } catch (e) {}
+    },
+
     async importAll(data, opts) {
       if (!data) return;
       if (!db) await openDB();
@@ -2763,6 +3558,7 @@ async function _ensureDefaultCompany() {
       if (data.returns) mapped.returns = data.returns;
       if (data.transfers) mapped.transfers = data.transfers;
       if (data.supplierReturns) mapped.supplierReturns = data.supplierReturns;
+      if (data.routeDocs) mapped.routeDocs = data.routeDocs;
       if (data.companies) mapped.companies = data.companies;
       if (data.employees) mapped.employees = data.employees;
       if (data.attendance) mapped.attendance = data.attendance;
@@ -2778,6 +3574,35 @@ async function _ensureDefaultCompany() {
       if (data.zmt_discounts) mapped.discounts = data.zmt_discounts;
       if (data.zmt_orders) mapped.orders = data.zmt_orders;
       if (data.meta) mapped.meta = { ...(mapped.meta || {}), ...data.meta };
+      // ===== Optional store-code re-tag (restore option, OFF by default) =====
+      // The 10-digit store code is the "store identity" stamped on every
+      // operational row as `storeId`; the UI only shows rows whose storeId equals
+      // the ACTIVE code. A backup made under a different code therefore restores
+      // its rows intact but INVISIBLE. When the caller opts in (`retagStoreId`),
+      // every incoming row that carries a storeId is re-stamped to the target
+      // code so the restored data becomes visible under the current code.
+      // Rows without a storeId are left untouched (they belong to no store), and
+      // LOCAL rows that are not part of the backup are never modified — this is a
+      // deliberate, explicitly-confirmed operation, not a silent one.
+      const retagTo = (opts && opts.retagStoreId)
+        ? String(opts.retagStoreId === true ? (_getStoreId() || '') : opts.retagStoreId)
+        : '';
+      if (retagTo) {
+        const now = Date.now();
+        for (const key of Object.keys(mapped)) {
+          const arr = mapped[key];
+          if (!Array.isArray(arr)) continue;
+          let touched = 0;
+          const next = arr.map(rec => {
+            if (rec && typeof rec === 'object' && rec.storeId && rec.storeId !== retagTo) {
+              touched++;
+              return Object.assign({}, rec, { storeId: retagTo, updatedAt: now });
+            }
+            return rec;
+          });
+          if (touched) mapped[key] = next;
+        }
+      }
       // Restore mode: by default the backup is the truth for the restored
       // company (backupWins); mergeNewer keeps the newest version of every row
       // so an automatic/background restore never clobbers fresher local edits.
@@ -2792,7 +3617,7 @@ async function _ensureDefaultCompany() {
       // incoming list that is empty while the local store holds rows, or that
       // shrinks the store by more than half. The local data is kept and the event
       // is reported (window event + lastImportReport) instead of vanishing.
-      const _GUARD_STORES = ['products', 'invoices', 'orders', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'supplierReturns', 'employees', 'attendance'];
+      const _GUARD_STORES = ['products', 'invoices', 'orders', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'supplierReturns', 'employees', 'attendance', 'bundles'];
       const _guardOk = (key, incoming) => {
         if (!Array.isArray(incoming)) return true;
         const localLen = (_cache[key] || []).length;
@@ -2820,6 +3645,7 @@ async function _ensureDefaultCompany() {
       _applyMerge('returns');
       _applyMerge('transfers');
       _applyMerge('supplierReturns');
+      _applyMerge('routeDocs');
       _applyMerge('employees');
       _applyMerge('attendance');
       // Companies merge is never guarded: a company list may legitimately shrink,
@@ -2960,7 +3786,7 @@ async function _ensureDefaultCompany() {
     // "reset" a company so it starts truly empty. Only touches records tagged to
     // that company — never other companies' data. Non-reversible (user confirms).
     async deleteCompanyData(id) {
-      const operational = ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'supplierReturns', 'orders', 'transfers', 'employees', 'attendance'];
+      const operational = ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'supplierReturns', 'routeDocs', 'orders', 'transfers', 'employees', 'attendance'];
       let removed = 0;
       for (const s of operational) {
         const arr = _cache[s];
@@ -3007,6 +3833,22 @@ async function _ensureDefaultCompany() {
     // ===== FLUSH (call on app close) =====
     async flush() {
       await _immediateFlush();
+    },
+
+    // ===== CLOSE (factory reset) =====
+    // Releases the IndexedDB connection. Chromium keeps userData\IndexedDB
+    // locked while any connection is open, so without this the main process
+    // cannot delete the database folder and the reset silently leaves data.
+    async close() {
+      await _immediateFlush();
+      if (_auditTimer) { clearTimeout(_auditTimer); _auditTimer = null; }
+      _auditPending = [];
+      _auditDropped = [];
+      suppressAutoBackup(true);
+      if (_batchTimer) { clearTimeout(_batchTimer); _batchTimer = null; }
+      _batchQueue = {};
+      if (db) { try { db.close(); } catch (e) {} db = null; }
+      _ready = false;
     },
   };
 })();

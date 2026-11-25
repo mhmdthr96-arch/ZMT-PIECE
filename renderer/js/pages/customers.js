@@ -45,6 +45,7 @@ function renderCustPage(slice, info) {
         <div class="sup-card-meta">
           ${c.phone ? `<span><i class="fas fa-phone"></i> ${escHtml(c.phone)}</span>` : ''}
           ${c.discount > 0 ? `<span><i class="fas fa-percent"></i> خصم ${c.discount}%</span>` : ''}
+          ${(parseFloat(c.creditLimit) || 0) > 0 ? `<span style="color:#b91c1c;font-weight:700"><i class="fas fa-triangle-exclamation"></i> سقف ${c.creditLimit}</span>` : ''}
           <span class="cust-type-chip ${c.type === 'whole' ? 'whole' : 'unit'}">${c.type === 'whole' ? t('customers.typeWhole') : t('customers.typeUnit')}</span>
           <span><i class="fas fa-shopping-cart"></i> ${fmtMoney(totalPurchases)} DA مشتريات</span>
         </div>
@@ -64,6 +65,9 @@ function renderCustPage(slice, info) {
         </div>
       </div>
       <div class="sup-card-action">
+        ${(window.CustomerTree && window.CustomerTree.enabled() && window.CustomerTree.childrenOf(c.id).length)
+          ? `<button class="rec-card-btn ct-cust-btn" onclick="event.stopPropagation();navigateToCustomer('${c.id}', 'children')" title="${escHtml(t('customerTree.subCustomers'))}"><i class="fas fa-sitemap"></i><span>${escHtml(t('customerTree.subCustomers'))}</span></button>`
+          : ''}
         <button class="rec-card-btn" onclick="event.stopPropagation();openCustRecords('${c.id}')" title="سجل العميل">
           <i class="fas fa-clipboard-list"></i><span>السجل</span>
         </button>
@@ -105,8 +109,8 @@ function setupCustSearch() {
   newInput.addEventListener('input', (typeof debounce === 'function') ? debounce(applyCustFilter, 180) : applyCustFilter);
 }
 
-function navigateToCustomer(id) {
-  window.custCtx = { customerId: id };
+function navigateToCustomer(id, view) {
+  window.custCtx = { customerId: id, openChildren: view === 'children' };
   navigateTo('customer-detail');
 }
 
@@ -119,8 +123,18 @@ function openAddCustomerModal() {
   document.getElementById('custName').value = '';
   document.getElementById('custPhone').value = '';
   document.getElementById('custAddress').value = '';
+  document.getElementById('custEmail').value = '';
+  if (window.ZmtPartyLegal && typeof window.ZmtPartyLegal.clear === 'function') {
+    window.ZmtPartyLegal.clear('cust');
+  } else {
+    ['custNis', 'custNif', 'custRc', 'custArticle'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+  }
   document.getElementById('custType').value = 'unit';
   document.getElementById('custDiscount').value = '0';
+  document.getElementById('custCreditLimit').value = '0';
   document.getElementById('custPhotoPreview').innerHTML = '<i class="fas fa-user" style="font-size:24px;color:var(--silver-400)"></i>';
   document.getElementById('custPhotoInput').value = '';
   document.getElementById('addCustomerModal').style.display = 'flex';
@@ -138,15 +152,24 @@ function confirmAddCustomer() {
   const discount = parseFloat(document.getElementById('custDiscount').value) || 0;
   if (discount < 0 || discount > 100) { alert('نسبة الخصم يجب أن تكون بين 0 و 100'); return; }
 
-  const cust = DB.addCustomer({
+  const creditLimit = parseFloat(document.getElementById('custCreditLimit').value) || 0;
+  if (creditLimit < 0) { alert(t('customers.prompts.invalidCreditLimit')); return; }
+
+  // Optional legal identity of the company — printed under the name on the
+  // invoice when this customer is chosen. The shared helper keeps the same four
+  // ids in every add/edit form (including F3 and the sales quick-add).
+  const legal = window.ZmtPartyLegal && typeof window.ZmtPartyLegal.read === 'function'
+    ? window.ZmtPartyLegal.read('cust') : {};
+  const cust = DB.addCustomer(Object.assign({
     name,
     phone: document.getElementById('custPhone').value.trim(),
     address: document.getElementById('custAddress').value.trim(),
     email: document.getElementById('custEmail').value.trim(),
     type: document.getElementById('custType').value === 'whole' ? 'whole' : 'unit',
     discount,
+    creditLimit,
     photo: _custPhotoData || '',
-  });
+  }, legal));
   if (cust) DB.logAudit({ action: 'add', entity: 'customer', entityId: cust.id, detail: name });
 
   closeAddCustomerModal();

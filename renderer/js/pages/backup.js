@@ -1,3 +1,101 @@
+// ===== RESTORE OPTION: store-code re-tag =====
+// The 10-digit store code is stamped on every product/invoice/order as its
+// `storeId`, and the UI only shows rows whose storeId matches the ACTIVE code.
+// A backup made under another code restores its rows intact but invisible, so
+// the restore dialog offers an explicit, OFF-by-default option to re-stamp the
+// incoming rows to the current code. Nothing here changes the default restore
+// behaviour; the option only takes effect when the user ticks it.
+function _bkEsc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _backupCurrentStoreCode() {
+  try {
+    if (typeof Auth !== 'undefined' && Auth.isLoggedIn && Auth.isLoggedIn() && Auth.getUserCode) {
+      const c = Auth.getUserCode();
+      if (c) return String(c);
+    }
+  } catch (e) {}
+  try { return localStorage.getItem('zmt_store_code') || ''; } catch (e) { return ''; }
+}
+
+// Modal that shows the backup summary and the (optional) re-tag checkbox.
+// Resolves with { confirmed, retag }. Cancelling/X/backdrop ⇒ confirmed:false.
+function showRestoreDialog(backup, summary) {
+  return new Promise((resolve) => {
+    const prev = document.getElementById('restoreBackupModal');
+    if (prev) prev.remove();
+    const storeCode = _backupCurrentStoreCode();
+    const s = summary || {};
+    const counts = [
+      [t('backup.products'), s.products || 0],
+      [t('backup.invoices'), s.invoices || 0],
+      [t('backup.customers'), s.customers || 0],
+      [t('backup.suppliers'), s.suppliers || 0],
+      [t('backup.payments'), s.payments || 0],
+      [t('backup.returns'), s.returns || 0],
+      [t('backup.discounts'), s.discounts || 0],
+    ];
+    const rowsHtml = counts.map(r =>
+      `<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0"><span style="color:var(--silver-600)">${_bkEsc(r[0])}</span><strong>${_bkEsc(r[1])}</strong></div>`
+    ).join('');
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'restoreBackupModal';
+    modal.style.display = 'flex';
+    modal.innerHTML = `
+      <div class="modal" style="max-width:520px;width:95%">
+        <div class="modal-header">
+          <h3><i class="fas fa-upload"></i> ${t('backup.restoreTitle')}</h3>
+          <button class="modal-close" id="restoreModalX">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="background:var(--silver-50);border:1px solid var(--silver-300);border-radius:8px;padding:10px 12px;font-size:13px">
+            <div><span style="color:var(--silver-600)">${t('backup.store')}</span><strong>${_bkEsc(backup.storeName || t('backup.unknown'))}</strong></div>
+            <div style="margin-top:4px"><span style="color:var(--silver-600)">${t('backup.date')}</span><strong>${_bkEsc(backup.createdAt ? new Date(backup.createdAt).toLocaleDateString('ar-EG-u-nu-latn') : '—')}</strong></div>
+            <div style="margin-top:8px;border-top:1px dashed var(--silver-300);padding-top:8px">${rowsHtml}</div>
+          </div>
+          <div style="margin-top:10px;background:#fff3cd;color:#856404;border:1px solid #ffe69c;border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.6">
+            <i class="fas fa-exclamation-triangle"></i> ${t('backup.dataWarning')}
+          </div>
+          <label style="display:flex;gap:10px;align-items:flex-start;margin-top:12px;padding:10px 12px;border:1px solid var(--silver-300);border-radius:8px;cursor:pointer">
+            <input type="checkbox" id="restoreRetagChk" style="margin-top:3px;width:16px;height:16px;flex:none">
+            <span>
+              <strong style="font-size:13px">${t('backup.retagLabel')}</strong>
+              <span style="display:block;color:var(--silver-600);font-size:11.5px;margin-top:3px;line-height:1.6">${t('backup.retagHint')}</span>
+              <span style="display:block;color:#dc3545;font-size:11.5px;margin-top:3px;line-height:1.6">${t('backup.retagWarn')}</span>
+              <span style="display:block;color:var(--silver-500);font-size:11px;margin-top:3px;direction:ltr;text-align:start">${t('backup.retagCurrent')} <strong>${_bkEsc(storeCode || '—')}</strong></span>
+            </span>
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" id="restoreModalCancel">${t('common.cancel')}</button>
+          <button class="btn btn-success" id="restoreModalOk"><i class="fas fa-check"></i> ${t('backup.restore')}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    let settled = false;
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      try { modal.remove(); } catch (e) {}
+      resolve(val);
+    };
+    const chk = document.getElementById('restoreRetagChk');
+    const cancel = () => done({ confirmed: false, retag: false });
+    document.getElementById('restoreModalCancel').onclick = cancel;
+    document.getElementById('restoreModalX').onclick = cancel;
+    modal.addEventListener('click', (e) => { if (e.target === modal) cancel(); });
+    document.getElementById('restoreModalOk').onclick = () => done({ confirmed: true, retag: !!(chk && chk.checked) });
+    const focusTarget = document.getElementById('restoreModalOk');
+    if (focusTarget) { try { focusTarget.focus(); } catch (e) {} }
+  });
+}
+
 function init_backup() {
   const btnExport = document.getElementById('btnBackupCreate');
   const btnImport = document.getElementById('btnBackupRestore');
@@ -11,7 +109,15 @@ function init_backup() {
   btnExport.addEventListener('click', createBackup);
   btnImport.addEventListener('click', restoreBackup);
   btnDelete.addEventListener('click', resetAllData);
-  if (btnMigration) btnMigration.addEventListener('click', () => openMigration());
+  if (btnMigration) {
+    btnMigration.addEventListener('click', () => openMigration());
+    // Permission gate: hide «ترحيل البيانات» when the user may not view it.
+    try {
+      if (typeof Auth !== 'undefined' && typeof Auth.canView === 'function' &&
+          typeof Auth.isLoggedIn === 'function' && Auth.isLoggedIn() &&
+          !Auth.canView('data-migration')) btnMigration.style.display = 'none';
+    } catch (e) {}
+  }
 
   function getAllData() {
     const dbExport = DB.exportAll();
@@ -40,6 +146,8 @@ function init_backup() {
       'zmt_invoice_prefix', 'zmt_next_invoice', 'zmt_low_stock_threshold',
       'zmt_expiry_enabled', 'zmt_expiry_required', 'zmt_expiry_warn_days',
       'zmt_pharmacy_mode',
+      'zmt_debt_alerts',
+      'zmt_product_qr_enabled',
     ];
     for (const k of settingsKeys) {
       const v = localStorage.getItem(k);
@@ -65,7 +173,14 @@ function init_backup() {
 
   const _BACKUP_EXCLUDE = ['zmt_auth_user', 'zmt_store_code', 'zmt_store_type', 'zmt_parent_code', 'zmt_cloud_autosync', 'zmt_cloud_autosync_interval', 'zmt_cloud_last_sync'];
 
-  async function setAllData(data) {
+  async function setAllData(data, opts) {
+    opts = opts || {};
+    // Optional store-code re-tag: when the caller opts in, every restored row
+    // that carries a `storeId` (products / invoices / orders / route docs /
+    // bundles) is re-stamped to the CURRENT store code so data coming from an
+    // old code becomes visible again. Off by default ⇒ restore behaviour is
+    // byte-for-byte identical to before.
+    const retagTarget = opts.retag ? (_backupCurrentStoreCode() || '') : '';
     const dbData = data.zmt_db || {};
     const hasDbKeys = dbData.products || dbData.invoices;
     const hasDirectKeys = data.products || data.invoices;
@@ -94,11 +209,29 @@ function init_backup() {
     if (data.zmt_companies) merged.companies = data.zmt_companies;
     if (data.zmt_employees) merged.employees = data.zmt_employees;
     if (data.zmt_attendance) merged.attendance = data.zmt_attendance;
-    await DB.importAll(merged);
+    await DB.importAll(merged, retagTarget ? { retagStoreId: retagTarget } : undefined);
+    const DB_KEYS = ['zmt_db', 'zmt_customers', 'zmt_suppliers', 'zmt_payments', 'zmt_returns', 'zmt_transfers', 'zmt_discounts', 'zmt_orders', 'zmt_companies', 'zmt_employees', 'zmt_attendance'];
     for (const [k, v] of Object.entries(data)) {
-      if (k.startsWith('zmt_') && !_BACKUP_EXCLUDE.includes(k) && !['zmt_db', 'zmt_customers', 'zmt_suppliers', 'zmt_payments', 'zmt_returns', 'zmt_transfers', 'zmt_discounts', 'zmt_orders', 'zmt_companies', 'zmt_employees', 'zmt_attendance'].includes(k)) {
-        localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
+      if (!k.startsWith('zmt_') || _BACKUP_EXCLUDE.includes(k) || DB_KEYS.includes(k)) continue;
+      // Per-store employee accounts (`zmt_users_<code>` / `zmt_users_meta_<code>`)
+      // are keyed by the store code, exactly like the DB rows. When re-tagging,
+      // mirror them onto the current code so the restored employees are usable
+      // under the active store. We NEVER overwrite an existing current-code list:
+      // the local accounts of the active store stay authoritative.
+      const m = /^zmt_users(_meta)?_(.+)$/.exec(k);
+      if (retagTarget && m) {
+        const targetKey = 'zmt_users' + (m[1] || '') + '_' + retagTarget;
+        if (localStorage.getItem(targetKey) === null) {
+          let payload = v;
+          if (Array.isArray(v)) {
+            payload = v.map(u => (u && typeof u === 'object' && u.storeCode ? Object.assign({}, u, { storeCode: retagTarget }) : u));
+          }
+          localStorage.setItem(targetKey, typeof payload === 'string' ? payload : JSON.stringify(payload));
+        }
+        // Keep the original (old-code) copy too, so nothing is lost if the user
+        // later logs in again with the old code.
       }
+      localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
     }
     if (data._meta) {
       if (data._meta.storeName) localStorage.setItem('zmt_store_name', data._meta.storeName);
@@ -185,29 +318,16 @@ function init_backup() {
       }
 
       const s = backup.summary || getSummary(backup.data);
-      const confirmed = confirm(
-        `${t('backup.restoreConfirm')}\n\n` +
-        `${t('backup.store')}${backup.storeName || t('backup.unknown')}\n` +
-        `${t('backup.date')}${new Date(backup.createdAt).toLocaleDateString('ar-EG-u-nu-latn')}\n\n` +
-        `${t('backup.content')}\n` +
-        `• ${t('backup.products')}: ${s.products}\n` +
-        `• ${t('backup.invoices')}: ${s.invoices}\n` +
-        `• ${t('backup.customers')}: ${s.customers}\n` +
-        `• ${t('backup.suppliers')}: ${s.suppliers}\n` +
-        `• ${t('backup.payments')}: ${s.payments}\n` +
-        `• ${t('backup.returns')}: ${s.returns}\n` +
-        `• ${t('backup.discounts')}: ${s.discounts}\n\n` +
-        `${t('backup.dataWarning')}`
-      );
+      const answer = await showRestoreDialog(backup, s);
 
-      if (!confirmed) {
+      if (!answer.confirmed) {
         setStatus(t('backup.restoreCancelled'), 'warning');
         return;
       }
 
       await DB.waitForReady();
-      await setAllData(backup.data);
-      setStatus(`${t('backup.restoreSuccess')}`, 'success');
+      await setAllData(backup.data, { retag: answer.retag });
+      setStatus(answer.retag ? `${t('backup.restoreSuccessRetag')}` : `${t('backup.restoreSuccess')}`, 'success');
       loadBackupList();
     } catch (err) {
       setStatus(`${t('backup.restoreError')}${err.message}`, 'error');
@@ -258,10 +378,13 @@ function init_backup() {
         return;
       }
       const s = backup.summary || getSummary(backup.data);
-      if (!confirm(`${t('backup.restoreFromFileConfirm')}\n${t('backup.restoreFromFileWarning')}`)) return;
+      const answer = await showRestoreDialog(backup, s);
+      if (!answer.confirmed) return;
       await DB.waitForReady();
-      await setAllData(backup.data);
-      setStatus(`${t('backup.restoreFromFileSuccess')}${filename}`, 'success');
+      await setAllData(backup.data, { retag: answer.retag });
+      setStatus(answer.retag
+        ? `${t('backup.restoreFromFileSuccessRetag')}${filename}`
+        : `${t('backup.restoreFromFileSuccess')}${filename}`, 'success');
     } catch (err) {
       setStatus(`${t('backup.restoreError')}${err.message}`, 'error');
     }

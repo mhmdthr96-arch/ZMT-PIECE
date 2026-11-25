@@ -98,8 +98,9 @@ else bad('PAGE_NAMES[employees] missing');
 // ---------- 4. db.js ----------
 console.log('\n=== db.js ===');
 const db = read('renderer/js/db.js');
-if (/DB_VERSION\s*=\s*7/.test(db)) ok('DB_VERSION = 7');
-else bad('DB_VERSION is not 7');
+const dbVer = (db.match(/DB_VERSION\s*=\s*(\d+)/) || [])[1];
+if (Number(dbVer) >= 7) ok('DB_VERSION = ' + dbVer + ' (≥ 7: enough for employees + attendance)');
+else bad('DB_VERSION is below 7 (got ' + dbVer + ')');
 if (/employees:\s*'employees'/.test(db) || /'employees'/.test(db)) ok("STORES contains 'employees'");
 else bad("STORES missing 'employees'");
 if (/'attendance'/.test(db)) ok("STORES contains 'attendance'");

@@ -252,7 +252,7 @@ const LANSync = (() => {
         if (typeof DB !== 'undefined' && DB.applyRemoteChanges) {
           const groups = [];
           const data = msg.data || {};
-          for (const s of ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'supplierReturns', 'companies', 'employees', 'attendance']) {
+          for (const s of ['products', 'invoices', 'payments', 'customers', 'suppliers', 'discounts', 'returns', 'transfers', 'orders', 'supplierReturns', 'routeDocs', 'companies', 'employees', 'attendance']) {
             if (Array.isArray(data[s]) && data[s].length) groups.push({ store: s, put: filterForStore(data[s], s) });
           }
           const metaRecs = [];
@@ -260,6 +260,7 @@ const LANSync = (() => {
           if (m.nextBarcode != null) metaRecs.push({ id: 'nextBarcode', val: m.nextBarcode });
           if (m.nextInvoiceCounter != null) metaRecs.push({ id: 'nextInvoiceCounter', val: m.nextInvoiceCounter });
           if (m.nextPaymentCounter != null) metaRecs.push({ id: 'nextPaymentCounter', val: m.nextPaymentCounter });
+          if (m.nextRouteCounter != null) metaRecs.push({ id: 'nextRouteCounter', val: m.nextRouteCounter });
           if (m.lanTombstones) metaRecs.push({ id: 'lanTombstones', val: m.lanTombstones });
           if (metaRecs.length) groups.push({ store: 'meta', put: metaRecs });
           if (groups.length) result = await DB.applyRemoteChanges(groups);
@@ -369,6 +370,7 @@ const LANSync = (() => {
     sendSnapshot,
     sendUsers,
     sendRaw,
+    stopReconcile,
   };
 })();
 

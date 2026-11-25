@@ -164,6 +164,7 @@ function setupTransferSearch() {
 }
 
 function searchTransferProduct(q) {
+  if (q && String(q).trim().length >= 2) { try { DB.logSearch({ query: q, context: 'transfer-product' }); } catch (e) {} }
   const results = document.getElementById('transferSearchResults');
   q = normSearch(q);
 

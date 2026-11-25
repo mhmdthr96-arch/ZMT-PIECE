@@ -151,7 +151,20 @@ const SaleCore = (() => {
   //           totalProfit } — OR { ok:false, error:{ code:'STOCK', ... } }.
   function computeSale(DB, opts) {
     opts = opts || {};
-    const lines = opts.lines || [];
+    // A product's sale floor is enforced by the engine itself, so the desktop
+    // page, the phone sale and every other caller obey the same limit. The
+    // clamp happens before any discount split, keeping the ratios consistent.
+    const floorOf = (entry) => {
+      if (!entry || !entry.productId) return 0;
+      const prod = DB.getProduct(entry.productId);
+      return prod ? Math.max(0, num(prod.minPrice)) : 0;
+    };
+    const lines = (opts.lines || []).map((line) => Object.assign({}, line, {
+      entries: (line.entries || []).map((e) => {
+        const floor = floorOf(e);
+        return floor > num(e.price) ? Object.assign({}, e, { price: floor }) : e;
+      }),
+    }));
     const custDiscPct = Math.max(0, num(opts.customerDiscountPct));
     let extraDiscAmount = Math.max(0, num(opts.extraDiscount));
 
@@ -167,6 +180,22 @@ const SaleCore = (() => {
     const productUpdates = [];
     for (const line of lines) {
       for (const entry of (line.entries || [])) {
+        const bundleId = (entry.productId && String(entry.productId).startsWith('bundle:')) ? String(entry.productId).slice('bundle:'.length) : null;
+        const bundle = bundleId ? (DB.getBundle ? DB.getBundle(bundleId) : null) : null;
+        if (bundle) {
+          const want = rq(entry.qty);
+          if (want <= 0) continue;
+          for (const c of (bundle.components || [])) {
+            const p = DB.getProduct(c.productId);
+            if (p && p.fixed !== true) {
+              const need = rq((parseFloat(c.qty) || 0) * want);
+              if (rq(p.quantity || 0) < need) {
+                return { ok: false, error: { code: 'STOCK', name: entry.name || bundle.name || '', available: p.quantity || 0, qty: need } };
+              }
+            }
+          }
+          continue;
+        }
         const prod = DB.getProduct(entry.productId);
         if (!prod) continue;
         const want = rq(entry.qty);
@@ -185,7 +214,9 @@ const SaleCore = (() => {
       for (const entry of entries) {
         const qty = rq(entry.qty);
         if (qty <= 0) continue;                    // never emit a zero-quantity line
-        const prod = DB.getProduct(entry.productId);
+        const bundleId = (entry.productId && String(entry.productId).startsWith('bundle:')) ? String(entry.productId).slice('bundle:'.length) : null;
+        const bundle = bundleId ? (DB.getBundle ? DB.getBundle(bundleId) : null) : null;
+        const prod = bundle ? null : DB.getProduct(entry.productId);
         const price = num(entry.price);
         const baseEntryTotal = price * qty;
         const baseTot = lineBase || baseEntryTotal || 1;
@@ -195,17 +226,39 @@ const SaleCore = (() => {
         // Dividing by the quantity is only safe for a real positive quantity.
         const finalPrice = price - (entryLineDisc / qty) - (entryCustDisc / qty) - (entryExtraDisc / qty);
         const itemTotal = finalPrice * qty;
-        const buyPrice = prod ? (prod.buyPrice || 0) : 0;
-        const costSnapshot = buyPrice;
+        let costSnapshot = 0;
+        if (bundle) {
+          costSnapshot = (bundle.components || []).reduce((s, c) => {
+            const p = DB.getProduct(c.productId);
+            return s + ((p && p.buyPrice) || 0) * (parseFloat(c.qty) || 0);
+          }, 0);
+        } else {
+          costSnapshot = (typeof PurchaseCore !== 'undefined' && PurchaseCore && typeof PurchaseCore.productRealCost === 'function')
+            ? PurchaseCore.productRealCost(prod)
+            : (prod ? (prod.buyPrice || 0) : 0);
+        }
         totalProfit += (finalPrice - costSnapshot) * qty;
-        if (prod && prod.fixed !== true) {
+        if (bundle) {
+          for (const c of (bundle.components || [])) {
+            const p = DB.getProduct(c.productId);
+            if (p && p.fixed !== true) {
+              const compQty = rq((parseFloat(c.qty) || 0) * qty);
+              productUpdates.push({ id: c.productId, changes: { quantity: rq((p.quantity || 0) - compQty) } });
+            }
+          }
+        } else if (prod && prod.fixed !== true) {
           productUpdates.push({ id: entry.productId, changes: { quantity: rq((prod.quantity || 0) - qty) } });
         }
         const unitSnap = unitSnapshot(prod || entry);
-        invoiceItems.push(Object.assign({
+        const item = Object.assign({
           productId: entry.productId,
-          barcode: entry.barcode || (prod && prod.barcode) || '',
-          name: entry.name || (prod && prod.name) || '',
+          barcode: entry.barcode || (prod && prod.barcode) || (bundle && bundle.barcode) || '',
+          name: entry.name || (prod && prod.name) || (bundle && bundle.name) || '',
+          // Product snapshot for the optional invoice columns (Référence /
+          // Marque). Copied at sale time so later product edits never rewrite
+          // an already issued document.
+          reference: (prod && prod.reference) || entry.reference || '',
+          mark: (prod && prod.mark) || entry.mark || '',
           qty,
           price: finalPrice,
           total: itemTotal,
@@ -214,7 +267,42 @@ const SaleCore = (() => {
           lineDiscount: entryLineDisc,
           costPrice: costSnapshot,
           lineProfit: +Math.max((finalPrice - costSnapshot) * qty, 0).toFixed(2),
-        }, unitSnap));
+          isBundle: !!bundle,
+          bundleId: bundle ? bundle.id : undefined,
+        }, unitSnap);
+        if (bundle) {
+          const comps = (bundle.components || []).map(c => {
+            const cp = DB.getProduct(c.productId);
+            return {
+              productId: c.productId,
+              name: (cp && cp.name) || c.name || '',
+              barcode: (cp && cp.barcode) || c.barcode || '',
+              qtyPerBundle: rq(parseFloat(c.qty) || 0),
+              sellPrice: num(cp && cp.sellPrice),
+            };
+          });
+          // Each component carries its share of the bundle's *final* unit
+          // price, so a later partial return can credit exactly what the
+          // customer paid for that component (bundle discounts included).
+          const retailTotal = comps.reduce((s, c) => s + c.sellPrice * c.qtyPerBundle, 0);
+          const equalShare = comps.length ? finalPrice / comps.length : 0;
+          comps.forEach(c => {
+            c.valuePerBundle = retailTotal > 0
+              ? finalPrice * ((c.sellPrice * c.qtyPerBundle) / retailTotal)
+              : equalShare;
+            delete c.sellPrice;
+          });
+          item.bundleComponents = comps;
+          item.returnedComponents = {};
+          item.bundleReturnCredit = 0;
+        }
+        // A scale line arrives with the label's place-count: 0.25 stored,
+        // "0.250" printed. Nothing else on the invoice changes.
+        if (line.qtyDecimals != null) item.qtyDecimals = line.qtyDecimals;
+        // No product record means no cost to subtract: the whole amount is
+        // margin. The flag is what makes a report say so out loud.
+        if (!entry.productId && !bundle) item.freeLine = true;
+        invoiceItems.push(item);
       }
     }
 
@@ -251,16 +339,41 @@ const SaleCore = (() => {
 
     const creditUsed = !supMode && opts.customerId ? Math.min(Math.max(0, num(opts.creditUsed)), totalAmount) : 0;
     const custCreditBefore = !supMode && opts.customerId ? Math.min(0, parseFloat((DB.getCustomer(opts.customerId) || {}).balance) || 0) : 0;
-    if (paidAmount + creditUsed > totalAmount) {
+    if (!supMode && !(opts.customerId || opts.allowOverpay) && paidAmount + creditUsed > totalAmount) {
       return { ok: false, error: { code: 'PAID_EXCEEDS', total: totalAmount, paid: paidAmount + creditUsed } };
     }
 
     // 1) stock first (fixed products are skipped)
     if (res.productUpdates.length > 0) DB.updateProductsBatch(res.productUpdates);
 
+    // Customer tree (optional). A sub-customer is ONLY metadata on the parent's
+    // invoice/payment: `opts.customerId` is never replaced, and no second
+    // balance write is introduced below. With the flag OFF these values are all
+    // empty, so the persisted objects are byte-for-byte the old shape.
+    const ct = (typeof window !== 'undefined') ? window.CustomerTree : null;
+    const subOn = !!(ct && typeof ct.enabled === 'function' && ct.enabled() && !supMode && opts.customerId);
+    let subInfo = subOn ? (opts.subCustomer || (opts.subCustomerId ? {
+      id: opts.subCustomerId,
+      name: opts.subCustomerName || '',
+      parentId: opts.customerId,
+      parentName: opts.parentCustomerName || '',
+    } : null)) : null;
+    if (subInfo && !subInfo.name && ct && typeof ct.findChild === 'function') {
+      subInfo = ct.findChild(subInfo.id) || subInfo;
+    }
+    const parentCustomer = (!supMode && opts.customerId) ? DB.getCustomer(opts.customerId) : null;
+    const subMeta = (subInfo && ct && typeof ct.metaFor === 'function') ? (ct.metaFor(subInfo, parentCustomer) || {}) : {};
+    const payMeta = subMeta.subCustomerId
+      ? { subCustomerId: subMeta.subCustomerId, subCustomerName: subMeta.subCustomerName }
+      : {};
+    const invNote = opts.note
+      ? String(opts.note)
+      : ((subInfo && ct && typeof ct.noteFor === 'function') ? (ct.noteFor(subInfo, parentCustomer) || '') : '');
+
     // 2) the invoice
     const inv = DB.addInvoice({
       customerId: supMode ? null : (opts.customerId || null),
+      ...subMeta,
       supplierId: supMode ? (opts.supplierId || undefined) : undefined,
       type: supMode ? 'sup_sale' : 'customer',
       date: Date.now(),
@@ -273,13 +386,14 @@ const SaleCore = (() => {
       custCreditBefore,
       seller: opts.seller ? String(opts.seller).slice(0, 120) : undefined,
       sellerDevice: opts.sellerDevice ? String(opts.sellerDevice).slice(0, 120) : undefined,
-      note: opts.note ? String(opts.note).trim().slice(0, 300) : undefined,
+      note: invNote ? invNote.trim().slice(0, 300) : undefined,
     });
 
     // 3) payment
     if (paidAmount > 0) {
       const pmt = {
         customerId: supMode ? undefined : (opts.customerId || undefined),
+        ...payMeta,
         supplierId: supMode ? (opts.supplierId || undefined) : undefined,
         invoiceId: inv.id,
         amount: paidAmount,
@@ -383,11 +497,171 @@ const SaleCore = (() => {
     };
   }
 
+  // ---- bundle returns -------------------------------------------------------
+  //
+  // A bundle line on an invoice is one row, but its components are real stock
+  // cards. Editing that row must return the right components — all of them when
+  // the whole bundle quantity drops, or only the ones the customer actually
+  // handed back when the return is partial. The helpers below are shared by the
+  // two invoice-edit screens so both behave exactly like a normal return.
+
+  function bundleIdOf(item) {
+    if (!item) return null;
+    if (item.bundleId) return item.bundleId;
+    const pid = item.productId ? String(item.productId) : '';
+    return pid.indexOf('bundle:') === 0 ? pid.slice('bundle:'.length) : null;
+  }
+
+  function isBundleItem(item) {
+    return !!(item && (item.isBundle || bundleIdOf(item)));
+  }
+
+  function bundleComponents(DB, item) {
+    if (!isBundleItem(item)) return [];
+    const out = [];
+    const add = (productId, name, barcode, qtyPerBundle, valuePerBundle) => {
+      productId = productId || '';
+      if (!productId) return;
+      const q = rq(qtyPerBundle);
+      if (q <= 0) return;
+      const existing = out.find(c => c.productId === productId);
+      if (existing) {
+        existing.qtyPerBundle = rq(existing.qtyPerBundle + q);
+        existing.valuePerBundle = num(existing.valuePerBundle) + num(valuePerBundle);
+        return;
+      }
+      out.push({
+        productId,
+        name: name || '',
+        barcode: barcode || '',
+        qtyPerBundle: q,
+        valuePerBundle: num(valuePerBundle),
+      });
+    };
+
+    if (Array.isArray(item.bundleComponents) && item.bundleComponents.length) {
+      item.bundleComponents.forEach(c => {
+        if (!c) return;
+        add(c.productId, c.name, c.barcode,
+          c.qtyPerBundle != null ? c.qtyPerBundle : c.qty,
+          c.valuePerBundle);
+      });
+    } else {
+      const bundle = bundleIdOf(item) && DB.getBundle ? DB.getBundle(bundleIdOf(item)) : null;
+      if (bundle) {
+        (bundle.components || []).forEach(c => {
+          const p = DB.getProduct(c.productId);
+          add(c.productId, (p && p.name) || c.name, (p && p.barcode) || c.barcode, c.qty, 0);
+        });
+      }
+    }
+
+    // Invoices written before this version have no component snapshot/values:
+    // rebuild both from the live bundle. A component's share of the *line*
+    // price is proportional to its standalone sale price; equal split is the
+    // fallback when every component is priceless.
+    const unitPrice = num(item.price) ||
+      (num(item.qty) ? num(item.total) / num(item.qty) : 0);
+    const retails = out.map(c => {
+      const p = DB.getProduct(c.productId);
+      return Math.max(0, num(p && p.sellPrice)) * c.qtyPerBundle;
+    });
+    const retailTotal = retails.reduce((s, v) => s + v, 0);
+    const equalShare = out.length ? unitPrice / out.length : 0;
+    out.forEach((c, i) => {
+      if (!(num(c.valuePerBundle) > 0)) {
+        c.valuePerBundle = retailTotal > 0
+          ? unitPrice * (retails[i] / retailTotal)
+          : equalShare;
+      }
+    });
+
+    item.bundleComponents = out;
+    if (!item.returnedComponents || typeof item.returnedComponents !== 'object') {
+      item.returnedComponents = {};
+    }
+    if (item.bundleReturnCredit == null) item.bundleReturnCredit = 0;
+    return out;
+  }
+
+  // Components still in the customer's hands for this line: sold per bundle ×
+  // line quantity, minus whatever was already returned on an earlier edit.
+  function bundleHeldComponents(DB, item) {
+    const comps = bundleComponents(DB, item);
+    const qty = num(item.qty);
+    return comps.map(c => {
+      const soldQty = rq(c.qtyPerBundle * qty);
+      const returnedQty = Math.max(0, rq(item.returnedComponents[c.productId] || 0));
+      return Object.assign({}, c, {
+        soldQty,
+        returnedQty,
+        heldQty: Math.max(0, rq(soldQty - returnedQty)),
+      });
+    });
+  }
+
+  // Restore stock + write a normal return row for each requested component.
+  // returns: [{ productId, qty }] — quantities are capped by what is still held.
+  // opts.track === false is for a bundle *quantity* decrease: the smaller line
+  // quantity already removes those bundles, so the pieces must not also be
+  // stored in returnedComponents (that would count them twice).
+  // Returns { credit, applied:[{productId,name,qty,value}] }.
+  function applyBundleComponentReturns(DB, invoiceId, item, returns, reason, opts) {
+    const comps = bundleComponents(DB, item);
+    if (!comps.length) return { credit: 0, applied: [] };
+    const track = !(opts && opts.track === false);
+    const held = bundleHeldComponents(DB, item);
+    const applied = [];
+    let credit = 0;
+    (returns || []).forEach(r => {
+      const pid = r && r.productId;
+      if (!pid) return;
+      const c = held.find(x => x.productId === pid);
+      if (!c || c.heldQty <= 0) return;
+      const want = rq(r.qty);
+      const qty = Math.min(want, c.heldQty);
+      if (qty <= 0) return;
+      const prod = DB.getProduct(pid);
+      // «غير محدود» cards are fed by the scale, never inflated by a return —
+      // exactly the rule the normal (non-bundle) return path follows.
+      if (prod && prod.fixed !== true) {
+        DB.updateProduct(pid, { quantity: rq((prod.quantity || 0) + qty) });
+      }
+      // Snapshot the exact money this component return removes from the
+      // invoice. The return invoice prints these figures, so it can never
+      // disagree with the credit the customer actually received.
+      const value = num(c.valuePerBundle) * qty;
+      DB.addReturn({
+        invoiceId: invoiceId,
+        productId: pid,
+        productName: (prod && prod.name) || c.name || '',
+        qty,
+        price: qty > 0 ? value / qty : 0,
+        total: value,
+        unit: prod && prod.unit,
+        unitLabel: prod && prod.unitLabel,
+        qtyDecimals: prod && prod.qtyDecimals,
+        reason: reason || 'تعديل فاتورة (إرجاع مكوّن باقة)',
+        isBundleComponent: true,
+        bundleId: bundleIdOf(item) || undefined,
+      });
+      if (track) item.returnedComponents[pid] = rq((item.returnedComponents[pid] || 0) + qty);
+      credit += value;
+      applied.push({ productId: pid, name: (prod && prod.name) || c.name || '', qty, value });
+    });
+    if (track) item.bundleReturnCredit = num(item.bundleReturnCredit) + credit;
+    return { credit, applied };
+  }
+
   return {
     num,
     allocateQty,
     computeSale,
     executeSale,
+    isBundleItem,
+    bundleComponents,
+    bundleHeldComponents,
+    applyBundleComponentReturns,
   };
 })();
 

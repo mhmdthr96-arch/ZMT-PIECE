@@ -38,16 +38,16 @@
         <input type="date" id="discDateTo" onchange="renderDiscounts()" style="border:1px solid var(--silver-300);border-radius:4px;padding:4px 8px;font-size:12px;background:white;color:var(--silver-800);outline:none">
       </div>
       <select id="discTypeFilter" onchange="renderDiscounts()" style="border:1px solid var(--silver-300);border-radius:4px;padding:5px 8px;font-size:12px;background:white;color:var(--silver-800);outline:none">
-        <option value="all">جميع التخفيضات</option>
-        <option value="sale">تخفيض البيع</option>
-        <option value="manual">تخفيض يدوي</option>
-        <option value="line">تخفيض البنود</option>
+        <option value="all" data-i18n="discounts.all">جميع التخفيضات</option>
+        <option value="sale" data-i18n="discounts.bySale">تخفيض البيع</option>
+        <option value="manual" data-i18n="discounts.manual">تخفيض يدوي</option>
+        <option value="line" data-i18n="discounts.byLine">تخفيض البنود</option>
       </select>
       <button class="btn btn-sm" onclick="resetDiscFilters()" style="font-size:11px"><i class="fas fa-undo"></i></button>
     </div>
 
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <span style="font-size:12px;color:var(--silver-500)" id="discResultsInfo">0 تخفيض</span>
+      <span style="font-size:12px;color:var(--silver-500)" id="discResultsInfo" data-i18n="discounts.zeroDiscount">0 تخفيض</span>
     </div>
 
     <div id="discList"></div>

@@ -2,7 +2,7 @@
 // ZMT PIECE — display settings (إعدادات العرض) static checks
 // Run: node renderer/tests/display-settings-verify.js
 // Guards the top-bar display button + panel: index.html wiring,
-// the six CSS variables and their hooks, the module's ranges /
+// the eight CSS variables and their hooks, the module's ranges /
 // clamping / dirty-state contract, the four-language labels and
 // the fact that nothing here can ever touch the database.
 // ============================================================
@@ -32,6 +32,9 @@ console.log('\n--- 1. الملفات والربط ---');
 fs.existsSync(path.join(base, 'renderer/js/display-settings.js')) ? ok('renderer/js/display-settings.js') : bad('display-settings.js مفقود');
 has(indexHtml, 'js/display-settings.js') ? ok('السكربت مرتبط في index.html') : bad('js/display-settings.js غير مرتبط');
 {
+  // التحميل المزدوج كان ينشئ لوحتين ويربط النقر مرتين: النقرة الواحدة تفتح ثم تغلق فوراً.
+  const dsLoads = (indexHtml.match(/src="js\/display-settings\.js"/g) || []).length;
+  dsLoads === 1 ? ok('يُحمَّل مرة واحدة فقط (بدون ازدواج)') : bad('يُحمَّل ' + dsLoads + ' مرات — النقر سيفتح ثم يغلق فوراً');
   const iDs = indexHtml.indexOf('js/display-settings.js');
   const iApp = indexHtml.indexOf('js/app.js');
   (iDs > 0 && iApp > iDs) ? ok('يُحمَّل قبل app.js (تطبيق القيم قبل الرسم)') : bad('ترتيب السكربتات غير صحيح');
@@ -52,6 +55,8 @@ console.log('\n--- 2. متغيّرات CSS ---');
 const vars = [
   ['--sales-card-min', '240px'],
   ['--inv-card-min', '260px'],
+  ['--sales-card-h', 'auto'],
+  ['--inv-card-h', 'auto'],
   ['--sidebar-width', '240px'],
   ['--sales-name-size', '13px'],
   ['--prod-name-size', '16px'],
@@ -65,6 +70,9 @@ for (const [name, def] of vars) {
 }
 has(css, 'minmax(var(--inv-card-min, 260px),1fr)') ? ok('.prod-grid يستعمل --inv-card-min (مع قيمة احتياطية)') : bad('.prod-grid لا يستعمل المتغيّر');
 has(css, 'minmax(var(--sales-card-min, 240px), 1fr)') ? ok('.sales-product-grid يستعمل --sales-card-min') : bad('.sales-product-grid لا يستعمل المتغيّر');
+has(css, '.sales-product-grid:not(.sales-list-view) > .prod-card') && has(css, 'height: var(--sales-card-h);') ? ok('ارتفاع بطاقات البيع للشبكة فقط') : bad('قاعدة ارتفاع بطاقات البيع مفقودة');
+has(css, '.prod-grid:not(.inv-list-view) > .prod-card') && has(css, 'height: var(--inv-card-h);') ? ok('ارتفاع بطاقات المخزون للشبكة فقط') : bad('قاعدة ارتفاع بطاقات المخزون مفقودة');
+count(css, /overflow-y: auto;/g) >= 2 ? ok('البطاقات ذات الارتفاع الثابت تُمرَّر داخلياً') : bad('لا يوجد تمرير داخلي للبطاقات');
 has(css, '.sales-product-grid .prod-card-title { font-size: var(--sales-name-size, 13px); }') ? ok('خط أسماء بطاقات البيع مستقل') : bad('تجاوز خط بطاقات البيع مفقود');
 has(css, 'grid-template-columns: 1fr minmax(300px, var(--sales-cart-width))') ? ok('.sales-layout يستعمل --sales-cart-width') : bad('عرض السلة غير مربوط بالمتغيّر');
 has(css, 'grid-template-columns: 1fr !important;') ? ok('الشاشات الضيقة تفرد عموداً واحداً') : bad('قاعدة الشاشات الضيقة مفقودة');
@@ -102,25 +110,29 @@ has(js, 'catch (e) { /* corrupted value -> factory defaults') ? ok('JSON تال�
 // ---------- 5. ranges & defaults (cross-file agreement) ----------
 console.log('\n--- 5. المديات والقيم الافتراضية ---');
 const items = [
-  ['salesCard', '--sales-card-min', 140, 420, 240],
-  ['invCard', '--inv-card-min', 150, 450, 260],
-  ['sidebar', '--sidebar-width', 120, 400, 240],
-  ['salesName', '--sales-name-size', 10, 32, 13],
-  ['invName', '--prod-name-size', 10, 40, 16],
-  ['salesCart', '--sales-cart-width', 300, 700, 420],
+  ['salesCard', '--sales-card-min', 140, 420, 240, '240px'],
+  ['invCard', '--inv-card-min', 150, 450, 260, '260px'],
+  ['salesHeight', '--sales-card-h', 0, 520, 0, 'auto'],
+  ['invHeight', '--inv-card-h', 0, 520, 0, 'auto'],
+  ['sidebar', '--sidebar-width', 120, 400, 240, '240px'],
+  ['salesName', '--sales-name-size', 10, 32, 13, '13px'],
+  ['invName', '--prod-name-size', 10, 40, 16, '16px'],
+  ['salesCart', '--sales-cart-width', 300, 700, 420, '420px'],
 ];
-for (const [key, cssVar, min, max, def] of items) {
+for (const [key, cssVar, min, max, def, cssVal] of items) {
   const re = new RegExp("key: '" + key + "',\\s*css: '" + cssVar.replace(/-/g, '\\-') + "',\\s*min: (\\d+),\\s*max: (\\d+),\\s*def: (\\d+)");
   const m = re.exec(js);
   if (!m) { bad('تعريف ' + key + ' غير مطابق'); continue; }
   (Number(m[1]) === min && Number(m[2]) === max && Number(m[3]) === def)
     ? ok(key + ': ' + min + '–' + max + ' (افتراضي ' + def + ')')
     : bad(key + ' نطاق غير متوقع: ' + m.slice(1).join('/'));
-  new RegExp(cssVar.replace(/-/g, '\\-') + ':\\s*' + def + 'px;').test(rootSeg)
+  new RegExp(cssVar.replace(/-/g, '\\-') + ':\\s*' + cssVal + ';').test(rootSeg)
     ? ok(key + ': الافتراضي مطابق لقيمة CSS')
     : bad(key + ': الافتراضي لا يطابق CSS');
 }
-count(js, /key: '/g) === 6 ? ok('ستة عناصر تحكم بالضبط') : bad('عدد العناصر ليس 6');
+count(js, /key: '/g) === 8 ? ok('ثمانية عناصر تحكم بالضبط') : bad('عدد العناصر ليس 8');
+count(js, /zeroAuto: true/g) === 2 ? ok('الارتفاع 0 = تلقائي لمنزلقين') : bad('تعليمة zeroAuto مفقودة');
+has(js, "(it.zeroAuto && v === 0) ? 'auto' : v + 'px'") ? ok('dsApply يكتب auto بدل 0px') : bad('dsApply لا يعالج الصفر كقيمة تلقائية');
 
 // ---------- 6. i18n (ar/en/fr/zh) ----------
 console.log('\n--- 6. الترجمات الأربع ---');
@@ -128,7 +140,7 @@ const dStart = appJs.indexOf('/* ---- Display settings');
 const dEnd = appJs.indexOf('\n})();', dStart); // end of the display IIFE only
 const dSeg = (dStart >= 0 && dEnd > dStart) ? appJs.slice(dStart, dEnd) : '';
 dSeg ? ok('كتلة ترجمات إعدادات العرض موجودة') : bad('كتلة الترجمات مفقودة');
-const dKeys = ['title:', 'close:', 'hint:', 'preview:', 'tagSales:', 'tagInv:', 'sample1:', 'sampleMeta1:', 'sample2:', 'sampleMeta2:', 'salesCards:', 'invCards:', 'sidebar:', 'salesName:', 'invName:', 'salesCart:', 'px:', 'reset:', 'save:', 'saved:', 'dirty:'];
+const dKeys = ['title:', 'close:', 'hint:', 'preview:', 'tagSales:', 'tagInv:', 'sample1:', 'sampleMeta1:', 'sample2:', 'sampleMeta2:', 'salesCards:', 'invCards:', 'salesHeight:', 'invHeight:', 'sidebar:', 'salesName:', 'invName:', 'salesCart:', 'px:', 'reset:', 'save:', 'saved:', 'dirty:'];
 for (const k of dKeys) {
   const n = count(dSeg, new RegExp('(^|[\\s{,])' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'));
   n === 4 ? ok('المفتاح ' + k + ' في اللغات الأربع') : bad('المفتاح ' + k + ' موجود ' + n + ' مرة (المطلوب 4)');

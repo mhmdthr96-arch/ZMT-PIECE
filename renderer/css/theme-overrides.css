@@ -1,0 +1,6 @@
+/* ===== USER THEME OVERRIDES (تخصيص الألوان) ===== */
+html, body { background: var(--theme-page-bg) !important; color: var(--theme-text) !important; }
+.main-content > .page, .page { background: var(--theme-page-bg) !important; }
+.card, .modal, .modal-header, .modal-body, .modal-footer { background: var(--theme-card-bg) !important; color: var(--theme-text) !important; }
+.prod-card, .wb-prod-card, .sh-row, .expiry-stat, .qe-field, .qe-row, .qe-dropdown, .qe-prod-results { background: var(--theme-card-bg) !important; }
+.sd-invoice-card, .inv-card, .conn-card { background: var(--theme-invoice-card-bg) !important; }

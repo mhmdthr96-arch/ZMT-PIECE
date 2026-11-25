@@ -6,7 +6,18 @@
 
 function init_zakat() {
   zkLoadInputs();
+  zkToggleStockCountBtn();
   calculateZakat();
+}
+
+// «جرد المخزون» is manager-only: the button exists in the markup but is only
+// revealed when the signed-in user is a manager (see stock-count.js).
+function zkToggleStockCountBtn() {
+  const btn = document.getElementById('zkStockCountBtn');
+  if (!btn) return;
+  let isManager = true;
+  try { if (typeof Auth !== 'undefined' && Auth.isManager) isManager = !!Auth.isManager(); } catch (e) {}
+  btn.style.display = isManager ? 'flex' : 'none';
 }
 
 // ===== Persistence (localStorage, per the app conventions) =====
@@ -470,7 +481,7 @@ function zkBuildReportHtml() {
   .total td{background:#fff7e6;font-weight:700;border-top:2px solid #e6a000}
   .green{color:#28a745}.gold{color:#e6a000}.blue{color:#0066B1}
   .note{font-size:11px;color:#777;margin-top:12px;border-top:1px dashed #ccc;padding-top:8px}
-  @page{size:A4;margin:12mm}
+  ${(typeof PrintPaper !== 'undefined' && PrintPaper) ? PrintPaper.pageRule(12) : '@page{size:A4;margin:12mm}'}
 </style>
 </head>
 <body>
@@ -562,3 +573,4 @@ window.calculateZakat = calculateZakat;
 window.printZakatReport = printZakatReport;
 window.zkScheduleRecalc = zkScheduleRecalc;
 window.zkRecordZakat = zkRecordZakat;
+window.zkToggleStockCountBtn = zkToggleStockCountBtn;

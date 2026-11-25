@@ -331,6 +331,65 @@ function empApplyScan(code) {
   return { consumed: true, employee: emp, action: action, row: fresh };
 }
 
+// The scanner field's onkeydown calls this. The real in/out rules live in
+// empApplyScan (shared with the phone-scanner bridge), so a USB scanner, a
+// phone scan and the manual buttons all follow the exact same logic.
+function handleEmpScan(e) {
+  if (!e || (e.key !== 'Enter' && e.keyCode !== 13)) return;
+  e.preventDefault();
+  const input = document.getElementById('empScanInput');
+  const raw = input ? input.value : '';
+  const code = (typeof cleanScannedCode === 'function')
+    ? cleanScannedCode(raw, { scanner: true })
+    : String(raw || '').replace(/[\r\n\t]/g, '').trim();
+  if (!code) return;
+
+  const status = document.getElementById('empScanStatus');
+  const resultBox = document.getElementById('empScanResult');
+
+  let res = null;
+  try { res = empApplyScan(code); } catch (err) { res = null; }
+
+  // Always clear and refocus, so the next badge can be scanned immediately.
+  if (input) {
+    input.value = '';
+    try { input.focus(); } catch (err) {}
+  }
+
+  if (res && res.consumed) {
+    const emp = res.employee || {};
+    const inactive = res.state === 'inactive';
+    const action = res.action || (inactive ? t('employees.statusInactive') : t('employees.scanDone'));
+    if (status) {
+      status.textContent = action;
+      status.style.color = inactive ? '#e53935' : '#28a745';
+    }
+    if (resultBox) {
+      resultBox.style.display = 'flex';
+      resultBox.className = 'scanner-result ' + (inactive ? 'scanner-warning' : 'scanner-success');
+      resultBox.innerHTML = '<i class="fas fa-' + (inactive ? 'exclamation-triangle' : 'check-circle') + '"></i> ' +
+        '<strong>' + _empEsc(emp.name || '') + '</strong> — ' + _empEsc(action) +
+        (emp.barcode ? ' <span dir="ltr" class="text-muted">' + _empEsc(emp.barcode) + '</span>' : '');
+    }
+  } else {
+    const msg = t('employees.scanNotFound');
+    if (status) { status.textContent = msg; status.style.color = '#e53935'; }
+    if (resultBox) {
+      resultBox.style.display = 'flex';
+      resultBox.className = 'scanner-result scanner-warning';
+      resultBox.innerHTML = '<i class="fas fa-exclamation-triangle"></i> ' +
+        _empEsc(msg) + ' <strong dir="ltr">' + _empEsc(code) + '</strong>';
+    }
+    _empToast('<i class="fas fa-exclamation-triangle"></i> ' + _empEsc(msg), false);
+    _empBeep(false);
+  }
+
+  if (typeof clearTimeout === 'function') clearTimeout(handleEmpScan._reset);
+  if (typeof setTimeout === 'function') handleEmpScan._reset = setTimeout(function () {
+    if (status) { status.textContent = t('employees.scanReady'); status.style.color = '#888'; }
+  }, 3200);
+}
+
 function empManualIn(id) {
   const emp = DB.getEmployee(id);
   if (!emp) return;
@@ -818,6 +877,66 @@ function openEmpBadge(id) {
 function closeEmpBadge() {
   document.getElementById('empBadgeModal').style.display = 'none';
   _empBadgeCtx = null;
+}
+
+// Print the badge at its physical card size (54mm x 86mm, portrait). The
+// barcode is generated with the same BP module used everywhere else, so the
+// printed bars are the same CODE128/EAN the rest of the app reads. Actual
+// printer selection stays in the OS/Chromium print dialog.
+function printEmpBadge() {
+  const e = _empBadgeCtx;
+  if (!e) return;
+  const code = String(e.barcode || '').trim();
+  if (!code) { alert(t('employees.barcodeMissing') || 'لا يوجد باركود لهذا الموظف'); return; }
+
+  const gen = (typeof BP !== 'undefined' && BP && typeof BP.genBarcodeSVG === 'function')
+    ? BP.genBarcodeSVG(code)
+    : { ok: false, error: 'وحدة الباركود غير محمّلة' };
+  if (!gen.ok) { alert(gen.error || 'تعذر توليد الباركود'); return; }
+
+  const shop = (typeof getPrintInfo === 'function') ? (getPrintInfo().name || '') : '';
+  const initial = String(e.name || '؟').trim().charAt(0).toUpperCase() || '؟';
+  const photo = e.photo
+    ? '<img src="' + e.photo + '" alt="">'
+    : '<span class="zmt-badge-initial">' + _empEsc(initial) + '</span>';
+
+  const html = '<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8">'
+    + '<title>' + _empEsc(e.name || '') + '</title>'
+    + '<style>'
+    + '@page{size:54mm 86mm;margin:0;}'
+    + 'html,body{margin:0;padding:0;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact;}'
+    + 'body{font-family:"Segoe UI",Tahoma,Arial,sans-serif;color:#111;}'
+    + '.zmt-badge{width:54mm;height:86mm;box-sizing:border-box;padding:4mm;display:flex;flex-direction:column;align-items:center;justify-content:space-between;text-align:center;overflow:hidden;}'
+    + '.zmt-badge-shop{font-size:2.6mm;font-weight:700;color:#444;letter-spacing:.2mm;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}'
+    + '.zmt-badge-photo{width:18mm;height:18mm;border-radius:50%;overflow:hidden;background:#eee;border:0.4mm solid #ccc;display:flex;align-items:center;justify-content:center;}'
+    + '.zmt-badge-photo img{width:100%;height:100%;object-fit:cover;display:block;}'
+    + '.zmt-badge-initial{font-size:8mm;font-weight:800;color:#90a4ae;line-height:1;}'
+    + '.zmt-badge-name{font-size:4mm;font-weight:800;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
+    + '.zmt-badge-barcode{width:44mm;height:15mm;display:flex;align-items:center;justify-content:center;}'
+    + '.zmt-badge-barcode svg{width:100%;height:100%;display:block;}'
+    + '.zmt-badge-code{font-family:"ZMT Digits","Courier New",monospace;font-size:3.2mm;font-weight:700;letter-spacing:.6mm;direction:ltr;}'
+    + '.zmt-badge-foot{font-size:2.2mm;color:#777;}'
+    + '@media print{body{background:#fff}}'
+    + '</style></head><body>'
+    + '<div class="zmt-badge">'
+    +   (shop ? '<div class="zmt-badge-shop">' + _empEsc(shop) + '</div>' : '')
+    +   '<div class="zmt-badge-photo">' + photo + '</div>'
+    +   '<div class="zmt-badge-name">' + _empEsc(e.name || '') + '</div>'
+    +   '<div class="zmt-badge-barcode">' + gen.svg + '</div>'
+    +   '<div class="zmt-badge-code">' + _empEsc(code) + '</div>'
+    +   '<div class="zmt-badge-foot">' + _empEsc(t('employees.badgeTitle')) + '</div>'
+    + '</div>'
+    + '<script>'
+    + 'function go(){try{window.focus();window.print();window.close();}catch(e){}}'
+    + 'window.onload=function(){var img=document.querySelector("img");'
+    + 'if(img&&!img.complete){img.onload=go;img.onerror=go;setTimeout(go,1200);}else{setTimeout(go,150);}};'
+    + '<\/script></body></html>';
+
+  const win = window.open('', '', 'width=520,height=760');
+  if (!win) { alert(t('employees.allowPopups') || 'الرجاء السماح بالنوافذ المنبثقة للطباعة'); return; }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
 }
 
 

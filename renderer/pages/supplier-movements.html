@@ -1,0 +1,92 @@
+<div class="page" id="page-supplier-movements">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1><i class="fas fa-truck"></i> <span data-i18n="movements.supTitle">حركات الموردين</span></h1>
+      <p><span data-i18n="movements.supSub">سجل كامل للديون والدفعات والفواتير مع تسويات الرصيد</span></p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <div class="pmp-toolbar">
+      <div class="pmp-field">
+        <label for="pmPartySelect" data-i18n="movements.partyLabel">الطرف</label>
+        <select id="pmPartySelect" onchange="pmOnPartyChange(this.value)"></select>
+      </div>
+      <div class="pmp-field pmp-field-search">
+        <label for="pmSearch" data-i18n="movements.searchLabel">بحث</label>
+        <input type="text" id="pmSearch" autocomplete="off"
+               data-i18n-placeholder="movements.searchPh"
+               placeholder="ابحث بالاسم أو رقم الفاتورة..."
+               oninput="pmOnSearch(this.value)">
+      </div>
+      <div class="pmp-field pmp-field-date">
+        <label for="pmDateFrom" data-i18n="movements.fromLabel">من تاريخ</label>
+        <input type="date" id="pmDateFrom" onchange="pmOnRange(this.value, undefined)">
+      </div>
+      <div class="pmp-field pmp-field-date">
+        <label for="pmDateTo" data-i18n="movements.toLabel">إلى تاريخ</label>
+        <input type="date" id="pmDateTo" onchange="pmOnRange(undefined, this.value)">
+      </div>
+      <div class="pmp-quick">
+        <button type="button" class="pmp-qbtn" onclick="pmQuickRange('month')" data-i18n="movements.qMonth">هذا الشهر</button>
+        <button type="button" class="pmp-qbtn" onclick="pmQuickRange('30')" data-i18n="movements.q30">آخر 30 يوم</button>
+        <button type="button" class="pmp-qbtn" onclick="pmQuickRange('all')" data-i18n="movements.qAll">الكل</button>
+      </div>
+      <button type="button" class="btn btn-primary pmp-report-btn" onclick="pmShowReport()">
+        <i class="fas fa-file-pdf"></i> <span data-i18n="movements.viewReport">عرض كتقرير</span>
+      </button>
+    </div>
+
+    <!-- Always-visible print colour switch (colour / black & white) -->
+    <div class="pmp-print-modes" role="group" aria-label="Print mode">
+      <span class="pmp-print-modes-label"><i class="fas fa-print"></i> <span data-i18n="invoices.printModeLabel">نوع الطباعة</span></span>
+      <button type="button" class="pm-print-mode active" data-mode="color" onclick="pmPrintColor()">
+        <i class="fas fa-palette"></i> <span data-i18n="invoices.printColor">طباعة ملوّنة</span>
+      </button>
+      <button type="button" class="pm-print-mode" data-mode="bw" onclick="pmPrintBw()">
+        <i class="fas fa-adjust"></i> <span data-i18n="invoices.printBw">طباعة أبيض وأسود</span>
+      </button>
+    </div>
+
+    <div class="pmp-actions">
+      <label class="pmp-toggle">
+        <input type="checkbox" id="pmIncludeReturns" checked onchange="pmOnReturnsToggle(this.checked)">
+        <span data-i18n="movements.includeReturns">تضمين المرتجعات</span>
+      </label>
+      <button type="button" class="btn btn-sm" onclick="pmShowReturnsReport()">
+        <i class="fas fa-rotate-left"></i> <span data-i18n="movements.returnsReport">تقرير المرتجعات</span>
+      </button>
+      <button type="button" class="btn btn-sm" onclick="pmSettle()">
+        <i class="fas fa-hand-holding-dollar"></i> <span data-i18n="movements.settleNow">تسوية رصيد</span>
+      </button>
+      <button type="button" class="btn btn-sm" onclick="pmMonthlyStatement()">
+        <i class="fas fa-calendar-days"></i> <span data-i18n="movements.monthlyStatement">كشف شهري</span>
+      </button>
+      <button type="button" class="btn btn-sm" onclick="pmExportCsv()">
+        <i class="fas fa-file-excel"></i> <span data-i18n="movements.exportCsv">تصدير Excel</span>
+      </button>
+      <button type="button" class="btn btn-sm" onclick="pmSendWhatsApp()">
+        <i class="fab fa-whatsapp"></i> <span data-i18n="movements.sendWhatsApp">واتساب</span>
+      </button>
+      <button type="button" class="btn btn-sm" onclick="pmSendEmail()">
+        <i class="fas fa-envelope"></i> <span data-i18n="movements.sendEmail">إرسال بالبريد</span>
+      </button>
+    </div>
+
+    <div class="pmp-chips" id="pmChips"></div>
+
+    <div class="pmp-chart-wrap" id="pmChartWrap" style="display:none">
+      <canvas id="pmChart"></canvas>
+    </div>
+
+    <div class="pmp-legend">
+      <span><span class="pm-tag pm-tag-sale"><i class="fas fa-file-invoice"></i></span> <span data-i18n="movements.legendPurchase">فاتورة شراء (مدين)</span></span>
+      <span><span class="pm-tag pm-tag-payment"><i class="fas fa-money-bill-wave"></i></span> <span data-i18n="movements.legendPaySupplier">دفعة للمورد (دائن)</span></span>
+      <span><span class="pm-tag pm-tag-voucher"><i class="fas fa-receipt"></i></span> <span data-i18n="movements.legendDebtNote">سند دين</span></span>
+      <span><span class="pm-tag pm-tag-return"><i class="fas fa-rotate-left"></i></span> <span data-i18n="movements.legendReturn">مرتجع (لا يغيّر الرصيد)</span></span>
+      <span><i class="fas fa-circle-check" style="color:#15803d"></i> <span data-i18n="movements.legendSettle">تسوية رصيد (وصول الرصيد إلى صفر)</span></span>
+    </div>
+
+    <div id="pmList" class="pmp-list"></div>
+  </div>
+</div>

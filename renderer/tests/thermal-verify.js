@@ -42,7 +42,8 @@ function hasNot(text, needle, label) { ok(text.indexOf(needle) === -1, label); }
 // 1) ON-PAPER HYGIENE (invoices)
 // ===========================================================================
 has(invoicesJs, 'function stripInvPrintHidden(', 'paper: stripInvPrintHidden() exists');
-has(invoicesJs, "querySelectorAll('.inv-print-hide')", 'paper: strip removes .inv-print-hide nodes');
+has(invoicesJs, '.inv-print-hide, .inv-screen-only', 'paper: strip removes .inv-print-hide nodes');
+has(invoicesJs, "querySelectorAll('.inv-print-only')", 'paper: strip reveals .inv-print-only nodes');
 has(invoicesJs, 'function invPartyBalanceBlockHTML(inv, party, noPrint)',
   'paper: balance block accepts a noPrint flag');
 has(invoicesJs, '${invPartyBalanceBlockHTML(inv, party, true)}',

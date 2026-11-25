@@ -7,20 +7,57 @@ const { spawn } = require('child_process');
 let nodemailer = null;
 try { nodemailer = require('nodemailer'); } catch (e) { nodemailer = null; }
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
+
+// ===== COMPANY-ISOLATED PROCESS MODE =====
+// Every company must own a *separate Chromium profile*, not just a second
+// BrowserWindow: IndexedDB and localStorage are per-origin/per-userData, so two
+// windows in one process would still share one database and leak data/scopes.
+// Capture the base profile BEFORE any override, then point this process's
+// userData at the company's own folder. The licence remains shared (machine
+// level, in the base profile), while business data + UI state stay isolated.
+const BASE_USER_DATA = app.getPath('userData');
+const COMPANY_PROFILES_DIR = path.join(BASE_USER_DATA, 'company-profiles');
+const COMPANY_ARG_PREFIX = '--company=';
+const _companyArg = (process.argv.find(a => a.startsWith(COMPANY_ARG_PREFIX)) || '').slice(COMPANY_ARG_PREFIX.length);
+// Only filesystem-safe identifiers are accepted; the value comes from the
+// command line (desktop shortcut / manual launch), never from trusted input.
+const LAUNCH_COMPANY_ID = /^[A-Za-z0-9_-]{1,120}$/.test(_companyArg) ? _companyArg : '';
+const IS_COMPANY_PROCESS = !!LAUNCH_COMPANY_ID;
+
+function companyProfileDir(id) {
+  const safe = /^[A-Za-z0-9_-]{1,120}$/.test(String(id || '')) ? String(id) : '';
+  return safe ? path.join(COMPANY_PROFILES_DIR, safe) : '';
+}
+
+if (IS_COMPANY_PROCESS) {
+  const dir = companyProfileDir(LAUNCH_COMPANY_ID);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    app.setPath('userData', dir);
+    // Separate taskbar grouping as well as separate storage: two companies must
+    // never be visually confused as the same app instance.
+    app.setAppUserModelId('com.zmt.piece.company.' + LAUNCH_COMPANY_ID);
+  } catch (e) {
+    console.error('[Company] failed to bind isolated profile:', e);
+  }
+}
 
 if (process.platform === 'win32' && require('os').release().startsWith('6.1')) {
   app.commandLine.appendSwitch('no-sandbox');
 }
 const License = require('./license');
 const Firebird = require('./firebird');
+const MssqlBak = require('./mssql-bak');
 const LAN = require('./lan-server');
 const PrinterNet = require('./printer-net');
+const ScaleNet = require('./scale-net');
 const PhoneScanner = require('./phone-scanner');
 
 let mainWindow;
 let splashWindow;
-let quickEntryWindow;
+let quickEntryWindows = []; // up to MAX_QE_WINDOWS standalone F1 windows (kept alive)
+const MAX_QE_WINDOWS = 5;
 let kioskOn = false;
 
 // ===== FLUSH-ON-CLOSE =====
@@ -85,6 +122,7 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 700,
     frame: false,
+    title: 'ZMT PIECE',
     backgroundColor: '#1a1a1a',
     show: false,
     icon,
@@ -97,6 +135,12 @@ function createWindow() {
   });
 
   mainWindow.maximize();
+
+  // Restore app name in taskbar; allow page title updates. Company processes
+  // keep their own taskbar identity from the launch-context block above.
+  if (!IS_COMPANY_PROCESS) {
+    try { app.setAppUserModelId('com.zmt.piece'); } catch (e) {}
+  }
 
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -174,7 +218,14 @@ function createWindow() {
     try { mainWindow.webContents.send('pd-exit-request'); } catch (e) {}
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'))
+  // Company processes MUST tell the renderer which company they own. The
+  // renderer (company-profile.js) picks up `?company=<id>` synchronously before
+  // auth/DB init — without it the child looks like a fresh empty main app and
+  // never imports the scoped snapshot or binds the session.
+  const loadOptions = IS_COMPANY_PROCESS
+    ? { query: { company: LAUNCH_COMPANY_ID } }
+    : undefined;
+  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'), loadOptions)
     .then(() => console.log('Page loaded'))
     .catch((err) => console.error('Load error:', err));
 
@@ -185,7 +236,9 @@ function createWindow() {
 
 app.whenReady().then(() => {
   console.log('App ready');
-  License.setUserDataPath(app.getPath('userData'));
+  // Licence is machine-wide and must be read from the shared base profile in
+  // BOTH main and company processes (company userData holds business data only).
+  License.setUserDataPath(BASE_USER_DATA);
   // 2.4.9: pin the machine identity at boot — the first fingerprint computed is
   // persisted to zmt_machine.dat and never recomputed, so no Win7 machine can
   // alternate identities across boots anymore (the root cause of the
@@ -194,6 +247,88 @@ app.whenReady().then(() => {
     const mid = License.getMachineFingerprint();
     console.log('Machine fingerprint:', mid);
   } catch (e) { console.warn('Machine fingerprint unavailable:', e && e.message); }
+
+  try {
+    // Factory reset: put the machine back to "never installed". Everything this
+    // app persists lives in userData — licence/time/device .dat files, the
+    // zmt_piece_db IndexedDB business database, localStorage settings and
+    // credentials, *.zmt-backup auto backups, phone-scanner certs and tokens,
+    // price-display & invoice-logo media, cash-drawer and rustdesk configs —
+    // plus the licence mirror in HKCU\Software\ZMT PIECE. The renderer releases
+    // its IndexedDB handle (DB.close()) before calling, otherwise Chromium keeps
+    // the database folder locked and the wipe silently leaves the data behind.
+    ipcMain.handle('license-hard-reset', async () => {
+      // An isolated company has no licence files of its own and must never
+      // wipe the shared machine activation or the other companies' profiles.
+      if (IS_COMPANY_PROCESS) {
+        return { success: false, unavailable: true, message: 'تصفية الترخيص متاحة من النسخة الرئيسية فقط.', failed: [] };
+      }
+      const failed = [];
+
+      try { LAN.stop(); } catch (e) {}
+      try { PhoneScanner.stop(); } catch (e) {}
+
+      // Popups share the origin, so each holds its own database connection.
+      for (const w of [splashWindow, ...quickEntryWindows]) {
+        try { if (w && !w.isDestroyed()) w.destroy(); } catch (e) {}
+      }
+
+      let lic = { success: false, message: 'license module unavailable' };
+      try {
+        if (typeof License.hardResetDevice === 'function') lic = License.hardResetDevice();
+      } catch (e) {
+        lic = { success: false, message: (e && e.message) || String(e) };
+      }
+
+      try {
+        await session.defaultSession.clearStorageData();
+      } catch (e) {
+        failed.push('بيانات الواجهة (' + ((e && e.message) || String(e)) + ')');
+      }
+
+      // Entries that must never survive a reset. Chromium re-creates its own
+      // cache folders on the next launch and clearStorageData() above already
+      // erased what the app stored inside them (a failure there is reported on
+      // its own), so a lock on e.g. "Cache" or "Local Storage" is not a failed
+      // wipe — listing it would only look like one.
+      const CRITICAL = new Set([
+        'zmt_license.dat', 'zmt_time.dat', 'zmt_device.dat', 'zmt_smbios.dat', 'zmt_machine.dat',
+        'zmt_license_net.log', 'zmt_license_net.log.old', 'zmt_site_url.txt',
+        'IndexedDB',
+      ]);
+
+      try {
+        const ud = app.getPath('userData');
+        for (const name of fs.readdirSync(ud)) {
+          try {
+            fs.rmSync(path.join(ud, name), { recursive: true, force: true });
+          } catch (e) {
+            if (CRITICAL.has(name)) failed.push(name);
+          }
+        }
+      } catch (e) {
+        failed.push('مجلد البيانات (' + ((e && e.message) || String(e)) + ')');
+      }
+
+      if (!lic || lic.success !== true) {
+        return { success: false, message: (lic && lic.message) || 'خطأ غير معروف', failed };
+      }
+      return { success: true, failed };
+    });
+  } catch (e) {}
+
+  try {
+    ipcMain.handle('app-relaunch', async () => {
+      try {
+        app.relaunch();
+        app.exit(0);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    });
+  } catch (e) {}
+
   createSplash();
   createWindow();
   ensureAnyDeskInstalled();
@@ -226,16 +361,39 @@ ipcMain.on('splash-close', () => {
 // Quick Entry standalone window: created once and kept alive so the operator
 // can minimize it (unfinished invoice stays), do normal work in the main
 // window, then come back and finish it. F1 focuses/reuses it.
+// Quick Entry standalone window(s): created on demand and kept alive so the
+// operator can minimize (unfinished invoice stays), do normal work in the main
+// window, then come back and finish it. F1 focuses/reuses an existing one when
+// the cap is reached, otherwise opens a new window (up to MAX_QE_WINDOWS).
 function openQuickEntryWindow() {
-  if (quickEntryWindow && !quickEntryWindow.isDestroyed()) {
-    if (quickEntryWindow.isMinimized()) quickEntryWindow.restore();
-    quickEntryWindow.show();
-    quickEntryWindow.focus();
-    return;
+  // Reuse a minimized/hidden window if any, otherwise focus the most recent.
+  for (let i = quickEntryWindows.length - 1; i >= 0; i--) {
+    const w = quickEntryWindows[i];
+    if (w && !w.isDestroyed() && (!w.isVisible() || w.isMinimized())) {
+      if (w.isMinimized()) w.restore();
+      w.show();
+      w.focus();
+      w.moveTop();
+      return true;
+    }
   }
+  // Focus an already-visible window if we are at the cap.
+  if (quickEntryWindows.length >= MAX_QE_WINDOWS) {
+    const w = quickEntryWindows[quickEntryWindows.length - 1];
+    if (w && !w.isDestroyed()) {
+      if (w.isMinimized()) w.restore();
+      w.show();
+      w.focus();
+      w.moveTop();
+      return true;
+    }
+    // prune destroyed
+    quickEntryWindows = quickEntryWindows.filter(x => x && !x.isDestroyed());
+  }
+  // Create a new window.
   const iconPath = path.join(__dirname, 'assets', 'icon.ico');
   const icon = fs.existsSync(iconPath) ? iconPath : undefined;
-  quickEntryWindow = new BrowserWindow({
+  const w = new BrowserWindow({
     width: 1180,
     height: 780,
     minWidth: 860,
@@ -253,31 +411,79 @@ function openQuickEntryWindow() {
       contextIsolation: true,
     },
   });
-  quickEntryWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'), { query: { standalone: 'quick-entry' } });
-  quickEntryWindow.once('ready-to-show', () => {
-    if (quickEntryWindow && !quickEntryWindow.isDestroyed()) quickEntryWindow.show();
+  quickEntryWindows.push(w);
+  w.setTitle('ZMT Quick Entry - ' + Date.now());
+  const qeQuery = { standalone: 'quick-entry' };
+  if (IS_COMPANY_PROCESS) qeQuery.company = LAUNCH_COMPANY_ID;
+  w.loadFile(path.join(__dirname, 'renderer', 'index.html'), { query: qeQuery });
+  w.once('ready-to-show', () => {
+    if (w && !w.isDestroyed()) {
+      try { w.setAlwaysOnTop(true, 'screen-saver'); } catch (e) {}
+      try { w.maximize(); } catch (e) { w.show(); }
+      w.focus();
+      w.moveTop();
+      // Polling restore for 5s
+      let polls = 0;
+      const timer = setInterval(() => {
+        polls++;
+        if (!w || w.isDestroyed()) { clearInterval(timer); return; }
+        if (w.isMinimized()) {
+          console.log('[QE] poll restore at', Date.now());
+          try { w.restore(); w.maximize(); w.focus(); w.moveTop(); } catch (e) {}
+        }
+        if (polls >= 50) { // 5s
+          clearInterval(timer);
+          try { w.setAlwaysOnTop(false); } catch (e) {}
+        }
+      }, 100);
+    }
   });
   // Even if ready-to-show never fires (e.g. slow boot), don't leave a ghost window.
   setTimeout(() => {
-    if (quickEntryWindow && !quickEntryWindow.isDestroyed() && !quickEntryWindow.isVisible()) {
-      quickEntryWindow.show();
+    if (w && !w.isDestroyed() && !w.isVisible()) {
+      try { w.maximize(); w.focus(); w.moveTop(); } catch (e) {}
     }
   }, 2500);
-  quickEntryWindow.webContents.once('did-fail-load', (e, code, desc) => {
+  w.webContents.once('did-fail-load', (e, code, desc) => {
     console.error('[QE] Failed to load quick-entry page:', code, desc);
-    if (quickEntryWindow && !quickEntryWindow.isDestroyed()) {
-      quickEntryWindow.destroy();
-      quickEntryWindow = null;
+    if (w && !w.isDestroyed()) {
+      w.destroy();
     }
   });
-  // Re-sync the shared IndexedDB cache whenever the window regains focus so
-  // sales made in the main window (stock, sold invoices) appear here too.
-  quickEntryWindow.on('focus', () => {
-    if (quickEntryWindow && !quickEntryWindow.isDestroyed()) {
-      quickEntryWindow.webContents.send('quick-entry-refresh');
+  // Re-sync the shared IndexedDB cache whenever the window regains focus.
+  w.on('focus', () => {
+    if (w && !w.isDestroyed()) {
+      w.webContents.send('quick-entry-refresh');
     }
+    // Broadcast to all other quick-entry windows too.
+    quickEntryWindows.forEach((ow) => {
+      if (ow && !ow.isDestroyed() && ow !== w) {
+        try { ow.webContents.send('quick-entry-refresh'); } catch (e) {}
+      }
+    });
   });
-  quickEntryWindow.on('closed', () => { quickEntryWindow = null; });
+  w.on('minimize', () => {
+    console.log('[QE] window minimized at', Date.now(), 'visible=', w.isVisible());
+    // Auto-restore if it happens immediately after creation (Windows focus quirk).
+    setTimeout(() => {
+      if (w && !w.isDestroyed() && w.isMinimized()) {
+        try { w.restore(); w.show(); w.focus(); w.moveTop(); } catch (e) {}
+      }
+    }, 50);
+  });
+  w.on('hide', () => {
+    console.log('[QE] window hidden at', Date.now());
+    setTimeout(() => {
+      if (w && !w.isDestroyed() && !w.isVisible()) {
+        try { w.show(); w.focus(); w.moveTop(); } catch (e) {}
+      }
+    }, 50);
+  });
+  w.on('blur', () => { console.log('[QE] window blur at', Date.now()); });
+  w.on('focus', () => { console.log('[QE] window focus at', Date.now()); });
+  // Extra safety: ensure the window is not left minimized/hidden after creation.
+  w.on('show', () => { try { w.focus(); w.moveTop(); } catch (e) {} });
+  return true;
 }
 
 ipcMain.handle('quick-entry-open', () => {
@@ -434,6 +640,116 @@ ipcMain.handle('read-directory', async (event, dirPath) => {
 
 ipcMain.handle('get-app-data-path', () => {
   return app.getPath('userData');
+});
+
+// Base profile is always the shared machine-level profile (licence, migration
+// snapshots, update cache). Company processes get their own userData, so the
+// renderer needs this explicit path to read a scoped snapshot on first launch.
+ipcMain.handle('get-base-app-data-path', () => BASE_USER_DATA);
+
+ipcMain.handle('get-launch-context', () => ({
+  companyId: LAUNCH_COMPANY_ID,
+  isolated: IS_COMPANY_PROCESS,
+  baseAppDataPath: BASE_USER_DATA,
+}));
+
+// ===== COMPANY PROFILE: preparation, launch, shortcut =====
+// A company process is a genuinely separate app process with its own userData.
+// The main (shared) instance owns the single machine-level licence, the LAN
+// server and the phone scanner; company processes are pure business profiles.
+function _companyArgs(id) {
+  return app.isPackaged
+    ? ['--company=' + id]
+    : ['--company=' + id, app.getAppPath()];
+}
+
+// Portable LAN/phone services bind fixed ports (4512-4521). Only the main
+// instance may own them: two processes binding the same port would either
+// crash or, worse, route a phone scan into the wrong company's database.
+const _portServiceUnavailable = () => ({ success: false, unavailable: true, message: 'Services are owned by the main ZMT PIECE instance.' });
+
+// Company IPC is registered in both the main and isolated processes. Re-register
+// defensively so a dev reload / partial restart can never leave the renderer
+// calling a channel whose handler vanished with an older main process.
+const COMPANY_IPC_CHANNELS = [
+  'company-ipc-status', 'company-prepare-snapshot',
+  'company-open-window', 'company-create-shortcut',
+];
+function _companyIpcHandle(channel, handler) {
+  try { ipcMain.removeHandler(channel); } catch (e) {}
+  ipcMain.handle(channel, handler);
+}
+
+_companyIpcHandle('company-ipc-status', () => ({
+  ok: true,
+  version: app.getVersion(),
+  isolated: IS_COMPANY_PROCESS,
+  channels: COMPANY_IPC_CHANNELS,
+}));
+
+_companyIpcHandle('company-prepare-snapshot', async (event, companyId, payload) => {
+  const dir = companyProfileDir(companyId);
+  if (!dir) return { success: false, error: 'INVALID_COMPANY_ID' };
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const target = path.join(dir, 'migration.json');
+    // Backup-first: a previous snapshot is never silently lost when the user
+    // refreshes a company profile. Keep one recoverable copy on disk.
+    if (fs.existsSync(target)) {
+      try { fs.copyFileSync(target, path.join(dir, 'migration.json.bak')); } catch (e) {}
+    }
+    const tmp = path.join(dir, 'migration.json.tmp');
+    fs.writeFileSync(tmp, JSON.stringify(payload || {}, null, 2), 'utf8');
+    fs.renameSync(tmp, target);
+    return { success: true, path: target };
+  } catch (e) {
+    return { success: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+
+_companyIpcHandle('company-open-window', (event, companyId) => {
+  const dir = companyProfileDir(companyId);
+  if (!dir) return { success: false, error: 'INVALID_COMPANY_ID' };
+  if (!fs.existsSync(path.join(dir, 'migration.json'))) {
+    return { success: false, error: 'SNAPSHOT_MISSING' };
+  }
+  try {
+    const child = spawn(process.execPath, _companyArgs(String(companyId)), {
+      cwd: app.isPackaged ? path.dirname(process.execPath) : app.getAppPath(),
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+    });
+    child.on('error', (err) => console.error('[Company] spawn failed:', err));
+    child.unref();
+    return { success: true, pid: child.pid };
+  } catch (e) {
+    return { success: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+
+_companyIpcHandle('company-create-shortcut', (event, companyId, companyName) => {
+  const dir = companyProfileDir(companyId);
+  if (!dir) return { success: false, error: 'INVALID_COMPANY_ID' };
+  if (process.platform !== 'win32' || typeof shell.writeShortcutLink !== 'function') {
+    return { success: false, error: 'SHORTCUT_UNSUPPORTED' };
+  }
+  try {
+    const safeName = String(companyName || companyId).replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) || String(companyId);
+    const linkPath = path.join(app.getPath('desktop'), 'ZMT PIECE - ' + safeName + '.lnk');
+    const iconPath = path.join(__dirname, 'assets', 'icon.ico');
+    const ok = shell.writeShortcutLink(linkPath, 'create', {
+      target: process.execPath,
+      args: _companyArgs(String(companyId)).join(' '),
+      cwd: app.isPackaged ? path.dirname(process.execPath) : app.getAppPath(),
+      icon: fs.existsSync(iconPath) ? iconPath : process.execPath,
+      iconIndex: 0,
+      description: 'ZMT PIECE - ' + safeName,
+    });
+    return ok ? { success: true, path: linkPath } : { success: false, error: 'SHORTCUT_FAILED' };
+  } catch (e) {
+    return { success: false, error: e && e.message ? e.message : String(e) };
+  }
 });
 
 ipcMain.handle('delete-file', async (event, filePath) => {
@@ -614,10 +930,11 @@ ipcMain.handle('open-file-import', async (event) => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     filters: [
-      { name: 'All Supported', extensions: ['csv','tsv','txt','xlsx','xls','json','xml','sql','db','sqlite','sqlite3','mdb','accdb','gdb','fdb','fbk','dbf'] },
+      { name: 'All Supported', extensions: ['csv','tsv','txt','xlsx','xls','json','xml','sql','db','sqlite','sqlite3','mdb','accdb','gdb','fdb','fbk','dbf','bak','gssp','zgssp'] },
       { name: 'CSV/Text', extensions: ['csv','tsv','txt'] },
       { name: 'Excel', extensions: ['xlsx','xls'] },
-      { name: 'Database', extensions: ['db','sqlite','sqlite3','mdb','accdb','gdb','fdb','fbk'] },
+      { name: 'Database', extensions: ['db','sqlite','sqlite3','mdb','accdb','gdb','fdb','fbk','bak'] },
+      { name: 'Legacy Backup', extensions: ['bak','gssp','zgssp','fdb','fbk','gdb','db','sqlite'] },
       { name: 'SQL Dump', extensions: ['sql'] },
       { name: 'dBASE', extensions: ['dbf'] },
       { name: 'JSON/XML', extensions: ['json','xml'] },
@@ -676,6 +993,28 @@ ipcMain.handle('firebird-restore', async (event, backupPath, options) => {
   } catch (err) {
     return { success: false, error: err.message };
   }
+});
+
+// ===== MSSQL .bak IMPORTER (Gestion Stock SQL Server backups) =====
+ipcMain.handle('mssql-bak-ensure', async () => {
+  try { return { success: true, data: await MssqlBak.ensureEngine() }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+ipcMain.handle('mssql-bak-detect', async (event, bakPath) => {
+  try { return await MssqlBak.detect(bakPath); }
+  catch (err) { return { success: false, error: err.message }; }
+});
+ipcMain.handle('mssql-bak-export', async (event, bakPath) => {
+  try { return await MssqlBak.exportAll(bakPath); }
+  catch (err) { return { success: false, error: err.message }; }
+});
+ipcMain.handle('mssql-bak-read-table', async (event, bakPath, table) => {
+  try { return await MssqlBak.readTable(bakPath, table); }
+  catch (err) { return { success: false, error: err.message }; }
+});
+ipcMain.handle('mssql-bak-dispose', async (event, bakPath) => {
+  try { return await MssqlBak.dispose(bakPath); }
+  catch (err) { return { success: false, error: err.message }; }
 });
 
 // ===== APP VERSION (matches the installed package.json version) =====
@@ -742,28 +1081,123 @@ async function _fetchText(url) {
   });
 }
 
-async function _downloadTo(url, destPath, onProgress) {
-  const res = await _httpsGet(url);
-  const total = parseInt(res.headers['content-length'] || '0', 10) || 0;
-  const hash = crypto.createHash('sha256');
-  let received = 0, lastSent = 0;
-  await new Promise((resolve, reject) => {
-    const out = fs.createWriteStream(destPath);
-    res.on('data', (chunk) => {
-      hash.update(chunk);
-      received += chunk.length;
-      const now = Date.now();
-      if (onProgress && (now - lastSent > 250 || received === total)) {
-        lastSent = now;
-        onProgress({ received, total, percent: total ? Math.round((received / total) * 100) : 0 });
-      }
-    });
-    res.on('error', reject);
-    out.on('error', reject);
-    out.on('finish', resolve);
-    res.pipe(out);
+// ---------- update download / install helpers ----------
+const UPDATE_DIR = () => path.join(app.getPath('userData'), 'updates');
+const UPDATE_LOG_FILE = () => path.join(app.getPath('userData'), 'update.log');
+// Anything smaller than this cannot be a 100+ MB NSIS installer — most often it
+// is an HTML error page saved under an .exe name.
+const MIN_INSTALLER_BYTES = 1024 * 1024;
+
+function _updateLog(message) {
+  const line = '[' + new Date().toISOString() + '] ' + message + '\r\n';
+  try {
+    fs.mkdirSync(path.dirname(UPDATE_LOG_FILE()), { recursive: true });
+    fs.appendFileSync(UPDATE_LOG_FILE(), line, 'utf8');
+  } catch (e) {}
+  try { console.log('[updater]', message); } catch (e) {}
+}
+
+function _ensureUpdateDir() {
+  const dir = UPDATE_DIR();
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function _safeSize(filePath) {
+  try {
+    const st = fs.statSync(filePath);
+    return st.isFile() ? st.size : 0;
+  } catch (e) { return 0; }
+}
+
+function _isPeFile(filePath) {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      const head = Buffer.alloc(2);
+      const n = fs.readSync(fd, head, 0, 2, 0);
+      return n === 2 && head[0] === 0x4d && head[1] === 0x5a; // "MZ"
+    } finally { fs.closeSync(fd); }
+  } catch (e) { return false; }
+}
+
+function _sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', reject);
   });
-  return { sha256: hash.digest('hex'), size: received };
+}
+
+// Reuse a previously downloaded installer only when it is complete and its
+// hash (or at least its size + PE header) matches, so a retry never downloads
+// another 120 MB over a working file.
+async function _reuseDownloadedInstaller(destPath, expected) {
+  expected = expected || {};
+  const size = _safeSize(destPath);
+  if (!size || size < MIN_INSTALLER_BYTES) return null;
+  if (expected.size && Number(expected.size) !== size) return null;
+  if (!_isPeFile(destPath)) return null;
+  if (expected.sha256) {
+    let actual = '';
+    try { actual = await _sha256File(destPath); } catch (e) { return null; }
+    if (actual.toLowerCase() !== String(expected.sha256).toLowerCase()) return null;
+    return { sha256: actual, size, reused: true };
+  }
+  return { sha256: '', size, reused: true };
+}
+
+async function _downloadTo(url, destPath, onProgress, expectedSize) {
+  const res = await _httpsGet(url);
+  const total = parseInt(res.headers['content-length'] || '0', 10) || Number(expectedSize) || 0;
+  const hash = crypto.createHash('sha256');
+  // Download into a .part file: an interrupted download must never be mistaken
+  // for a valid installer by the next run.
+  const partPath = destPath + '.part';
+  try { fs.unlinkSync(partPath); } catch (e) {}
+  let received = 0, lastSent = 0;
+  try {
+    await new Promise((resolve, reject) => {
+      const out = fs.createWriteStream(partPath);
+      let settled = false;
+      const fail = (err) => {
+        if (settled) return;
+        settled = true;
+        try { out.destroy(); } catch (e) {}
+        reject(err);
+      };
+      res.on('data', (chunk) => {
+        if (settled) return;
+        hash.update(chunk);
+        received += chunk.length;
+        const now = Date.now();
+        if (onProgress && (now - lastSent > 250 || (total && received === total))) {
+          lastSent = now;
+          onProgress({ received, total, percent: total ? Math.min(100, Math.round((received / total) * 100)) : 0 });
+        }
+      });
+      res.on('error', fail);
+      out.on('error', fail);
+      out.on('finish', () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      });
+      res.pipe(out);
+    });
+    if (total && received !== total) {
+      throw new Error('download incomplete (' + received + '/' + total + ')');
+    }
+    const sha256 = hash.digest('hex');
+    try { fs.unlinkSync(destPath); } catch (e) {}
+    fs.renameSync(partPath, destPath);
+    return { sha256, size: received };
+  } catch (e) {
+    try { fs.unlinkSync(partPath); } catch (err) {}
+    throw e;
+  }
 }
 
 ipcMain.handle('update-system-info', () => {
@@ -813,32 +1247,146 @@ ipcMain.handle('update-download', async (event, payload) => {
   try {
     if (!payload || !payload.url) throw new Error('no url');
     const info = _updateChannel();
-    const fileName = payload.fileName || (payload.name || ('ZMT-PIECE-' + info.channelKey + '.exe'));
-    const dir = path.join(app.getPath('temp'), 'zmt-updates');
-    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
+    const rawName = String(payload.fileName || payload.name || ('ZMT.PIECE-Setup-' + info.channelKey + '.exe'));
+    const fileName = path.basename(rawName).replace(/[^\w.\- ]+/g, '_') ||
+      ('ZMT.PIECE-Setup-' + info.channelKey + '.exe');
+    const dir = _ensureUpdateDir();
     const destPath = path.join(dir, fileName);
+    _updateLog('download requested: ' + payload.url + ' -> ' + destPath);
+
+    const cached = await _reuseDownloadedInstaller(destPath, payload);
+    if (cached) {
+      _updateLog('reusing verified installer (' + cached.size + ' bytes)');
+      return { ok: true, filePath: destPath, sha256: cached.sha256, size: cached.size, reused: true };
+    }
+    try { fs.unlinkSync(destPath); } catch (e) {}
+
     const result = await _downloadTo(payload.url, destPath, (p) => {
       try { event.sender.send('update-progress', p); } catch (e) {}
-    });
+    }, payload.size);
+
     if (payload.sha256 && result.sha256.toLowerCase() !== String(payload.sha256).toLowerCase()) {
       try { fs.unlinkSync(destPath); } catch (e) {}
       throw new Error('sha256 mismatch');
     }
+    if (payload.size && Number(payload.size) !== result.size) {
+      try { fs.unlinkSync(destPath); } catch (e) {}
+      throw new Error('size mismatch (' + result.size + '/' + payload.size + ')');
+    }
+    if (!_isPeFile(destPath)) {
+      try { fs.unlinkSync(destPath); } catch (e) {}
+      throw new Error('downloaded file is not a Windows installer');
+    }
+    _updateLog('download ok: ' + result.size + ' bytes sha256=' + result.sha256);
     return { ok: true, filePath: destPath, sha256: result.sha256, size: result.size };
+  } catch (e) {
+    _updateLog('download failed: ' + ((e && e.message) || e));
+    return { ok: false, error: (e && e.message) || String(e) };
+  }
+});
+
+function _isInsideUpdateDir(filePath) {
+  try {
+    const dir = path.resolve(_ensureUpdateDir());
+    const p = path.resolve(String(filePath || ''));
+    return p === dir || p.startsWith(dir + path.sep);
+  } catch (e) { return false; }
+}
+
+// Launch the NSIS installer and wait for the OS to actually accept it. The old
+// code ignored both 'spawn' and 'error': when an antivirus quarantined the
+// unsigned .exe in %TEMP%, nothing started, the app still quit 1.5 s later and
+// the user only saw "فشل التحديث" with no reason.
+function _spawnInstaller(filePath) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(filePath, ['/S', '--updated'], {
+        cwd: path.dirname(filePath),
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+    } catch (e) {
+      return resolve({ ok: false, code: (e && e.code) || 'SPAWN', error: (e && e.message) || String(e) });
+    }
+    let settled = false;
+    let timer = null;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
+    child.once('spawn', () => {
+      try { child.unref(); } catch (e) {}
+      done({ ok: true, pid: child.pid || 0 });
+    });
+    child.once('error', (err) => {
+      done({ ok: false, code: (err && err.code) || 'SPAWN', error: (err && err.message) || String(err) });
+    });
+    // Safety net so the IPC call can never hang the panel forever.
+    timer = setTimeout(() => done({ ok: true, pid: (child && child.pid) || 0, assumed: true }), 5000);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+  });
+}
+
+ipcMain.handle('update-install', async (event, filePath) => {
+  try {
+    const p = String(filePath || '');
+    _updateLog('install requested: ' + p);
+    if (!p) throw new Error('installer not found');
+    if (!_isInsideUpdateDir(p)) throw new Error('installer path rejected');
+    const size = _safeSize(p);
+    if (!size) throw new Error('installer not found');
+    if (size < MIN_INSTALLER_BYTES) throw new Error('installer is incomplete (' + size + ' bytes)');
+    if (!_isPeFile(p)) throw new Error('file is not a Windows installer');
+    // An antivirus/restore operation sometimes clears the execute bit.
+    try { fs.chmodSync(p, 0o666); } catch (e) {}
+
+    let launch = await _spawnInstaller(p);
+    if (!launch.ok) {
+      _updateLog('first launch failed: ' + launch.code + ' ' + launch.error + ' — retrying from a clean copy');
+      // Blocking execution in place is the usual antivirus behaviour; a fresh
+      // copy with a new name in the app data folder normally goes through.
+      const retryPath = path.join(_ensureUpdateDir(), 'ZMT-PIECE-Setup-latest-' + Date.now() + '.exe');
+      try {
+        fs.copyFileSync(p, retryPath);
+        try { fs.chmodSync(retryPath, 0o666); } catch (e) {}
+        launch = await _spawnInstaller(retryPath);
+      } catch (e) {
+        _updateLog('copy for retry failed: ' + ((e && e.message) || e));
+      }
+    }
+    if (!launch.ok) {
+      _updateLog('install failed: ' + launch.code + ' ' + launch.error);
+      return { ok: false, error: launch.error || 'installer could not start', code: launch.code || '' };
+    }
+    _updateLog('installer started pid=' + launch.pid);
+    // Give the installer time to initialise before the single-instance mutex
+    // disappears, then quit so NSIS can replace the app files.
+    setTimeout(() => { try { app.quit(); } catch (e) {} }, 1500);
+    return { ok: true, pid: launch.pid || 0 };
+  } catch (e) {
+    _updateLog('install failed: ' + ((e && e.message) || e));
+    return { ok: false, error: (e && e.message) || String(e) };
+  }
+});
+
+ipcMain.handle('update-open-log', async () => {
+  try {
+    _updateLog('log opened by user');
+    const err = await shell.openPath(UPDATE_LOG_FILE());
+    return { ok: !err, error: err || '' };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
   }
 });
 
-ipcMain.handle('update-install', async (event, filePath) => {
+ipcMain.handle('update-open-folder', async () => {
   try {
-    if (!filePath || !fs.existsSync(filePath)) throw new Error('installer not found');
-    // Launch the NSIS installer silently (it waits for the current process to
-    // exit). Detach so this app can quit cleanly.
-    const child = spawn(filePath, ['/S'], { detached: true, stdio: 'ignore' });
-    child.unref();
-    setTimeout(() => { try { app.quit(); } catch (e) {} }, 1500);
-    return { ok: true };
+    const err = await shell.openPath(_ensureUpdateDir());
+    return { ok: !err, error: err || '' };
   } catch (e) {
     return { ok: false, error: (e && e.message) || String(e) };
   }
@@ -896,23 +1444,28 @@ ipcMain.handle('license-import', (event, payload) => {
 LAN.setWindowGetter(() => mainWindow);
 
 ipcMain.handle('lan-configure', async (event, config) => {
+  if (IS_COMPANY_PROCESS) return _portServiceUnavailable();
   return await LAN.configure(config || {});
 });
 
 ipcMain.handle('lan-send', (event, payload) => {
+  if (IS_COMPANY_PROCESS) return false;
   LAN.sendFromRenderer(payload);
   return true;
 });
 
 ipcMain.handle('lan-get-local-ip', () => {
+  if (IS_COMPANY_PROCESS) return [];
   return LAN.getLocalIps();
 });
 
 ipcMain.handle('lan-get-status', () => {
+  if (IS_COMPANY_PROCESS) return { role: '', running: false, connected: false, unavailable: true };
   return LAN.getStatus();
 });
 
 ipcMain.handle('lan-test-connection', (event, ip, port) => {
+  if (IS_COMPANY_PROCESS) return _portServiceUnavailable();
   return LAN.testConnection(ip, port);
 });
 
@@ -922,6 +1475,7 @@ ipcMain.handle('lan-test-connection', (event, ip, port) => {
 // prompt). If the user denies elevation we just report it and the UI shows a
 // manual hint instead.
 ipcMain.handle('lan-ensure-firewall', async () => {
+  if (IS_COMPANY_PROCESS) return _portServiceUnavailable();
   try {
     const exe = process.execPath;
     const ruleName = 'ZMT PIECE LAN';
@@ -952,19 +1506,38 @@ ipcMain.handle('lan-ensure-firewall', async () => {
 
 // ===== PHONE BARCODE SCANNER (PWA over the shop LAN) =====
 PhoneScanner.setWindowGetter(() => mainWindow);
-PhoneScanner.setUserDataDir(app.getPath('userData'));
-PhoneScanner.loadTokens();
-PhoneScanner.loadSaleEnabled();
+PhoneScanner.setUserDataDir(IS_COMPANY_PROCESS ? app.getPath('userData') : BASE_USER_DATA);
+if (!IS_COMPANY_PROCESS) {
+  PhoneScanner.loadTokens();
+  PhoneScanner.loadSaleEnabled();
+}
 
-ipcMain.handle('phs-get-status', () => PhoneScanner.getStatus());
+ipcMain.handle('phs-get-status', () => {
+  if (IS_COMPANY_PROCESS) return { status: 'unavailable', error: 'MAIN_INSTANCE_ONLY', port: 0, saleEnabled: false, clients: 0, connected: [], unavailable: true };
+  return PhoneScanner.getStatus();
+});
 ipcMain.handle('phs-start', async () => {
+  if (IS_COMPANY_PROCESS) return _portServiceUnavailable();
   return await PhoneScanner.start();
 });
-ipcMain.handle('phs-stop', () => PhoneScanner.stop());
-ipcMain.handle('phs-decide', (event, requestId, decision) => PhoneScanner.decide(requestId, decision));
-ipcMain.handle('phs-list-approved', () => PhoneScanner.listApproved());
-ipcMain.handle('phs-remove-device', (event, deviceId) => PhoneScanner.removeApproved(deviceId));
+ipcMain.handle('phs-stop', () => {
+  if (IS_COMPANY_PROCESS) return { success: true, skipped: true };
+  return PhoneScanner.stop();
+});
+ipcMain.handle('phs-decide', (event, requestId, decision) => {
+  if (IS_COMPANY_PROCESS) return _portServiceUnavailable();
+  return PhoneScanner.decide(requestId, decision);
+});
+ipcMain.handle('phs-list-approved', () => {
+  if (IS_COMPANY_PROCESS) return [];
+  return PhoneScanner.listApproved();
+});
+ipcMain.handle('phs-remove-device', (event, deviceId) => {
+  if (IS_COMPANY_PROCESS) return _portServiceUnavailable();
+  return PhoneScanner.removeApproved(deviceId);
+});
 ipcMain.handle('phs-ensure-firewall', async () => {
+  if (IS_COMPANY_PROCESS) return _portServiceUnavailable();
   try {
     const exe = process.execPath;
     // reuse the existing LAN rule (its port range already covers 4520); only
@@ -1003,12 +1576,14 @@ ipcMain.handle('phs-ensure-firewall', async () => {
 // the renderer executes them (it owns the DB) and answers via 'psale-respond'.
 
 ipcMain.on('psale-respond', (event, requestId, result) => {
+  if (IS_COMPANY_PROCESS) return;
   try { PhoneScanner.respondToPending(requestId, result); } catch (e) { console.warn('[PhonePOS] respond error', e.message); }
 });
 
-ipcMain.handle('psale-get-enabled', () => ({ enabled: PhoneScanner.getSaleEnabled() }));
+ipcMain.handle('psale-get-enabled', () => ({ enabled: !IS_COMPANY_PROCESS && PhoneScanner.getSaleEnabled() }));
 
 ipcMain.handle('psale-set-enabled', (event, enabled) => {
+  if (IS_COMPANY_PROCESS) return { enabled: false, unavailable: true };
   const st = PhoneScanner.setSaleEnabled(!!enabled);
   try {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('psale-enabled', { enabled: st });
@@ -1016,9 +1591,15 @@ ipcMain.handle('psale-set-enabled', (event, enabled) => {
   return { enabled: st };
 });
 
-ipcMain.handle('psale-set-device-sell', (event, deviceId, sell) => PhoneScanner.setDeviceSell(String(deviceId || ''), !!sell));
+ipcMain.handle('psale-set-device-sell', (event, deviceId, sell) => {
+  if (IS_COMPANY_PROCESS) return { success: false, unavailable: true };
+  return PhoneScanner.setDeviceSell(String(deviceId || ''), !!sell);
+});
 
-ipcMain.handle('psale-get-device-sell', (event, deviceId) => PhoneScanner.getDeviceSell(String(deviceId || '')));
+ipcMain.handle('psale-get-device-sell', (event, deviceId) => {
+  if (IS_COMPANY_PROCESS) return false;
+  return PhoneScanner.getDeviceSell(String(deviceId || ''));
+});
 
 // ===== RESTAURANT ORDERS («المطعم») — hidden-window printing =====
 // The restaurant flow prints two different kinds of pages:
@@ -1239,30 +1820,65 @@ app.on('before-quit', (event) => {
 // All operations resolve to { success, data?, error?, needsPermission?, hint? }
 // so the renderer can map each failure to a clear, translated user message
 // (elevation refusal, unreachable host, PrintNightmare, missing driver, …).
-function printerHandle(channel, fn) {
+//
+// The read-only queries each spawn PowerShell (Get-Printer, Get-PrinterDriver,
+// CIM, $env:COMPUTERNAME). Opening Settings used to fire all four at once, so
+// cache them briefly and share an in-flight query. Every mutating printer call
+// clears this cache in `finally`, so the UI never shows stale data after a
+// share/default/install/connect change. Failures are never cached.
+const PRINTER_READ_CACHE_TTL = 30000;
+const _printerReadCache = new Map(); // key -> { at, promise }
+
+function _cachedPrinterRead(key, load) {
+  const now = Date.now();
+  const hit = _printerReadCache.get(key);
+  if (hit && (now - hit.at) < PRINTER_READ_CACHE_TTL && hit.promise) return hit.promise;
+  const entry = { at: now, promise: null };
+  entry.promise = Promise.resolve()
+    .then(load)
+    .then(res => {
+      entry.at = Date.now();
+      if (!res || res.success === false) _printerReadCache.delete(key);
+      return res;
+    })
+    .catch(err => {
+      _printerReadCache.delete(key);
+      throw err;
+    });
+  _printerReadCache.set(key, entry);
+  return entry.promise;
+}
+
+function _invalidatePrinterCache() { _printerReadCache.clear(); }
+
+// `invalidate` is set on every mutating channel below; `finally` also covers a
+// partially applied change that threw before returning its JSON result.
+function printerHandle(channel, fn, invalidate) {
   ipcMain.handle(channel, async (event, ...args) => {
     try {
       return await fn(...args);
     } catch (e) {
       console.warn('[Printer]', channel, e.message);
       return { success: false, error: e.message || 'UNKNOWN' };
+    } finally {
+      if (invalidate) _invalidatePrinterCache();
     }
   });
 }
 
-printerHandle('printer-list-local', () => PrinterNet.listLocalPrinters());
-printerHandle('printer-list-drivers', () => PrinterNet.listLocalDrivers());
-printerHandle('printer-get-default', () => PrinterNet.getDefaultPrinter());
-printerHandle('printer-computer-name', () => PrinterNet.getComputerName());
-printerHandle('printer-restart-spooler', () => PrinterNet.restartSpooler());
-printerHandle('printer-share', (printerName, shareName) => PrinterNet.sharePrinter(printerName, shareName));
-printerHandle('printer-unshare', (printerName) => PrinterNet.unsharePrinter(printerName));
+printerHandle('printer-list-local', () => _cachedPrinterRead('list-local', () => PrinterNet.listLocalPrinters()));
+printerHandle('printer-list-drivers', () => _cachedPrinterRead('list-drivers', () => PrinterNet.listLocalDrivers()));
+printerHandle('printer-get-default', () => _cachedPrinterRead('get-default', () => PrinterNet.getDefaultPrinter()));
+printerHandle('printer-computer-name', () => _cachedPrinterRead('computer-name', () => PrinterNet.getComputerName()));
+printerHandle('printer-restart-spooler', () => PrinterNet.restartSpooler(), true);
+printerHandle('printer-share', (printerName, shareName) => PrinterNet.sharePrinter(printerName, shareName), true);
+printerHandle('printer-unshare', (printerName) => PrinterNet.unsharePrinter(printerName), true);
 printerHandle('printer-browse', (host) => PrinterNet.browseServerPrinters(host));
-printerHandle('printer-install-driver', (infPath) => PrinterNet.installDriver(infPath));
-printerHandle('printer-install-driver-share', (uncFolder) => PrinterNet.installDriverFromShare(uncFolder));
-printerHandle('printer-connect', (unc) => PrinterNet.connectNetworkPrinter(unc));
-printerHandle('printer-set-default', (name) => PrinterNet.setDefaultPrinter(name));
-printerHandle('printer-fix', (trustedHost) => PrinterNet.fixPrintNightmare(trustedHost));
+printerHandle('printer-install-driver', (infPath) => PrinterNet.installDriver(infPath), true);
+printerHandle('printer-install-driver-share', (uncFolder) => PrinterNet.installDriverFromShare(uncFolder), true);
+printerHandle('printer-connect', (unc) => PrinterNet.connectNetworkPrinter(unc), true);
+printerHandle('printer-set-default', (name) => PrinterNet.setDefaultPrinter(name), true);
+printerHandle('printer-fix', (trustedHost) => PrinterNet.fixPrintNightmare(trustedHost), true);
 
 // ===== CASH DRAWER («درج النقود») =====
 // Settings live per device in userData/cash-drawer.json (never in the DB, stock
@@ -1320,5 +1936,50 @@ cashDrawerHandle('cash-drawer-open', async (opts) => {
     });
   }
   return res;
+});
+
+// ===== SCALE LINK («مزامنة الميزان») =====
+// The shop's article list is pushed into the weighing scale so the machine can
+// print the labels the register already reads (scale-core.js). Settings live per
+// device in userData/scale-sync.json — never in the DB or the LAN sync, exactly
+// like the cash drawer, because they describe THIS counter's cable/IP.
+const scaleSyncFile = () => path.join(app.getPath('userData'), 'scale-sync.json');
+
+function readScaleSyncConfig() {
+  try {
+    const raw = fs.readFileSync(scaleSyncFile(), 'utf8');
+    return JSON.parse(raw) || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function writeScaleSyncConfig(patch) {
+  try {
+    const merged = Object.assign(readScaleSyncConfig(), patch || {});
+    fs.writeFileSync(scaleSyncFile(), JSON.stringify(merged, null, 2), 'utf8');
+    return { success: true, data: merged };
+  } catch (e) {
+    return { success: false, error: e.message || 'WRITE_FAILED' };
+  }
+}
+
+function scaleSyncHandle(channel, fn) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    try {
+      return await fn(...args);
+    } catch (e) {
+      console.warn('[ScaleSync]', channel, e.message);
+      return { success: false, error: e.message || 'UNKNOWN' };
+    }
+  });
+}
+
+scaleSyncHandle('scale-sync-get', () => ({ success: true, data: readScaleSyncConfig() }));
+scaleSyncHandle('scale-sync-save', (patch) => writeScaleSyncConfig(patch));
+scaleSyncHandle('scale-sync-scan', () => ScaleNet.scanPorts());
+scaleSyncHandle('scale-sync-send', (payload) => {
+  const p = payload || {};
+  return ScaleNet.sendText(p.cfg || {}, p.text || '', p.encoding || 'utf8');
 });
 

@@ -37,10 +37,10 @@
 
     <!-- Balance tools toolbar -->
     <div class="debts-toolbar">
-      <button class="btn btn-sm" id="debtsRecalcBtn" onclick="confirmRecalcAllBalances()" title="إعادة حساب أرصدة العملاء والموردين من الفواتير الحالية">
+      <button class="btn btn-sm" id="debtsRecalcBtn" onclick="confirmRecalcAllBalances()" title="إعادة حساب أرصدة العملاء والموردين من الفواتير الحالية" data-i18n-title="debts.recalcFromInvoices">
         <i class="fas fa-sync-alt"></i> <span data-i18n="balanceTools.recalcBtn">إعادة حساب الأرصدة</span>
       </button>
-      <button class="btn btn-sm" id="debtsSyncBtn" onclick="window.startBalanceSyncFromGestion ? window.startBalanceSyncFromGestion() : null" title="مزامنة الأرصدة من قاعدة Gestion Stock القديمة">
+      <button class="btn btn-sm" id="debtsSyncBtn" onclick="window.startBalanceSyncFromGestion ? window.startBalanceSyncFromGestion() : null" title="مزامنة الأرصدة من قاعدة Gestion Stock القديمة" data-i18n-title="debts.recalcFromOldDb">
         <i class="fas fa-exchange-alt"></i> <span data-i18n="balanceTools.syncBtn">مزامنة الأرصدة من STOCK.FDB</span>
       </button>
     </div>
@@ -160,6 +160,10 @@
           <option value="cash" data-i18n="sales.payCash">نقداً</option>
           <option value="ccp" data-i18n="sales.payCcp">CCP</option>
         </select>
+      </div>
+      <div class="setting-row" id="debtPaySubRow" style="display:none">
+        <label style="font-size:13px;font-weight:600" data-i18n="customerTree.sub">زبون تابع</label>
+        <select class="form-input" id="debtPaySubCustomer" style="width:150px"></select>
       </div>
     </div>
     <div class="modal-footer">

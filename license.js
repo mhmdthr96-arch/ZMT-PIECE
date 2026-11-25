@@ -406,6 +406,38 @@ function _regDel() {
     return;
   }
   try { execFileSync('reg.exe', ['delete', REG_ROOT, '/v', REG_NAME, '/f'], { windowsHide: true, timeout: 8000 }); } catch (e) {}
+  try { execFileSync('reg.exe', ['delete', REG_ROOT, '/f'], { windowsHide: true, timeout: 8000 }); } catch (e) {}
+}
+
+function hardResetDevice() {
+  try {
+    const filesToRemove = [
+      LICENSE_FILE,
+      TIME_FILE,
+      DEVICE_FILE,
+      SMB_CACHE_FILE,
+      MACHINE_CACHE_FILE,
+      NET_LOG_FILE,
+      'zmt_site_url.txt'
+    ];
+    if (_userDataPath) {
+      for (const f of filesToRemove) {
+        const p = path.join(_userDataPath, f);
+        try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (e) {}
+      }
+      try {
+        const oldLog = path.join(_userDataPath, NET_LOG_FILE + '.old');
+        if (fs.existsSync(oldLog)) fs.unlinkSync(oldLog);
+      } catch (e) {}
+    }
+    try { _regDel(); } catch (e) {}
+    _memoryDeviceId = null;
+    _smbiosCache = null;
+    _machineFpCache = null;
+    return { success: true };
+  } catch (e) {
+    return { success: false, message: e && e.message ? e.message : String(e) };
+  }
 }
 
 function _mirrorKey() {
@@ -1398,6 +1430,7 @@ module.exports = {
   saveTimeSnapshot,
   getRemainingTime,
   deactivateLicense,
+  hardResetDevice,
   importPhoneLicense,
   syncSystemClock,
   // exposed for renderer/tests/*.js only (no production use)

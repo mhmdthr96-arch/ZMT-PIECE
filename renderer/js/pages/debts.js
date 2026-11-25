@@ -309,6 +309,15 @@ function openDebtPay(type, invId) {
   document.getElementById('debtPayPaid').textContent = 'DA' + fmtMoney(paid);
   document.getElementById('debtPayRemaining').textContent = 'DA' + fmtMoney(remaining);
   document.getElementById('debtPayAmount').value = remaining.toFixed(2);
+  const ctRow = document.getElementById('debtPaySubRow');
+  const ctSel = document.getElementById('debtPaySubCustomer');
+  if (ctSel && window.CustomerTree && inv.customerId && typeof window.CustomerTree.fillSelect === 'function') {
+    const useful = window.CustomerTree.fillSelect(ctSel, inv.customerId, t('customerTree.none'));
+    if (useful && typeof window.CustomerTree.selectInvoiceChild === 'function') {
+      window.CustomerTree.selectInvoiceChild(ctSel, inv, inv.customerId);
+    }
+    if (ctRow) ctRow.style.display = useful ? '' : 'none';
+  } else if (ctRow) ctRow.style.display = 'none';
   document.getElementById('debtPayModal').style.display = 'flex';
 }
 
@@ -328,8 +337,13 @@ function confirmDebtPayment() {
   const amount = parseFloat(document.getElementById('debtPayAmount').value) || 0;
   if (amount <= 0 || amount > remaining) { alert(t('invoices.invalidAmount')); return; }
 
+  // Customer tree: tag only; the single deduction below stays on the parent.
+  const ctMeta = (inv.customerId && window.CustomerTree)
+    ? window.CustomerTree.metaFromSelect(document.getElementById('debtPaySubCustomer'), DB.getCustomer(inv.customerId))
+    : {};
   DB.addPayment({
     customerId: inv.customerId || undefined,
+    ...ctMeta,
     supplierId: inv.supplierId || undefined,
     invoiceId: _debtPayInvId,
     amount,

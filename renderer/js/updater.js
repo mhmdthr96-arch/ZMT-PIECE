@@ -13,9 +13,11 @@
  *
  * UX:
  *   - a title-bar button with a red-dot badge while an update is available,
- *   - a transient toast (3 s + system beep) that reappears every 120 s while the
- *     update is pending and not muted,
+ *   - a persistent toast that stays on screen until the user chooses
+ *     "تحديث الآن" or "لاحقاً" (no auto-hide, no repeated beeping),
  *   - a persistent panel (click the button/toast) to download & install,
+ *   - "لاحقاً" only hides the toast for the current session; the red badge
+ *     stays, and the toast returns on the next launch,
  *   - "عدم الإظهار مجددًا" mutes the popup AND the badge for THAT version only;
  *     it returns automatically when a newer version is published.
  * ========================================================================== */
@@ -25,9 +27,8 @@
   var REPO = 'mhmdthr96-arch/ZMT-PIECE';
   var MANIFEST_URL = 'https://github.com/' + REPO + '/releases/latest/download/update.json';
   var MUTE_KEY = 'zmt_update_muted_version';
-  var CHECK_INTERVAL_MS = 120000; // re-check/re-toast every 2 minutes
+  var CHECK_INTERVAL_MS = 120000; // re-check for an even newer version
   var FIRST_CHECK_DELAY_MS = 8000; // let the app settle before the first check
-  var TOAST_MS = 3000; // toast auto-hide
 
   var api = (typeof window !== 'undefined') ? window.electronAPI : null;
 
@@ -40,7 +41,7 @@
     info: null,       // system info from main
     manifest: null,   // last check result
     updating: false,
-    toastTimer: null,
+    toastDismissedFor: '', // version dismissed with "لاحقاً" in this session
     checkTimer: null,
   };
 
@@ -57,6 +58,8 @@
       '.zmt-upd-toast .t-title{font-weight:700;font-size:14px;display:flex;align-items:center;gap:8px}' +
       '.zmt-upd-toast .t-title i{color:#ff5252}' +
       '.zmt-upd-toast .t-sub{font-size:12px;opacity:.8;margin-top:4px}' +
+      '.zmt-upd-toast-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}' +
+      '.zmt-upd-toast-actions .zmt-upd-btn{font-size:12px;padding:7px 12px}' +
       '.zmt-upd-panel{pointer-events:auto;background:#1f2530;color:#fff;border:1px solid #38404f;border-radius:12px;padding:18px;width:440px;max-width:92vw;box-shadow:0 16px 44px rgba(0,0,0,.5);font-family:inherit}' +
       '.zmt-upd-panel h3{margin:0 0 10px;font-size:16px;display:flex;align-items:center;gap:8px}' +
       '.zmt-upd-panel h3 i{color:#4fc3f7}' +
@@ -94,32 +97,49 @@
     if (!t) return;
     t.classList.remove('show');
     setTimeout(function () { if (t && t.parentNode && !t.classList.contains('show')) t.parentNode.removeChild(t); }, 300);
-    if (State.toastTimer) { clearTimeout(State.toastTimer); State.toastTimer = null; }
   }
 
   function showToast(m) {
     if (!m || !m.hasUpdate) return;
-    // 3-second transient notice with a system beep; hovering pauses the hide.
-    hideToast();
     var ov = ensureOverlay();
     var t = document.createElement('div');
     t.id = 'zmtUpdToast';
     t.className = 'zmt-upd-toast';
+    t.setAttribute('role', 'status');
     t.innerHTML =
       '<div class="t-title"><i class="fas fa-arrow-circle-up"></i> يتوفر تحديث جديد (' + _esc(m.latest) + ')</div>' +
-      '<div class="t-sub">اضغط لعرض التفاصيل وتثبيت التحديث</div>';
+      '<div class="t-sub">ثبّت الإصدار الجديد الآن، أو اختر «لاحقاً» وستجد النقطة الحمراء على زر التحديث.</div>' +
+      '<div class="zmt-upd-toast-actions">' +
+        '<button type="button" class="zmt-upd-btn primary" id="zmtUpdToastNow"><i class="fas fa-download"></i> تحديث الآن</button>' +
+        '<button type="button" class="zmt-upd-btn ghost" id="zmtUpdToastLater">لاحقاً</button>' +
+      '</div>';
+    // The toast itself opens the details panel; the two buttons act directly.
     t.addEventListener('click', function () { hideToast(); openPanel(); });
-    t.addEventListener('mouseenter', function () { if (State.toastTimer) { clearTimeout(State.toastTimer); State.toastTimer = null; } });
-    t.addEventListener('mouseleave', function () { _scheduleToastHide(); });
     ov.appendChild(t);
     requestAnimationFrame(function () { t.classList.add('show'); });
-    try { if (api && api.updaterBeep) api.updaterBeep(); } catch (e) {}
-    _scheduleToastHide();
-  }
 
-  function _scheduleToastHide() {
-    if (State.toastTimer) clearTimeout(State.toastTimer);
-    State.toastTimer = setTimeout(function () { State.toastTimer = null; hideToast(); }, TOAST_MS);
+    var nowBtn = _el('zmtUpdToastNow');
+    if (nowBtn) nowBtn.addEventListener('click', function (e) {
+      if (e) e.stopPropagation();
+      hideToast();
+      openPanel();
+      // One click on "تحديث الآن" starts the download/install flow; the panel
+      // shows the progress bar and any error.
+      setTimeout(function () {
+        var go = _el('zmtUpdGo');
+        if (go) go.click();
+      }, 60);
+    });
+    var laterBtn = _el('zmtUpdToastLater');
+    if (laterBtn) laterBtn.addEventListener('click', function (e) {
+      if (e) e.stopPropagation();
+      // Session-only dismissal: the badge stays and the toast returns when the
+      // app is reopened (or when a newer version than this one is published).
+      State.toastDismissedFor = m.latest || '';
+      hideToast();
+    });
+
+    try { if (api && api.updaterBeep) api.updaterBeep(); } catch (e) {}
   }
 
   function closePanel() {
@@ -128,6 +148,7 @@
   }
 
   function openPanel() {
+    hideToast();
     closePanel();
     var m = State.manifest;
     var ov = ensureOverlay();
@@ -175,6 +196,52 @@
     if (go) go.addEventListener('click', _startUpdate);
   }
 
+  function _releaseUrl() { return 'https://github.com/' + REPO + '/releases/latest'; }
+
+  // Turns a raw updater error into a sentence the user can act on, plus the
+  // two recovery paths (manual download / diagnostic log).
+  function _describeUpdateError(raw) {
+    var msg = String(raw == null ? '' : raw);
+    if (/sha256|size mismatch|incomplete|damaged/i.test(msg)) {
+      return 'الملف الذي تم تنزيله تالف أو ناقص. تحقّق من الاتصال ثم أعد المحاولة.';
+    }
+    if (/not a Windows installer|installer is incomplete/i.test(msg)) {
+      return 'الملف الذي تم تنزيله ليس مثبّتاً صالحاً (غالباً صفحة خطأ من الشبكة). أعد المحاولة أو نزّله يدوياً.';
+    }
+    if (/EACCES|EPERM|access is denied|operation not permitted/i.test(msg)) {
+      return 'منع نظام الحماية (مضاد الفيروسات) تشغيل المثبّت. اسمح للبرنامج في مضاد الفيروسات ثم أعد المحاولة، أو نزّل التحديث يدوياً.';
+    }
+    if (/ENOENT|spawn|installer could not start/i.test(msg)) {
+      return 'تعذّر تشغيل المثبّت. نزّل التحديث يدوياً من صفحة الإصدارات.';
+    }
+    if (/HTTP \d+|too many redirects|https required|timeout|ENOTFOUND|ECONN/i.test(msg)) {
+      return 'تعذّر تنزيل التحديث بسبب مشكلة في الشبكة. تحقّق من الاتصال ثم أعد المحاولة.';
+    }
+    return msg || 'خطأ غير معروف';
+  }
+
+  function _showUpdateRecovery(errEl, raw) {
+    if (!errEl) return;
+    errEl.innerHTML = 'فشل التحديث: ' + _esc(_describeUpdateError(raw)) +
+      '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+      '<button type="button" class="zmt-upd-btn ghost" id="zmtUpdManual"><i class="fas fa-download"></i> تحميل يدوي</button>' +
+      '<button type="button" class="zmt-upd-btn ghost" id="zmtUpdOpenFolder">مجلد التنزيل</button>' +
+      '<button type="button" class="zmt-upd-btn mute" id="zmtUpdOpenLog">عرض السجل</button>' +
+      '</div>';
+    var manual = _el('zmtUpdManual');
+    if (manual) manual.addEventListener('click', function () {
+      try { if (api && api.openExternal) api.openExternal(_releaseUrl()); } catch (e) {}
+    });
+    var folder = _el('zmtUpdOpenFolder');
+    if (folder && api && api.updaterOpenFolder) folder.addEventListener('click', function () {
+      try { api.updaterOpenFolder(); } catch (e) {}
+    });
+    var log = _el('zmtUpdOpenLog');
+    if (log && api && api.updaterOpenLog) log.addEventListener('click', function () {
+      try { api.updaterOpenLog(); } catch (e) {}
+    });
+  }
+
   async function _startUpdate() {
     if (!api) return;
     if (State.updating) return;
@@ -191,16 +258,21 @@
     try {
       var assetName = m.asset.asset || m.asset.name || ('ZMT-PIECE-' + (State.info ? State.info.channelKey : 'x64') + '.exe');
       var url = 'https://github.com/' + REPO + '/releases/latest/download/' + encodeURIComponent(assetName);
-      var dl = await api.updaterDownload({ url: url, sha256: m.asset.sha256 || '', fileName: assetName });
+      var dl = await api.updaterDownload({
+        url: url,
+        sha256: m.asset.sha256 || '',
+        size: m.asset.size || 0,
+        fileName: assetName,
+      });
       if (!dl || !dl.ok) throw new Error((dl && dl.error) || 'download failed');
       if (go) go.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جارٍ التثبيت';
       var inst = await api.updaterInstall(dl.filePath);
       if (!inst || !inst.ok) throw new Error((inst && inst.error) || 'install failed');
-      // app.quit() is triggered by the main process; nothing else to do.
+      // app.quit() is triggered by the main process once the installer starts.
     } catch (e) {
       State.updating = false;
       if (go) { go.disabled = false; go.innerHTML = '<i class="fas fa-download"></i> إعادة المحاولة'; }
-      if (errEl) errEl.textContent = 'فشل التحديث: ' + ((e && e.message) || e);
+      _showUpdateRecovery(errEl, (e && e.message) || e);
       if (prog) prog.classList.remove('show');
     }
   }
@@ -232,7 +304,23 @@
       }
       var active = !!(res && res.ok && res.hasUpdate && res.latest !== muted);
       _updateBadge(active);
-      if (active && showToastIfAny) showToast(res);
+      if (!active) {
+        // Already up to date (or muted for this exact version): nothing to show.
+        State.toastDismissedFor = '';
+        hideToast();
+        return;
+      }
+      // A newer version than the one dismissed with "لاحقاً" must speak again.
+      if (State.toastDismissedFor && res.latest !== State.toastDismissedFor) {
+        State.toastDismissedFor = '';
+      }
+      // Persistent notice: show it once and let it stay until the user chooses
+      // "تحديث الآن" or "لاحقاً". Never recreate it on the 2-minute poll, and
+      // never cover an already-open details panel.
+      if (showToastIfAny && !_el('zmtUpdToast') && !_el('zmtUpdPanel') &&
+          res.latest !== State.toastDismissedFor) {
+        showToast(res);
+      }
     } catch (e) {
       // Silent: updates must never disrupt normal use.
     }

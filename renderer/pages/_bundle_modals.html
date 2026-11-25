@@ -1,0 +1,33 @@
+<!-- Bundle modal -->
+<div id="bundleModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center">
+  <div class="card" style="width:720px;max-width:95vw;max-height:90vh;overflow:auto;padding:18px">
+    <h3 style="margin:0 0 12px"><i class="fas fa-gift"></i> <span id="bundleModalTitle" data-i18n="bundle.addBundle">إضافة باقة عرض</span></h3>
+    <input type="hidden" id="bundleEditId">
+    <div class="form-group"><label data-i18n="bundle.nameRequired">اسم الباقة (إجباري)</label><input class="form-input" id="bundleName" placeholder="باقة 1" data-i18n-placeholder="bundle.bundle1"></div>
+    <div class="form-group"><label data-i18n="inventory.col1">الباركود</label><div style="display:flex;gap:6px"><input class="form-input" id="bundleBarcode" dir="ltr"><button type="button" class="btn btn-sm" onclick="generateBundleBarcode()" data-i18n="common.generate">توليد</button></div></div>
+    <div class="form-group">
+      <label data-i18n="catProducts.searchProduct">بحث عن منتج</label>
+      <input class="form-input" id="bundleSearch" placeholder="ابحث عن منتج..." oninput="bundleSearchProducts(this.value)" data-i18n-placeholder="bundle.searchProduct">
+      <div id="bundleSearchResults" style="max-height:200px;overflow:auto;border:1px solid var(--silver-300);border-radius:8px;margin-top:4px"></div>
+    </div>
+    <div class="form-group">
+      <label data-i18n="bundle.components">المكونات</label>
+      <div id="bundleComponents" style="border:1px solid var(--silver-300);border-radius:8px;padding:8px;min-height:60px"></div>
+    </div>
+    <div class="form-group"><label data-i18n="bundle.salePrice">سعر البيع (قابل للتعديل)</label><input class="form-input" id="bundlePrice" type="number" step="any" min="0"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button type="button" class="btn" onclick="closeBundleModal()" data-i18n="pd.cancel">إلغاء</button>
+      <button type="button" class="btn btn-primary" onclick="confirmBundle()" data-i18n="common.save">حفظ</button>
+    </div>
+  </div>
+</div>
+<!-- Bundles list modal -->
+<div id="bundlesListModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center">
+  <div class="card" style="width:760px;max-width:95vw;max-height:90vh;overflow:auto;padding:18px">
+    <h3 style="margin:0 0 12px"><i class="fas fa-gift"></i><span data-i18n="bundle.bundles"> الباقات</span><span data-i18n="bundle.bundles"> الباقات</span><span data-i18n="bundle.bundles"> الباقات</span><span data-i18n="bundle.bundles"> الباقات</span><span data-i18n="bundle.bundles"> الباقات</span><span data-i18n="bundle.bundles"> الباقات</span></h3>
+    <div id="bundlesListBody" style="min-height:60px"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button type="button" class="btn" onclick="closeBundlesList()" data-i18n="rest.close">إغلاق</button>
+    </div>
+  </div>
+</div>

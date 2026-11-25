@@ -2,6 +2,21 @@ function init_returns() {
   renderReturns();
 }
 
+// The original invoice number is what the operator recognises; the raw id is
+// only a fallback for legacy rows whose invoice has since been deleted.
+function _returnInvoiceNumber(invoiceId) {
+  if (!invoiceId) return '-';
+  const inv = DB.getInvoice(invoiceId);
+  return (inv && inv.invoiceNumber) ? inv.invoiceNumber : String(invoiceId).substring(0, 8).toUpperCase();
+}
+
+function printReturnInvoice(invoiceId) {
+  if (!invoiceId) return;
+  const RI = (typeof window.ReturnInvoice !== 'undefined') ? window.ReturnInvoice : null;
+  if (!RI || typeof RI.print !== 'function') return;
+  RI.print(invoiceId);
+}
+
 function renderReturns() {
   const container = document.getElementById('returnsGrid');
   if (!container) return;
@@ -16,6 +31,7 @@ function renderReturns() {
     const d = new Date(r.createdAt);
     const dateStr = d.toLocaleDateString('ar-EG-u-nu-latn');
     const timeStr = d.toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' });
+    const invNo = _returnInvoiceNumber(r.invoiceId);
     return `<div class="prod-card">
       <div class="prod-card-head">
         <div>
@@ -25,12 +41,13 @@ function renderReturns() {
         <span class="prod-card-badge">${Unit.qtyUnit(r.qty, r)}</span>
       </div>
       <div class="prod-card-fields">
-        <div class="prod-field"><span class="prod-field-label">${t('returns.col2')}</span><span class="prod-field-value mono">${escHtml(r.invoiceId ? r.invoiceId.substring(0, 8) : '-')}</span></div>
+        <div class="prod-field"><span class="prod-field-label">${t('returns.col2')}</span><span class="prod-field-value mono">${escHtml(invNo)}</span></div>
         <div class="prod-field"><span class="prod-field-label">${t('returns.col5')}</span><span class="prod-field-value">${escHtml(r.reason || t('returns.defaultReason'))}</span></div>
         <div class="prod-field full"><span class="prod-field-label">${t('returns.col6')}</span><span class="prod-field-value">${dateStr} ${timeStr}</span></div>
       </div>
       <div class="prod-card-actions">
-        <button class="btn btn-sm btn-danger" onclick="deleteReturn('${r.id}')"><i class="fas fa-trash"></i></button>
+        ${r.invoiceId ? `<button class="btn btn-sm" style="flex:1 1 100%" title="${escHtml(t('returns.printReturnInvoice'))}" onclick="printReturnInvoice('${r.invoiceId}')"><i class="fas fa-undo"></i> ${escHtml(t('returns.printReturnInvoice'))}</button>` : ''}
+        <button class="btn btn-sm btn-danger" title="${escHtml(t('common.delete') || '')}" onclick="deleteReturn('${r.id}')"><i class="fas fa-trash"></i></button>
       </div>
     </div>`;
   }).join('');

@@ -1,13 +1,15 @@
 /* ============================================================
    ZMT PIECE — إعدادات العرض (Display Settings)
    ------------------------------------------------------------
-   A single top-bar button opens a panel that controls six purely
-   visual values. They are stored per device in localStorage and
+   A single top-bar button opens a panel that controls eight purely
+   visual values plus two invoice-column switches (Référence / Marque). They are stored per device in localStorage and
    applied as CSS variables on <html>, so every open page reflows
    instantly — no reload, no rebuild:
 
      --sales-card-min   حجم بطاقات البيع            (140 – 420 px)
      --inv-card-min     حجم بطاقات المخزون          (150 – 450 px)
+     --sales-card-h     ارتفاع بطاقات البيع         (0 = تلقائي – 520 px)
+     --inv-card-h       ارتفاع بطاقات المخزون       (0 = تلقائي – 520 px)
      --sidebar-width    عرض القائمة الجانبية        (120 – 400 px)
      --sales-name-size  خط أسماء منتجات البيع       (10 – 32  px)
      --prod-name-size   خط أسماء منتجات المخزون     (10 – 40  px)
@@ -31,6 +33,10 @@
   var DS_ITEMS = [
     { key: 'salesCard', css: '--sales-card-min',  min: 140, max: 420, def: 240, icon: 'fas fa-cart-plus',   label: 'display.salesCards', flabel: 'حجم بطاقات البيع' },
     { key: 'invCard',   css: '--inv-card-min',    min: 150, max: 450, def: 260, icon: 'fas fa-warehouse',   label: 'display.invCards',   flabel: 'حجم بطاقات المخزون' },
+    // 0 means "auto": factory look is unchanged; internal scrolling in the grid
+    // keeps every field/button reachable at any smaller fixed height.
+    { key: 'salesHeight', css: '--sales-card-h', min: 0, max: 520, def: 0, zeroAuto: true, icon: 'fas fa-arrows-alt-v', label: 'display.salesHeight', flabel: 'ارتفاع بطاقات البيع' },
+    { key: 'invHeight', css: '--inv-card-h', min: 0, max: 520, def: 0, zeroAuto: true, icon: 'fas fa-ruler-vertical', label: 'display.invHeight', flabel: 'ارتفاع بطاقات المخزون' },
     { key: 'sidebar',   css: '--sidebar-width',   min: 120, max: 400, def: 240, icon: 'fas fa-columns',     label: 'display.sidebar',    flabel: 'عرض القائمة الجانبية' },
     { key: 'salesName', css: '--sales-name-size', min: 10,  max: 32,  def: 13,  icon: 'fas fa-text-height', label: 'display.salesName',  flabel: 'خط أسماء منتجات البيع' },
     { key: 'invName',   css: '--prod-name-size',  min: 10,  max: 40,  def: 16,  icon: 'fas fa-font',        label: 'display.invName',    flabel: 'خط أسماء منتجات المخزون' },
@@ -39,6 +45,16 @@
 
   var DS_BY_KEY = {};
   DS_ITEMS.forEach(function (it) { DS_BY_KEY[it.key] = it; });
+
+  /* Two independent invoice-column switches. They deliberately use `name`
+     (not `key`) so they never enter the slider pipeline: dsApply() writes CSS
+     pixels only for DS_ITEMS. Both default to hidden exactly like the existing
+     invoice-format choice — nothing changes on a fresh install. */
+  var DS_SWITCHES = [
+    { name: 'invShowReference', label: 'display.invShowReference', flabel: 'Référence', icon: 'fas fa-barcode' },
+    { name: 'invShowMark',      label: 'display.invShowMark',      flabel: 'Marque',      icon: 'fas fa-tag' }
+  ];
+  function dsSwitchOn(v) { return v === true || v === 1 || v === '1' || v === 'true'; }
 
   /* The panel header icon: three sliders (the universal "display / view
      settings" glyph). Drawn inline so it never depends on a font. */
@@ -64,6 +80,7 @@
   function dsDefaults() {
     var o = {};
     DS_ITEMS.forEach(function (it) { o[it.key] = it.def; });
+    DS_SWITCHES.forEach(function (sw) { o[sw.name] = false; });
     return o;
   }
 
@@ -87,6 +104,9 @@
         DS_ITEMS.forEach(function (it) {
           if (Object.prototype.hasOwnProperty.call(obj, it.key)) out[it.key] = dsClamp(it.key, obj[it.key]);
         });
+        DS_SWITCHES.forEach(function (sw) {
+          if (Object.prototype.hasOwnProperty.call(obj, sw.name)) out[sw.name] = dsSwitchOn(obj[sw.name]);
+        });
       }
     } catch (e) { /* corrupted value -> factory defaults, never a broken UI */ }
     return out;
@@ -99,7 +119,9 @@
   function dsApply(cfg) {
     var root = document.documentElement;
     DS_ITEMS.forEach(function (it) {
-      root.style.setProperty(it.css, dsClamp(it.key, cfg[it.key]) + 'px');
+      var v = dsClamp(it.key, cfg[it.key]);
+      // Height sliders use 0 as a real value ("auto"), not as a missing value.
+      root.style.setProperty(it.css, (it.zeroAuto && v === 0) ? 'auto' : v + 'px');
     });
     // The sales cart width must also reach the live POS layout, which sets an
     // inline grid template when the page is open (drag handle / slider share
@@ -111,7 +133,8 @@
 
   function dsIsDefault(cfg) {
     var d = dsDefaults();
-    return DS_ITEMS.every(function (it) { return cfg[it.key] === d[it.key]; });
+    return DS_ITEMS.every(function (it) { return cfg[it.key] === d[it.key]; }) &&
+      DS_SWITCHES.every(function (sw) { return !!cfg[sw.name] === !!d[sw.name]; });
   }
 
   function T(key, fb) {
@@ -142,6 +165,10 @@
         '</div>' +
         '<div class="modal-body ds-body">' +
           '<div class="ds-hint"><i class="fas fa-lightbulb"></i><span id="dsHintText"></span></div>' +
+          '<div class="ds-price-tools" id="dsPriceTools">' +
+            '<button class="btn ds-price-btn" id="dsApplyMinPrice" type="button"><i class="fas fa-arrow-down"></i><span id="dsApplyMinPriceText">تطبيق نسبة الحد الادنى</span></button>' +
+            '<button class="btn ds-price-btn" id="dsApplySellPrice" type="button"><i class="fas fa-tag"></i><span id="dsApplySellPriceText">تطبيق سعر البيع</span></button>' +
+          '</div>' +
           '<div class="ds-rows" id="dsRows"></div>' +
           '<div class="ds-preview">' +
             '<div class="ds-preview-head"><i class="fas fa-eye"></i><span id="dsPreviewTitle"></span></div>' +
@@ -182,6 +209,8 @@
     $('dsClose').addEventListener('click', dsClose);
     $('dsSave').addEventListener('click', dsSave);
     $('dsReset').addEventListener('click', dsReset);
+    $('dsApplyMinPrice').addEventListener('click', function () { dsApplyPrice('minPrice'); });
+    $('dsApplySellPrice').addEventListener('click', function () { dsApplyPrice('sellPrice'); });
     overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) dsClose(); });
 
     document.addEventListener('keydown', function (e) {
@@ -230,6 +259,30 @@
       });
       wrap.appendChild(row);
     });
+
+    // Invoice-column switches live in the same panel/storage, but stay outside
+    // the slider list so none of the CSS-variable logic touches them.
+    var group = document.createElement('div');
+    group.className = 'ds-group';
+    group.innerHTML = '<i class="fas fa-file-invoice"></i><span data-ds-group="invoiceGroup"></span>';
+    wrap.appendChild(group);
+    DS_SWITCHES.forEach(function (sw) {
+      var row = document.createElement('div');
+      row.className = 'ds-row ds-switch-row';
+      row.dataset.key = sw.name;
+      row.innerHTML =
+        '<div class="ds-row-top">' +
+          '<span class="ds-row-label"><i class="' + sw.icon + '"></i>' +
+            '<span class="ds-row-name" data-ds-name="' + sw.name + '"></span></span>' +
+          '<label class="ds-switch">' +
+            '<input type="checkbox" class="ds-check">' +
+            '<span class="ds-switch-track"></span>' +
+          '</label>' +
+        '</div>';
+      var check = row.querySelector('.ds-check');
+      check.addEventListener('change', function () { dsSetSwitch(sw.name, check.checked); });
+      wrap.appendChild(row);
+    });
   }
 
   function dsRowEl(key) {
@@ -250,11 +303,21 @@
     dsRefreshDirty();
   }
 
+  function dsSetSwitch(name, checked) {
+    dsDraft[name] = !!checked;
+    dsRefreshDirty();
+  }
+
   /* source = the element the user is touching; never overwrite it,
      otherwise typing "2" on the way to "240" would be rewritten. */
   function dsSyncRow(key, source) {
     var row = dsRowEl(key);
     if (!row) return;
+    if (DS_SWITCHES.some(function (sw) { return sw.name === key; })) {
+      var chk = row.querySelector('.ds-check');
+      if (chk) chk.checked = !!dsDraft[key];
+      return;
+    }
     var it = DS_BY_KEY[key];
     var v = dsDraft[key];
     var range = row.querySelector('.ds-range');
@@ -268,6 +331,7 @@
 
   function dsSyncAll() {
     DS_ITEMS.forEach(function (it) { dsSyncRow(it.key, 'none'); });
+    DS_SWITCHES.forEach(function (sw) { dsSyncRow(sw.name, 'none'); });
   }
 
   function dsPaintRange(range, v, it) {
@@ -282,14 +346,19 @@
     var sc = $('dsPvSales'), ic = $('dsPvInv');
     if (!sc || !ic) return;
     sc.style.width = dsDraft.salesCard + 'px';
+    sc.style.height = dsDraft.salesHeight ? dsDraft.salesHeight + 'px' : '';
+    sc.style.overflowY = dsDraft.salesHeight ? 'auto' : '';
     $('dsPvSalesName').style.fontSize = dsDraft.salesName + 'px';
     ic.style.width = dsDraft.invCard + 'px';
+    ic.style.height = dsDraft.invHeight ? dsDraft.invHeight + 'px' : '';
+    ic.style.overflowY = dsDraft.invHeight ? 'auto' : '';
     $('dsPvInvName').style.fontSize = dsDraft.invName + 'px';
   }
 
   function dsDirty() {
     if (!dsDraft || !dsSaved) return false;
-    return DS_ITEMS.some(function (it) { return dsDraft[it.key] !== dsSaved[it.key]; });
+    return DS_ITEMS.some(function (it) { return dsDraft[it.key] !== dsSaved[it.key]; }) ||
+      DS_SWITCHES.some(function (sw) { return !!dsDraft[sw.name] !== !!dsSaved[sw.name]; });
   }
 
   function dsRefreshDirty(flash) {
@@ -381,6 +450,60 @@
     if (btn) btn.classList.toggle('is-custom', !dsIsDefault(dsSaved));
   }
 
+  /* ---------- price helpers (FormLayout bands) ----------------------------
+     These are one-off bulk tools, not display settings: they only write a
+     price when it is currently missing or zero, using the very same bands the
+     smart-add / quick-entry forms use. Nothing with a real value is touched. */
+
+  function dsApplyPrice(field) {
+    // FormLayout band keys are `sell` / `minPrice`; the product card fields are
+    // `sellPrice` / `minPrice`. Map the form key before reading the percentage.
+    var pctKey = ({ sellPrice: 'sell', minPrice: 'minPrice' })[field] || field;
+    var FL = window.FormLayout;
+    // db.js declares `const DB` at classic-script top level: a global lexical
+    // binding, NOT a property of window. Read the bare identifier first or the
+    // tool would always report the database as unavailable in the real app.
+    var DBApi = null;
+    try { if (typeof DB !== 'undefined' && DB) DBApi = DB; } catch (e) { /* TDZ */ }
+    if (!DBApi) { try { DBApi = global && global.DB; } catch (e) { /* non-fatal */ } }
+    if (!FL || typeof FL.bands !== 'function' || !DBApi || typeof DBApi.getProducts !== 'function') {
+      alert(T('display.priceToolUnavailable', 'إعدادات الأسعار غير متاحة حالياً.'));
+      return;
+    }
+    var bands = FL.bands() || [];
+    var products = DBApi.getProducts() || [];
+    var updates = [];
+    products.forEach(function (p) {
+      var current = parseFloat(p[field]);
+      if (isFinite(current) && current > 0) return;       // never overwrite a real price
+      var base = parseFloat(p.buyPrice);
+      if (!(base > 0)) base = parseFloat(p.realBuyPrice) || 0;
+      if (!(base > 0)) return;                             // no cost → no percentage
+      var band = FL.bandFor(base, bands);
+      var pct = (band && band.pcts && band.pcts[pctKey]) || 0;
+      var value = parseFloat(FL.applyPercent(base, pct));
+      if (!isFinite(value) || value <= 0) return;
+      value = Math.round(value * 100) / 100;
+      if (!(value > 0)) return;
+      var patch = {};
+      patch[field] = value;
+      updates.push({ id: p.id, patch: patch, name: p.name });
+    });
+    if (!updates.length) {
+      alert(T('display.priceFillNone', 'لا توجد منتجات تحتاج تعبئة هذا السعر.'));
+      return;
+    }
+    var msg = T('display.priceFillConfirm', 'سيتم تعبئة السعر لعدد %n من المنتجات التي ليس لها سعر مسجّل. هل تريد المتابعة؟')
+      .replace('%n', updates.length);
+    if (!confirm(msg)) return;
+    var done = 0;
+    updates.forEach(function (u) {
+      var res = DBApi.updateProduct(u.id, u.patch);
+      if (!res || res.ok !== false) done++;
+    });
+    alert(T('display.priceFillDone', 'تم تحديث %n من المنتجات.').replace('%n', done));
+  }
+
   /* ---------- labels (all four languages) ---------- */
 
   function setTxt(id, key, fb) {
@@ -406,12 +529,24 @@
     setTxt('dsPvInvMeta', 'display.sampleMeta2', 'الباركود: 4024300');
     setTxt('dsResetText', 'display.reset', 'إعادة الضبط إلى الافتراضي');
     setTxt('dsSaveText', 'display.save', 'حفظ التغييرات');
+    setTxt('dsApplyMinPriceText', 'display.applyMinPrice', 'تطبيق نسبة الحد الادنى');
+    setTxt('dsApplySellPriceText', 'display.applySellPrice', 'تطبيق سعر البيع');
+    var minBtn = $('dsApplyMinPrice');
+    if (minBtn) minBtn.title = T('display.applyMinPrice', 'تطبيق نسبة الحد الادنى');
+    var sellBtn = $('dsApplySellPrice');
+    if (sellBtn) sellBtn.title = T('display.applySellPrice', 'تطبيق سعر البيع');
 
     DS_ITEMS.forEach(function (it) {
       var n = document.querySelector('[data-ds-name="' + it.key + '"]');
       if (n) n.textContent = T(it.label, it.flabel);
       var u = document.querySelector('[data-ds-unit="' + it.key + '"]');
       if (u) u.textContent = T('display.px', 'px');
+    });
+    var grp = document.querySelector('[data-ds-group="invoiceGroup"]');
+    if (grp) grp.textContent = T('display.invoiceGroup', 'أعمدة الفاتورة');
+    DS_SWITCHES.forEach(function (sw) {
+      var n = document.querySelector('[data-ds-name="' + sw.name + '"]');
+      if (n) n.textContent = T(sw.label, sw.flabel);
     });
 
     dsRefreshDirty();
@@ -436,7 +571,8 @@
   function dsBootLoad() {
     if (dsBuilt && dsDirty()) return;              // never clobber an open edit
     var fresh = dsLoad();
-    var same = DS_ITEMS.every(function (it) { return fresh[it.key] === dsSaved[it.key]; });
+    var same = DS_ITEMS.every(function (it) { return fresh[it.key] === dsSaved[it.key]; }) &&
+      DS_SWITCHES.every(function (sw) { return !!fresh[sw.name] === !!dsSaved[sw.name]; });
     if (same) return;
     dsSaved = fresh;
     dsDraft = Object.assign({}, dsSaved);
@@ -465,6 +601,12 @@
     defaults: dsDefaults,
     setLive: dsSetLive,
     current: function () { return Object.assign({}, dsSaved); },
+    invoiceColumns: function () {
+      return {
+        reference: !!dsSaved.invShowReference,
+        mark: !!dsSaved.invShowMark
+      };
+    },
     items: DS_ITEMS
   };
 })();

@@ -1,5 +1,9 @@
-﻿var _salesCart = [];
+var _salesCart = [];
 var _salesCustomerId = null;
+// Customer tree: a sub-customer is only a label on the parent's invoice.
+// This id NEVER replaces _salesCustomerId in DB writes.
+var _salesSubCustomerId = null;
+var _salesSubPickerId = null;
 var _salesProducts = [];
 var _salesSearchQuery = '';
 var _salesRenderRAF = null;
@@ -78,12 +82,79 @@ function getTimbreConfig() {
     rate: parseFloat(localStorage.getItem('zmt_timbre_rate') || '1'),
   };
 }
+
+// The party's own legal identity (NIS / NIF / RC / Article), typed on its
+// customer or supplier card. Written out here because page scripts load one at
+// a time — the invoices-page helper is not defined while the sales page runs.
+// On unless the operator explicitly switched it off in settings.
+function salesPartyLegalHTML(party, isSupplier) {
+  if (!party) return '';
+  const key = isSupplier ? 'zmt_inv_party_legal_supplier' : 'zmt_inv_party_legal_customer';
+  if (localStorage.getItem(key) === '0') return '';
+  const parts = [];
+  if (party.nis) parts.push('NIS: ' + escHtml(party.nis));
+  if (party.nif) parts.push('NIF: ' + escHtml(party.nif));
+  if (party.rc || party.rcc) parts.push('RC: ' + escHtml(party.rc || party.rcc));
+  if (party.article) parts.push('ART: ' + escHtml(party.article));
+  if (!parts.length) return '';
+  return '<div style="font-size:10px;color:#777;margin-top:3px;direction:ltr;text-align:left">' + parts.join(' | ') + '</div>';
+}
 function getTvaRate() {
   return parseFloat(localStorage.getItem('zmt_tva_rate') || '0');
 }
 
+function _salesPageKeyHandler(e) {
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  // F10 sells an item that is not in the catalogue. It works whatever has
+  // focus — the cashier may be mid-search — but never on top of an open modal,
+  // including its own window.
+  if (e.key === 'F10' || e.code === 'F10') {
+    if (salesAnyOverlayOpen && salesAnyOverlayOpen()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openSalesFreeLine();
+    return;
+  }
+  // F5 opens the customer tree for the selected parent. Handled here (page
+  // scoped) instead of globally so other pages keep the normal reload key and
+  // the flag OFF keeps the exact previous behaviour. It must also work while
+  // the cashier's focus is in the barcode/name field.
+  if (e.key === 'F5' || e.code === 'F5') {
+    if (!_salesTreeEnabled()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (salesAnyOverlayOpen && salesAnyOverlayOpen()) return;
+    openSalesSubCustomerModal();
+    return;
+  }
+  const target = e.target;
+  const inScanField = !!(target && target.id === 'salesBarcodeScan');
+  if (target && target.tagName) {
+    const tag = target.tagName.toUpperCase();
+    const inField = tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable;
+    if (inField && !inScanField) return;
+  }
+  if (salesAnyOverlayOpen && salesAnyOverlayOpen()) return;
+  const key = e.key || '';
+  if (key === 'F' || key === 'f') {
+    // The scan field is also the name search now: "f" is a letter there, never
+    // the clear-cart shortcut. The visible «تفريغ» button is always available.
+    if (inScanField) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof clearSalesCart === 'function') clearSalesCart();
+    return;
+  }
+  if (key === 'F9' || e.code === 'F9') {
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof clearSalesCart === 'function') clearSalesCart();
+    return;
+  }
+}
+
 function init_sales() {
-  _salesProducts = (DB.getProducts ? DB.getProducts() : (_salesProducts || []));
+  _salesProducts = (typeof salesAllProducts === 'function') ? salesAllProducts() : (DB.getProducts ? DB.getProducts() : (_salesProducts || []));
   invalidateSalesGroupsCache();
   _salesSearchQuery = '';
   _salesDefaultMode = 'unit';
@@ -91,6 +162,9 @@ function init_sales() {
   _salesViewMode = (function () { try { return localStorage.getItem('zmt_sales_view_mode') === 'list' ? 'list' : 'grid'; } catch (e) { return 'grid'; } })();
   _salesListAllCols = (function () { try { return localStorage.getItem('zmt_sales_list_allcols') === '1'; } catch (e) { return false; } })();
   _salesInCartStrip = (function () { try { return localStorage.getItem('zmt_sales_incart_strip') === '1'; } catch (e) { return false; } })();
+  _salesFavBrandsOn = (function () { try { return localStorage.getItem('zmt_sales_fav_brands_on') === '1'; } catch (e) { return false; } })();
+  _salesFavBrandActive = null;
+  _syncSalesFavBrandsBtn();
   _salesCartWidth = (function () { try { var v = parseInt(localStorage.getItem('zmt_sales_cart_width'), 10); if (isNaN(v)) return 420; return Math.max(300, Math.min(700, v)); } catch (e) { return 420; } })();
   _salesCartDragging = false;
   renderSalesProducts();
@@ -106,6 +180,7 @@ function init_sales() {
   const staleQk = document.getElementById('salesQkModal');
   if (staleQk) staleQk.remove();
   trackPageListener('keydown', _qkHandler);
+  trackPageListener('keydown', _salesPageKeyHandler);
   _syncSalesViewUI();
   setSalesView(_salesViewMode);
   if (document.getElementById('salesListAllCols')) document.getElementById('salesListAllCols').checked = !!_salesListAllCols;
@@ -121,6 +196,7 @@ function init_sales() {
     const isManager = (typeof Auth !== 'undefined') && Auth.isManager();
     supBtn.style.display = isManager ? '' : 'none';
   }
+  try { updateSalesLed(); } catch (e) {}
   // F4 shortcut: "sales history" pressed from another page - open it after
   // the sales page finishes loading.
   if (window._invOpenSalesHistory) {
@@ -156,6 +232,16 @@ var _salesGroupsCache = null;
 var _salesRenderedCount = 0;
 var _salesStart = 0;
 var _salesGridLoadingMore = false;
+
+// ---- Favourite brands strip (feature: إظهار العلامات المفضلة) ----
+// The full filtered list stays in _salesGroupList; every entry keeps its
+// absolute index there so card actions (add to cart, substitutes, rest order)
+// keep working no matter which section the card is painted in.
+var _salesFavBrandsOn = false;
+var _salesFavBrandActive = null;
+var _salesMainGroups = [];   // [{ g, idx }] main grid (all except active brand)
+var _salesFavGroups = [];    // [{ g, idx }] products of the active brand
+var _salesFavRendered = 0;
 
 // Soft ceiling on live DOM nodes: leading groups are trimmed while scrolling
 // down and re-rendered when scrolling back up (windowed / virtual list).
@@ -198,6 +284,15 @@ function _searchSalesGroups(groups, q, cap) {
   return out.map(x => x.g);
 }
 
+// One grid entry (card or list row) with its ABSOLUTE index inside
+// _salesGroupList so windowed sections never break cart actions.
+function _salesItemHTML(item) {
+  if (!item || !item.g) return '';
+  return (_salesViewMode === 'list')
+    ? salesListRowHTML(item.g, item.idx)
+    : salesCardHTML(item.g, item.idx);
+}
+
 // Windowed rendering: when the live DOM exceeds SALES_MAX_NODES, drop leading
 // groups and compensate the scroll position so the viewport stays put.
 function _trimSalesGrid() {
@@ -223,7 +318,7 @@ function _prependSalesGroups() {
   const first = grid.firstChild;
   const prevTop = first ? first.getBoundingClientRect().top : 0;
   let html = '';
-  for (let i = from; i < _salesStart; i++) html += salesCardHTML(_salesGroupList[i], i);
+  for (let i = from; i < _salesStart; i++) html += _salesItemHTML(_salesMainGroups[i]);
   if (html) {
     grid.insertAdjacentHTML('afterbegin', html);
     if (first) {
@@ -238,22 +333,14 @@ function _prependSalesGroups() {
 // Load more groups when scrolling down (appends to existing DOM)
 function loadMoreSalesProducts() {
   if (_salesGridLoadingMore) return;
-  if (!_salesGroupList || _salesRenderedCount >= _salesGroupList.length) return;
+  if (!_salesMainGroups || _salesRenderedCount >= _salesMainGroups.length) return;
   const grid = document.getElementById('salesProductGrid');
   if (!grid || !grid.isConnected) return;
   _salesGridLoadingMore = true;
   const from = _salesRenderedCount;
-  const to = Math.min(from + SALES_GRID_PAGE_SIZE, _salesGroupList.length);
+  const to = Math.min(from + SALES_GRID_PAGE_SIZE, _salesMainGroups.length);
   let html = '';
-  if (_salesViewMode === 'list') {
-    for (let i = from; i < to; i++) {
-      html += salesListRowHTML(_salesGroupList[i], i);
-    }
-  } else {
-    for (let i = from; i < to; i++) {
-      html += salesCardHTML(_salesGroupList[i], i);
-    }
-  }
+  for (let i = from; i < to; i++) html += _salesItemHTML(_salesMainGroups[i]);
   _salesRenderedCount = to;
   grid.insertAdjacentHTML('beforeend', html);
   _trimSalesGrid();
@@ -269,10 +356,39 @@ function invalidateSalesGroupsCache() {
   _salesGroupsIndex = null;
   _salesCardCtx = null;
 }
+if (typeof window !== 'undefined') window.invalidateSalesGroupsCache = invalidateSalesGroupsCache;
 function _invalidateSalesGroupsCache() { invalidateSalesGroupsCache(); }
 
 var _salesGroupsIndex = null;
 
+function salesAllProducts() {
+  const prods = (DB.getProducts ? DB.getProducts() : []).slice();
+  const bundles = (DB.getBundles ? DB.getBundles() : []);
+  for (const b of bundles) {
+    const cost = (b.components || []).reduce((s, c) => {
+      const p = DB.getProduct(c.productId);
+      return s + ((p && p.buyPrice) || 0) * (parseFloat(c.qty) || 0);
+    }, 0);
+    prods.push({
+      id: 'bundle:' + b.id,
+      name: b.name,
+      barcode: b.barcode,
+      brandId: null,
+      buyPrice: cost,
+      sellPrice: b.price || 0,
+      wholesalePrice: b.price || 0,
+      extraPrices: {},
+      quantity: 0,
+      fixed: false,
+      isBundle: true,
+      bundleId: b.id,
+      bundleComponents: b.components || [],
+      minPrice: 0,
+      createdAt: b.createdAt || 0,
+    });
+  }
+  return prods;
+}
 function getSalesGroups() {
   if (_salesGroupsCache) return _salesGroupsCache;
   const map = new Map();
@@ -307,8 +423,251 @@ function getSalesGroupByKey(key) {
   }
   return null;
 }
+function bundleReservedQty(productId) {
+  const bundles = (DB.getBundles ? DB.getBundles() : []);
+  let maxq = 0;
+  for (const b of bundles) {
+    const comp = (b.components || []).find(c => c.productId === productId);
+    if (comp) maxq = Math.max(maxq, parseFloat(comp.qty) || 0);
+  }
+  return maxq;
+}
+function salesGroupMinPrice(g) {
+  if (!g || !g.records) return 0;
+  return Math.max(0, ...(g.records.map(r => Number(r && r.minPrice) || 0)));
+}
+function salesLineMinPrice(line) {
+  if (!line) return 0;
+  if (line.minPrice != null && !isNaN(line.minPrice)) return Math.max(0, Number(line.minPrice) || 0);
+  return salesGroupMinPrice(getSalesGroupByKey(line.key));
+}
 
+// One fixed-colour badge shared by the sales grid card and the compact list
+// row. `fv-minPrice` keeps it under the existing field-visibility switch.
+function salesMinPriceBadge(g, listMode) {
+  const floor = salesGroupMinPrice(g);
+  const value = floor > 0 ? 'DA' + fmtMoney(floor) : '—';
+  const label = escHtml(t('quickEntry.minPrice'));
+  return listMode
+    ? `<span class="sales-list-price floor fv-minPrice"><b>${value}</b><span class="sales-list-price-kind">${label}</span></span>`
+    : `<div class="price-pill price-floor fv-minPrice"><span>${label}</span><b>${value}</b></div>`;
+}
+
+// ===== FAVOURITE BRANDS (sales strip) =====
+
+// Brand of a group: the first sellable batch carries the identity.
+function _salesGroupBrandId(g) {
+  if (!g) return '';
+  const rep = groupViableRecords(g)[0] || (g.records && g.records[0]) || {};
+  return String(rep.brandId || '');
+}
+
+// Favourites live in the same localStorage keys used by the Brands page. The
+// sales page can open first (brands.js is lazy-loaded), so we read the raw keys
+// instead of depending on functions that may not exist yet.
+const SALES_FAV_BRANDS_KEY = 'zmt_fav_brands';
+const SALES_CUSTOM_BRANDS_KEY = 'zmt_custom_brands';
+
+function _salesLsGet(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (e) { return fallback; }
+}
+
+function _salesCustomBrands() {
+  const list = _salesLsGet(SALES_CUSTOM_BRANDS_KEY, []);
+  return Array.isArray(list) ? list : [];
+}
+
+// Built-in + custom brands, custom definitions win when the id matches.
+function _salesAllBrands() {
+  const map = new Map();
+  if (typeof BRANDS !== 'undefined') {
+    (BRANDS.global || []).forEach(b => { if (b && b.id) map.set(b.id, b); });
+    (BRANDS.chinese || []).forEach(b => { if (b && b.id) map.set(b.id, b); });
+  }
+  _salesCustomBrands().forEach(b => { if (b && b.id) map.set(b.id, b); });
+  return [...map.values()];
+}
+
+function _salesFavBrandIds() {
+  const list = _salesLsGet(SALES_FAV_BRANDS_KEY, []);
+  return Array.isArray(list) ? list.map(String).filter(Boolean) : [];
+}
+
+// Colour + initials for the compact strip cards (no external images needed).
+function _salesBrandColor(b) {
+  return (b && b.color) ? b.color : '#0066B1';
+}
+function _salesBrandInitials(b) {
+  const letters = String((b && b.name) || '').replace(/[^A-Za-z0-9\u0600-\u06FF]/g, '');
+  return (letters.substring(0, 2) || '?').toUpperCase();
+}
+function _salesBrandById(id) {
+  return _salesAllBrands().find(b => String(b.id) === String(id)) || null;
+}
+
+function _syncSalesFavBrandsBtn() {
+  const btn = document.getElementById('salesFavBrandsBtn');
+  if (!btn) return;
+  btn.classList.toggle('active', !!_salesFavBrandsOn);
+  btn.setAttribute('aria-pressed', _salesFavBrandsOn ? 'true' : 'false');
+}
+
+function toggleSalesFavBrands() {
+  const turningOn = !_salesFavBrandsOn;
+  if (turningOn && !_salesFavBrandIds().length) {
+    alert(t('sales.favBrandsEmpty') || 'لا توجد علامات مفضلة — افتح صفحة العلامات وانقر ★ على العلامات التي تريد إظهارها.');
+    return;
+  }
+  _salesFavBrandsOn = turningOn;
+  try { localStorage.setItem('zmt_sales_fav_brands_on', _salesFavBrandsOn ? '1' : '0'); } catch (e) {}
+  if (!_salesFavBrandsOn) _salesFavBrandActive = null;
+  _syncSalesFavBrandsBtn();
+  renderSalesProducts();
+}
+
+// One active brand at a time; pressing the same brand again hides its products.
+function toggleSalesFavBrand(id) {
+  const next = (id == null) ? null : String(id);
+  _salesFavBrandActive = (next && _salesFavBrandActive === next) ? null : next;
+  renderSalesProducts();
+}
+
+// Cards are built from the current (search-aware) group list so the count always
+// matches what the user will see after pressing the brand.
+function _renderSalesFavStrip(groups) {
+  const strip = document.getElementById('salesFavStrip');
+  const items = document.getElementById('salesFavStripItems');
+  const countEl = document.getElementById('salesFavStripCount');
+  if (!strip || !items) return;
+
+  const ids = _salesFavBrandIds();
+  const brands = _salesAllBrands();
+  const byId = new Map(brands.map(b => [String(b.id), b]));
+  const favs = ids.map(id => byId.get(id)).filter(Boolean);
+
+  if (!_salesFavBrandsOn) {
+    strip.style.display = 'none';
+    items.innerHTML = '';
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+
+  strip.style.display = 'flex';
+  const counts = new Map();
+  (groups || []).forEach(g => {
+    const bid = _salesGroupBrandId(g);
+    if (!bid) return;
+    counts.set(bid, (counts.get(bid) || 0) + 1);
+  });
+
+  if (countEl) {
+    countEl.textContent = favs.length
+      ? `${favs.length} ${t('common.brand')}`
+      : '';
+  }
+
+  if (favs.length === 0) {
+    items.innerHTML = `<div class="sales-fav-empty"><i class="fas fa-star"></i> ${escHtml(t('sales.favBrandsEmpty'))}</div>`;
+    return;
+  }
+
+  items.innerHTML = favs.map(b => {
+    const id = String(b.id);
+    const color = _salesBrandColor(b);
+    const c = counts.get(id) || 0;
+    const active = _salesFavBrandActive === id;
+    return `<button type="button" class="sales-fav-card ${active ? 'active' : ''} ${c === 0 ? 'empty' : ''}"
+      style="--fav-color:${color}" onclick="toggleSalesFavBrand('${escHtml(id)}')"
+      title="${escHtml(b.name || id)}" aria-pressed="${active ? 'true' : 'false'}">
+      <span class="sales-fav-card-avatar">${escHtml(_salesBrandInitials(b))}</span>
+      <span class="sales-fav-card-body">
+        <span class="sales-fav-card-name">${escHtml(b.name || id)}</span>
+        <span class="sales-fav-card-count"><i class="fas fa-cubes"></i> ${c} ${escHtml(t('common.product'))}</span>
+      </span>
+      ${active ? '<i class="fas fa-check-circle sales-fav-card-check"></i>' : ''}
+    </button>`;
+  }).join('');
+}
+
+function _renderSalesFavActive() {
+  const section = document.getElementById('salesFavActiveSection');
+  const grid = document.getElementById('salesFavActiveGrid');
+  const nameEl = document.getElementById('salesFavActiveName');
+  const countEl = document.getElementById('salesFavActiveCount');
+  if (!section || !grid) return;
+
+  const brand = _salesFavBrandActive ? _salesBrandById(_salesFavBrandActive) : null;
+  if (!_salesFavBrandActive || !brand) {
+    section.style.display = 'none';
+    grid.innerHTML = '';
+    _salesFavRendered = 0;
+    return;
+  }
+
+  section.style.display = 'flex';
+  section.style.setProperty('--fav-color', _salesBrandColor(brand));
+  if (nameEl) nameEl.textContent = brand.name || _salesFavBrandActive;
+  if (countEl) countEl.textContent = `${_salesFavGroups.length} ${t('common.product')}`;
+
+  _salesFavRendered = 0;
+  grid.innerHTML = '';
+  const to = Math.min(SALES_GRID_PAGE_SIZE, _salesFavGroups.length);
+  let html = '';
+  for (let i = 0; i < to; i++) html += _salesItemHTML(_salesFavGroups[i]);
+  _salesFavRendered = to;
+  grid.innerHTML = html || `<div class="sales-grid-empty sales-fav-grid-empty"><i class="fas fa-box-open"></i><p>${escHtml(t('sales.favBrandsNoProducts'))}</p></div>`;
+
+  if (!grid.dataset.scrollBound) {
+    grid.dataset.scrollBound = '1';
+    grid.addEventListener('scroll', function () {
+      if (this.scrollTop + this.clientHeight >= this.scrollHeight - 300) loadMoreSalesFavProducts();
+    });
+  }
+}
+
+function loadMoreSalesFavProducts() {
+  const grid = document.getElementById('salesFavActiveGrid');
+  if (!grid || !grid.isConnected) return;
+  if (_salesFavRendered >= _salesFavGroups.length) return;
+  const from = _salesFavRendered;
+  const to = Math.min(from + SALES_GRID_PAGE_SIZE, _salesFavGroups.length);
+  let html = '';
+  for (let i = from; i < to; i++) html += _salesItemHTML(_salesFavGroups[i]);
+  _salesFavRendered = to;
+  const empty = grid.querySelector('.sales-fav-grid-empty');
+  if (empty) empty.remove();
+  grid.insertAdjacentHTML('beforeend', html);
+}
+
+function bundleMaxSellable(r) {
+  if (!r || !r.isBundle) return 0;
+  const comps = r.bundleComponents || (r.bundleId && DB.getBundle(r.bundleId) && DB.getBundle(r.bundleId).components) || [];
+  let max = Infinity;
+  for (const c of comps) {
+    const p = DB.getProduct(c.productId);
+    const avail = p ? (parseFloat(p.quantity) || 0) : 0;
+    const per = Math.floor(avail / (parseFloat(c.qty) || 1));
+    max = Math.min(max, per);
+  }
+  return (max === Infinity || !isFinite(max)) ? 0 : Math.max(0, max);
+}
 function getGroupAvailableQty(group) {
+  if (group && group.records && group.records.some(r => r && r.isBundle)) {
+    const r = group.records.find(x => x && x.isBundle);
+    if (r) {
+      let max = Infinity;
+      for (const c of (r.bundleComponents || [])) {
+        const p = DB.getProduct(c.productId);
+        const avail = p ? (parseFloat(p.quantity) || 0) : 0;
+        const per = Math.floor(avail / (parseFloat(c.qty) || 1));
+        max = Math.min(max, per);
+      }
+      return (max === Infinity) ? 0 : Math.max(0, max);
+    }
+  }
   if (!salesPharmacyOn()) {
     return group.records.reduce((s, r) => s + (r.quantity || 0), 0);
   }
@@ -344,9 +703,9 @@ function getGroupMaxQty(group) {
 // Records that are actually sellable (non-expired in pharmacy mode) —
 // keeps FIFO order and prefers stock > 0.
 function groupViableRecords(group) {
-  const recs = (group.records || []).filter(r => isFixedRecord(r) || (r.quantity || 0) > 0);
+  const recs = (group.records || []).filter(r => isFixedRecord(r) || r.isBundle || (r.quantity || 0) > 0);
   if (!salesPharmacyOn()) return recs;
-  return recs.filter(r => isFixedRecord(r) || salesExpiryClass(r) !== 'expired');
+  return recs.filter(r => isFixedRecord(r) || r.isBundle || salesExpiryClass(r) !== 'expired');
 }
 
 function getGroupActivePrice(group) {
@@ -360,8 +719,804 @@ function getGroupWholesalePrice(group) {
 }
 
 /* ============================================================
+   EXTRA SALE PRICES (feature 3)
+   ============================================================ */
+function salesExtraFields() {
+  return (typeof ExtraPrices !== 'undefined' && ExtraPrices) ? ExtraPrices.fields() : [];
+}
+
+// Cart price mode is one of: 'unit' | 'wholesale' | 'extra:<fieldId>'.
+function salesExtraFieldOfMode(mode) {
+  const m = String(mode || '');
+  if (m.indexOf('extra:') !== 0) return null;
+  return salesExtraFields().find(f => f.id === m.slice(6)) || null;
+}
+
+function salesPriceForRecord(r, mode) {
+  if (!r) return 0;
+  if (mode === 'wholesale') return r.wholesalePrice || r.sellPrice || 0;
+  const field = salesExtraFieldOfMode(mode);
+  if (field) {
+    const v = (typeof ExtraPrices !== 'undefined' && ExtraPrices) ? ExtraPrices.priceOf(r, field.id) : 0;
+    return v || r.sellPrice || 0;
+  }
+  return r.sellPrice || 0;
+}
+
+function getGroupModePrice(group, mode) {
+  const r = groupViableRecords(group)[0] || group.records[0] || {};
+  return salesPriceForRecord(r, mode);
+}
+
+function salesLineModeLabel(mode) {
+  if (mode === 'wholesale') return t('sales.wholesale');
+  const field = salesExtraFieldOfMode(mode);
+  if (field) return field.name;
+  return t('sales.unit');
+}
+
+// Cycle order: قطعة → جملة → each extra field → قطعة. A mode whose field was
+// deleted meanwhile silently falls back to the first step instead of sticking
+// on a price that no longer exists.
+function salesNextLineMode(mode) {
+  const list = ['unit', 'wholesale'].concat(salesExtraFields().map(f => 'extra:' + f.id));
+  const i = list.indexOf(String(mode || 'unit'));
+  return list[(i < 0 ? 0 : i + 1) % list.length];
+}
+
+function salesExtraPillsHTML(rec, extraClass) {
+  if (typeof ExtraPrices === 'undefined' || !ExtraPrices) return '';
+  return salesExtraFields().map(f => ExtraPrices.pillHTML(rec, f, extraClass)).join('');
+}
+
+// A product group can hold several purchase batches at different costs. The
+// stock-weighted cost of the sellable batches is the figure a list row should
+// show — quoting only the oldest batch understates the cost as soon as a
+// restock arrives at a different price.
+function getGroupBuyPrice(group) {
+  const recs = groupViableRecords(group);
+  let cost = 0, qty = 0;
+  for (const r of recs) {
+    const q = Math.max(0, r.quantity || 0);
+    if (!q) continue;
+    cost += (r.buyPrice || 0) * q;
+    qty += q;
+  }
+  if (qty) return cost / qty;
+  // Fixed (unlimited-stock) records carry no quantity: fall back to the first one.
+  return recs.length ? (recs[0].buyPrice || 0) : 0;
+}
+
+// Purchase cost is a manager figure and stays masked until Ctrl+X reveals it,
+// exactly like the inventory cards. No session means no reveal, never a
+// default-open read.
+function salesBuyPriceVisible() {
+  return !!(typeof Auth !== 'undefined'
+    && typeof Auth.buyPriceVisible === 'function'
+    && Auth.buyPriceVisible());
+}
+
+/* ============================================================
+   MINIMUM SELL MARGIN (إعدادات نسبة البيع)
+
+   The manager fixes, per sale kind, how much of the gap between the
+   shelf price (P) and the true cost (C) may be given away:
+
+       floor = P − pct × (P − C)
+
+   25% of a 100 → 130 product is a floor of 122.50. Cost is not the
+   oldest batch's price: the cart already consumed specific batches
+   FIFO into line.entries, so the cost of what is actually leaving the
+   shop is the cost of those batches. Discounts are checked line by
+   line, which means the invoice-level customer % and the extra discount
+   are distributed back onto the lines exactly like SaleCore does.
+
+   New retail/wholesale sales only. Returns, edits of an old invoice and
+   «بيع لمورد» never enter this path.
+   ============================================================ */
+const SALES_MARGIN_META = 'sales_margin_cfg';
+
+function salesMarginConfig() {
+  let raw = null;
+  try { raw = DB.getMeta(SALES_MARGIN_META); } catch (e) { raw = null; }
+  const num = (v) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return (isFinite(n) && n >= 0 && n <= 100) ? n : null;
+  };
+  const cfg = { enabled: !!(raw && raw.enabled), store: { retail: null, wholesale: null, extras: {} }, rules: [] };
+  const extrasOf = (o) => {
+    const out = {};
+    if (o && o.extras && typeof o.extras === 'object') {
+      for (const id of Object.keys(o.extras)) {
+        const n = num(o.extras[id]);
+        if (n != null) out[id] = n;
+      }
+    }
+    return out;
+  };
+  if (raw && raw.store) {
+    cfg.store.retail = num(raw.store.retail);
+    cfg.store.wholesale = num(raw.store.wholesale);
+    cfg.store.extras = extrasOf(raw.store);
+  }
+  if (raw && Array.isArray(raw.rules)) {
+    for (const r of raw.rules) {
+      if (!r || !r.id) continue;
+      const scope = r.scope === 'brand' || r.scope === 'category' || r.scope === 'product' ? r.scope : 'category';
+      cfg.rules.push({ scope, id: String(r.id), label: String(r.label || ''), retail: num(r.retail), wholesale: num(r.wholesale), extras: extrasOf(r) });
+    }
+  }
+  return cfg;
+}
+
+function salesMarginEnabled() {
+  const cfg = salesMarginConfig();
+  const hasExtras = Object.keys(cfg.store.extras).length > 0 || cfg.rules.some(r => Object.keys(r.extras || {}).length > 0);
+  return !!(cfg.enabled && (cfg.store.retail != null || cfg.store.wholesale != null || hasExtras || cfg.rules.length));
+}
+
+// A product rule points at a sales group, whose key joins name and barcode with
+// U+0001. That separator cannot survive an HTML attribute — the parser turns
+// control characters into spaces and the rule would silently stop matching — so
+// the identifier is stored URL-encoded and compared in the same form.
+function _msProductId(key) {
+  return encodeURIComponent(String(key == null ? '' : key));
+}
+
+// product > brand > category > store. A level that does not set this kind
+// falls through to the next one instead of silently meaning "no floor".
+// kind is 'retail' | 'wholesale' | 'extra:<fieldId>'.
+function salesMarginKindOfMode(mode) {
+  if (mode === 'wholesale') return 'wholesale';
+  const field = salesExtraFieldOfMode(mode);
+  return field ? ('extra:' + field.id) : 'retail';
+}
+
+function _marginPctOf(holder, kind) {
+  if (!holder) return null;
+  if (String(kind).indexOf('extra:') === 0) {
+    const extras = holder.extras || {};
+    const v = extras[kind.slice(6)];
+    return v == null ? null : v;
+  }
+  const v = holder[kind];
+  return v == null ? null : v;
+}
+
+function salesMarginPct(cfg, kind, group, rep) {
+  const family = String((rep && rep.family) || '').trim().toLowerCase();
+  const brandId = rep && rep.brandId ? String(rep.brandId) : '';
+  const pid = group && group.key ? _msProductId(group.key) : '';
+  for (const scope of ['product', 'brand', 'category']) {
+    for (const r of cfg.rules) {
+      const pct = _marginPctOf(r, kind);
+      if (r.scope !== scope || pct == null) continue;
+      if (scope === 'product' && pid && r.id === pid) return pct;
+      if (scope === 'brand' && brandId && r.id === brandId) return pct;
+      if (scope === 'category' && family && r.id.toLowerCase() === family) return pct;
+    }
+  }
+  return _marginPctOf(cfg.store, kind);
+}
+
+// The shelf price and the FIFO cost of the very batches this line consumes.
+function salesMarginLineBasis(line, group) {
+  let qty = 0, refTotal = 0, costTotal = 0;
+  const entries = (line && line.entries) || [];
+  for (const e of entries) {
+    const q = Number(e.qty) || 0;
+    if (q <= 0) continue;
+    const rec = (group && group.records ? group.records.find(r => r.id === e.productId) : null)
+      || (typeof DB.getProduct === 'function' ? DB.getProduct(e.productId) : null);
+    const list = salesPriceForRecord(rec, line && line.mode);
+    qty += q;
+    refTotal += list * q;
+    costTotal += (Number(rec && rec.buyPrice) || 0) * q;
+  }
+  if (!qty) {
+    // Fixed (unlimited) products and hand-built lines carry no per-batch price
+    // history: the line's own figures are the only reference there is.
+    qty = Number(line && line.qty) || 0;
+    refTotal = Number(line && line.baseTotal) || 0;
+    costTotal = (typeof getGroupBuyPrice === 'function' && group ? getGroupBuyPrice(group) : 0) * qty;
+  }
+  return { qty, refTotal, costTotal };
+}
+
+// Floor of one line: returns null when nothing protects a margin here (no
+// rule, no shelf price, or the shelf price is already at or under cost).
+function salesMarginFloorOf(line, group, cfg) {
+  const kind = salesMarginKindOfMode(line.mode);
+  const rep = (group && group.records && group.records[0]) || null;
+  const pct = salesMarginPct(cfg, kind, group, rep);
+  if (pct == null) return null;
+  const basis = salesMarginLineBasis(line, group);
+  if (!basis.qty || basis.refTotal <= 0) return null;
+  const gap = basis.refTotal - basis.costTotal;
+  if (gap <= 0) return null;
+  return { pct, kind, qty: basis.qty, refTotal: basis.refTotal, floorTotal: basis.refTotal - (pct / 100) * gap };
+}
+
+// Every cart line against its floor, with the invoice-level discounts pushed
+// back onto the lines exactly like SaleCore spreads them (pro rata of the line
+// base totals, after the customer percentage and the manual extra).
+//
+// A line can be brought back onto the floor by either lever, and the cashier
+// must be corrected where he actually erred: an over-large discount is taken
+// from the discount field and leaves his price alone; a price that is itself
+// under the floor is lifted instead.
+function salesMarginScan(custDiscPct, extraDisc) {
+  const cfg = salesMarginConfig();
+  if (!cfg.enabled) return [];
+  const baseTotals = _salesCart.map(l => Math.max(0, Number(l.baseTotal) || 0));
+  const subTotal = baseTotals.reduce((s, v) => s + v, 0);
+  if (subTotal <= 0) return [];
+  const custDisc = subTotal * (Math.max(0, Number(custDiscPct) || 0) / 100);
+  const extra = Math.min(Math.max(0, Number(extraDisc) || 0), subTotal - custDisc);
+  const ratio = (custDisc + extra) / subTotal;
+  // What the invoice leaves a line before its own discount. A fully discounted
+  // cart (ratio → 1) leaves nothing, so no finite price is asked for there.
+  const keep = ratio < 0.999 ? 1 - ratio : 0;
+  const out = [];
+  for (let i = 0; i < _salesCart.length; i++) {
+    const line = _salesCart[i];
+    const floor = salesMarginFloorOf(line, getSalesGroupByKey(line.key), cfg);
+    if (!floor || floor.floorTotal == null) continue;
+    const disc = Math.max(0, Number(line.discount) || 0);
+    const room = baseTotals[i] * keep;
+    const charged = room - disc;
+    if (charged >= floor.floorTotal - 1e-6) continue;
+    // Largest discount this price can still carry (truncated to the cent so the
+    // correction never lands a hair under the floor).
+    const maxDisc = Math.max(0, Math.floor((room - floor.floorTotal) * 100 + 1e-6) / 100);
+    const newDisc = Math.min(disc, maxDisc);
+    const byDiscount = room - newDisc >= floor.floorTotal - 1e-6;
+    // Price lever: the lowest unit price that lands on the floor once the
+    // (already corrected) line discount and its invoice share come off it.
+    const needBase = keep > 0 ? (floor.floorTotal + newDisc) / keep : floor.floorTotal;
+    // Ceil to the cent, but let binary noise land on the exact cent instead of
+    // pushing the offer one cent above the true minimum.
+    const suggest = Math.ceil((needBase / floor.qty) * 100 - 1e-6) / 100;
+    out.push({
+      idx: i,
+      name: line.name,
+      qty: floor.qty,
+      kind: floor.kind,
+      byDiscount,
+      newDisc,
+      maxDisc,
+      chargedUnit: charged / floor.qty,
+      floorUnit: floor.floorTotal / floor.qty,
+      // The single number the operator is shown: the minimum allowed price in
+      // the field he is actually being corrected in.
+      suggestUnit: byDiscount
+        ? Math.ceil((floor.floorTotal / floor.qty) * 100 - 1e-6) / 100
+        : (suggest > 0 ? suggest : floor.floorTotal / floor.qty),
+    });
+  }
+  return out;
+}
+
+// «اعتماد أقل سعر»: correct the field the breach came from, then re-scan —
+// raising a line moves the invoice discount onto the others, so this is
+// repeated until the cart is clean (bounded, never endless).
+function salesMarginAcceptFloors() {
+  for (let pass = 0; pass < 5; pass++) {
+    const discs = _salesMarginInvoiceDiscs();
+    const v = salesMarginScan(discs.custPct, discs.extra);
+    if (!v.length) return true;
+    for (const item of v) {
+      const line = _salesCart[item.idx];
+      if (!line) continue;
+      if (item.byDiscount) {
+        // The price was never the problem: shrink the discount, leave 200 at 200.
+        line.discount = item.newDisc;
+      } else {
+        line.manualPrice = item.suggestUnit;
+        line.discount = item.newDisc;
+      }
+      allocateSalesLine(line, line.key);
+    }
+    renderSalesCart();
+  }
+  const discs = _salesMarginInvoiceDiscs();
+  const left = salesMarginScan(discs.custPct, discs.extra);
+  if (left.length) alert(t('sales.marginWarn') + '\n' + left.map(x => x.name).join(', '));
+  return left.length === 0;
+}
+
+// The two invoice-level discounts live in the DOM (both layouts use the same
+// ids), so a live per-line check reads them exactly like the checkout does.
+function _salesMarginInvoiceDiscs() {
+  let custPct = 0;
+  if (_salesCustomerId) {
+    const c = DB.getCustomer(_salesCustomerId);
+    if (c && c.discount > 0) custPct = c.discount;
+  }
+  const el = document.getElementById('salesExtraDisc');
+  return { custPct, extra: el ? (parseFloat(el.value) || 0) : 0 };
+}
+
+let _salesMarginBusy = false;
+// Set by «المواصلة» at checkout: the very next confirmation is the operator's
+// answered warning, so it must not ask twice. Cleared as soon as it is spent.
+let _salesMarginBypass = false;
+let _salesOverpayBypass = false;
+// «المواصلة» at checkout for the customer credit limit (سقف الدين): the very
+// next confirmation is the operator's answered warning, so it must not ask twice.
+let _salesCreditBypass = false;
+
+function showSalesMarginWarning(violations, context) {
+  if (!violations || !violations.length) return false;
+  // A live warning that is still on screen must never let a checkout slip
+  // underneath it: the checkout replaces it, so the guard still holds.
+  if (_salesMarginBusy && context !== 'checkout') return false;
+  if (_salesMarginBusy) closeSalesMarginWarning();
+  _salesMarginBusy = true;
+  const container = document.getElementById('pageContainer') || document.body;
+  let overlay = document.getElementById('salesMarginModal');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'salesMarginModal';
+    overlay.style.zIndex = '99992';
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeSalesMarginWarning(); });
+    container.appendChild(overlay);
+  }
+  overlay.dataset.context = context === 'checkout' ? 'checkout' : 'live';
+  overlay.dataset.violations = JSON.stringify(violations.map(v => v.idx));
+  const rows = violations.map(v => `
+    <div class="sm-row">
+      <div class="sm-name">${escHtml(v.name)}<span class="sm-kind">${v.kind === 'wholesale' ? t('sales.wholesale') : t('sales.unit')}</span></div>
+      <div class="sm-qty" dir="ltr">${Unit.fmtQty(v.qty)}</div>
+      <div class="sm-floor">${t('sales.marginMin')}<b dir="ltr">DA${fmtMoney(v.suggestUnit)}</b></div>
+    </div>`).join('');
+  overlay.innerHTML = `<div class="modal sm-modal">
+    <div class="sm-head">
+      <i class="fas fa-percent"></i> ${t('sales.marginWarn')}
+      <button class="modal-close" type="button" onclick="closeSalesMarginWarning()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="sm-list">${rows}</div>
+    <div class="sm-foot">
+      <button type="button" class="btn btn-secondary" onclick="salesMarginKeepGoing()">${t('sales.marginContinue')}</button>
+      <button type="button" class="btn btn-primary" onclick="salesMarginTakeFloors()">${t('sales.marginAccept')}</button>
+    </div>
+  </div>`;
+  overlay.style.display = 'flex';
+  return true;
+}
+
+// Called after a cart edit: the cashier is told about the floor the moment the
+// number he typed breaks it, not only when the invoice is already assembled.
+function salesMarginLiveCheck() {
+  if (_salesSupMode || _salesMarginBusy) return false;
+  if (!salesMarginEnabled()) return false;
+  const discs = _salesMarginInvoiceDiscs();
+  return showSalesMarginWarning(salesMarginScan(discs.custPct, discs.extra), 'live');
+}
+
+function closeSalesMarginWarning() {
+  _salesMarginBusy = false;
+  const overlay = document.getElementById('salesMarginModal');
+  if (overlay) overlay.style.display = 'none';
+}
+
+// «المواصلة» — السماح بتسجيل مبلغ مدفوع أكبر من الإجمالي (زبون غير مسجل / شراء
+// بدون مورد). «إلغاء» يعرض رسالة «لا يمكن تجاوز المبلغ الإجمالي».
+function showSalesOverpayWarning(total, paid) {
+  const container = document.getElementById('pageContainer') || document.body;
+  let overlay = document.getElementById('salesOverpayModal');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'salesOverpayModal';
+    overlay.style.zIndex = '99994';
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeSalesOverpayWarning(); });
+    container.appendChild(overlay);
+  }
+  overlay.innerHTML = `<div class="modal sm-modal">
+    <div class="sm-head">
+      <i class="fas fa-exclamation-triangle"></i> ${t('sales.overpayTitle')}
+    </div>
+    <div class="sm-list" style="padding:14px;font-size:13px;color:var(--silver-700);line-height:1.7">
+      ${t('sales.overpayMsg')}<br><br>
+      <div dir="ltr" style="text-align:center;font-weight:700;color:var(--bmw-blue-1)">
+        ${t('sales.total') || 'Total'}: DA${fmtMoney(total)}
+      </div>
+    </div>
+    <div class="sm-foot">
+      <button type="button" class="btn btn-secondary" onclick="salesOverpayCancel()">${t('common.cancel') || 'إلغاء'}</button>
+      <button type="button" class="btn btn-primary" onclick="salesOverpayContinue()">${t('sales.overpayContinue')}</button>
+    </div>
+  </div>`;
+  overlay.style.display = 'flex';
+  return true;
+}
+
+function closeSalesOverpayWarning() {
+  const overlay = document.getElementById('salesOverpayModal');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function salesOverpayCancel() {
+  closeSalesOverpayWarning();
+  alert(t('sales.paidExceedsTotal'));
+}
+
+function salesOverpayContinue() {
+  closeSalesOverpayWarning();
+  _salesOverpayBypass = true;
+  confirmSalesCheckout();
+}
+
+// Customer credit limit (سقف الدين) — a sale may not push the customer's
+// outstanding balance past the limit configured for him. Shown in the same
+// style as the margin / overpay warnings; «المواصلة» spends the bypass on this
+// click only.
+function showSalesCreditWarning(projectedBalance, limit, total, balanceBefore) {
+  const container = document.getElementById('pageContainer') || document.body;
+  let overlay = document.getElementById('salesCreditModal');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'salesCreditModal';
+    overlay.style.zIndex = '99994';
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) salesCreditCancel(); });
+    container.appendChild(overlay);
+  }
+  // The debt message blocks the sale for a normal cashier. Only a manager gets
+  // the extra «مواصلة» answer, and only for this one checkout attempt.
+  const canContinue = (typeof Auth !== 'undefined') && typeof Auth.isManager === 'function' && Auth.isManager();
+  const continueBtn = canContinue
+    ? `<button type="button" class="btn btn-primary" onclick="salesCreditContinue()">${t('sales.creditContinue') || 'مواصلة'}</button>`
+    : '';
+  overlay.innerHTML = `<div class="modal sm-modal">
+    <div class="sm-head">
+      <i class="fas fa-triangle-exclamation"></i> ${t('sales.creditBlocked') || t('sales.creditWarn')}
+      <button class="modal-close" type="button" onclick="salesCreditCancel()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="sm-list" style="padding:14px;font-size:13px;color:var(--silver-700);line-height:1.7">
+      <div style="font-size:14px;font-weight:800;color:#b91c1c;line-height:1.9">${t('sales.creditDebtMsg') || 'يجب على هذا العميل دفع الديون السابقة لاستمرار هذه العملية'}</div><br>
+      <div dir="ltr" style="text-align:center;font-weight:700;color:var(--bmw-blue-1)">
+        ${t('sales.currentBalance') || 'Current balance'}: DA${fmtMoney(balanceBefore || 0)} / ${t('sales.creditLimit')}: DA${fmtMoney(limit)}
+      </div>
+      <div dir="ltr" style="text-align:center;font-weight:700;color:#b45309">
+        ${t('sales.projectedBalance')}: DA${fmtMoney(projectedBalance || 0)} / ${t('sales.creditLimit')}: DA${fmtMoney(limit)}
+      </div>
+      <div dir="ltr" style="text-align:center;font-size:12px;color:var(--silver-500)">
+        ${t('sales.total') || 'Total'}: DA${fmtMoney(total || 0)}
+      </div>
+    </div>
+    <div class="sm-foot">
+      <button type="button" class="btn btn-secondary" onclick="salesCreditCancel()">${t('common.cancel') || 'إلغاء'}</button>
+      ${continueBtn}
+    </div>
+  </div>`;
+  overlay.style.display = 'flex';
+  return true;
+}
+
+function closeSalesCreditWarning() {
+  const overlay = document.getElementById('salesCreditModal');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function salesCreditCancel() {
+  closeSalesCreditWarning();
+}
+
+function salesCreditContinue() {
+  // A forged/stale call must never override the limit for a non-manager.
+  if (!((typeof Auth !== 'undefined') && typeof Auth.isManager === 'function' && Auth.isManager())) {
+    closeSalesCreditWarning();
+    alert(t('sales.creditDebtMsg') || 'يجب على هذا العميل دفع الديون السابقة لاستمرار هذه العملية');
+    return;
+  }
+  closeSalesCreditWarning();
+  _salesCreditBypass = true;
+  confirmSalesCheckout();
+}
+
+// «المواصلة» — the operator accepts the hurt margin. Only the checkout path
+// writes anything: a live warning dismissed mid-typing is not a sale yet, and
+// the same line is checked again when the cashier confirms the invoice.
+function salesMarginKeepGoing() {
+  const overlay = document.getElementById('salesMarginModal');
+  let idxs = [];
+  try { idxs = JSON.parse((overlay && overlay.dataset.violations) || '[]'); } catch (e) { idxs = []; }
+  closeSalesMarginWarning();
+  if (overlay && overlay.dataset.context === 'checkout') {
+    const lines = idxs.map(i => {
+      const l = _salesCart[i];
+      return l ? `${l.name}×${Unit.fmtQty(l.qty)}=${fmtMoney(l.total)}` : '';
+    }).filter(Boolean).join(' | ');
+    try {
+      DB.logAudit({ action: 'marginOverride', entity: 'invoice', detail: `${t('sales.marginWarn')}: ${lines}` });
+    } catch (e) {}
+    _salesMarginBypass = true;
+    confirmSalesCheckout();
+  }
+}
+
+function salesMarginTakeFloors() {
+  const overlay = document.getElementById('salesMarginModal');
+  const wasCheckout = overlay && overlay.dataset.context === 'checkout';
+  closeSalesMarginWarning();
+  const clean = salesMarginAcceptFloors();
+  if (wasCheckout && clean) confirmSalesCheckout();
+}
+
+
+
+/* ============================================================
+   MARGIN SETTINGS PANEL (نافذة إعدادات نسبة البيع)
+
+   Guarded by the store password: the percentages decide what the shop
+   is allowed to sell at, so a cashier cannot change them even though he
+   sees the warning the rule produces. Electron renderer has no prompt(),
+   so this is an overlay like the rest of the sales modals.
+   ============================================================ */
+let _msDraft = null;
+
+async function salesMarginUnlock(password) {
+  const stored = (typeof Auth !== 'undefined' && Auth.getStorePassword) ? (Auth.getStorePassword() || '') : '';
+  if (stored) return String(password) === String(stored);
+  // A remembered session keeps no copy of the password: fall back to the same
+  // offline hash the login screen verifies with.
+  if (typeof Auth !== 'undefined' && typeof Auth.verifyLocalPassword === 'function' && typeof Auth.getUserCode === 'function') {
+    try { return await Auth.verifyLocalPassword(Auth.getUserCode(), password || ''); } catch (e) { return false; }
+  }
+  return false;
+}
+
+function openSalesMarginSettings() {
+  const container = document.getElementById('pageContainer') || document.body;
+  let overlay = document.getElementById('salesMarginCfgModal');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'salesMarginCfgModal';
+    overlay.style.zIndex = '99993';
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeSalesMarginSettings(); });
+    container.appendChild(overlay);
+  }
+  _msDraft = null;
+  overlay.style.display = 'flex';
+  overlay.innerHTML = `<div class="modal ms-modal">
+    <div class="qk-head">
+      <div class="qk-head-title"><i class="fas fa-percent" style="color:var(--bmw-blue-1)"></i> ${t('sales.marginBtn')}</div>
+      <button class="modal-close" type="button" onclick="closeSalesMarginSettings()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="ms-lock">
+      <label class="ms-label" for="msPass">${t('sales.marginPwd')}</label>
+      <input id="msPass" class="form-input" type="password" autocomplete="off" onkeydown="if(event.key==='Enter')salesMarginUnlockDo()">
+      <div id="msPassError" style="color:#ff6b6b;font-size:12px;display:none">${t('sales.marginPwdBad')}</div>
+      <div class="ms-foot" style="padding:0">
+        <button type="button" class="btn btn-primary" onclick="salesMarginUnlockDo()">${t('common.confirm')}</button>
+      </div>
+    </div>
+  </div>`;
+  const inp = document.getElementById('msPass');
+  if (inp) setTimeout(function () { inp.focus(); }, 0);
+}
+
+async function salesMarginUnlockDo() {
+  const inp = document.getElementById('msPass');
+  const ok = await salesMarginUnlock(inp ? inp.value : '');
+  const err = document.getElementById('msPassError');
+  if (!ok) { if (err) err.style.display = 'block'; if (inp) inp.select(); return; }
+  _msDraft = salesMarginConfig();
+  _msRender();
+}
+
+function closeSalesMarginSettings() {
+  const overlay = document.getElementById('salesMarginCfgModal');
+  if (overlay) overlay.style.display = 'none';
+  _msDraft = null;
+}
+
+// Pickers for the three exception levels. Everything comes from the live
+// catalogue, so a rule can never point at a brand or a family that was renamed
+// out of existence without showing up as an orphan row here.
+function _msCategoryOptions() {
+  return (typeof window.getProductFamilies === 'function' ? window.getProductFamilies() : [])
+    .map(f => ({ id: String(f).trim().toLowerCase(), label: f }));
+}
+function _msBrandOptions() {
+  const brands = (typeof BRANDS !== 'undefined' && BRANDS) ? [...(BRANDS.global || []), ...(BRANDS.chinese || [])] : [];
+  return brands.map(b => ({ id: String(b.id), label: b.name }));
+}
+function _msProductOptions() {
+  const seen = {};
+  const out = [];
+  for (const g of getSalesGroups()) {
+    if (!g.key || seen[g.key]) continue;
+    seen[g.key] = 1;
+    out.push({ id: _msProductId(g.key), label: g.name + (g.barcode ? ' — ' + g.barcode : '') });
+  }
+  out.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  return out.slice(0, 800);
+}
+function _msOptionsFor(scope) {
+  if (scope === 'brand') return _msBrandOptions();
+  if (scope === 'product') return _msProductOptions();
+  return _msCategoryOptions();
+}
+
+function _msSelect(options, selectedId, onchange, placeholder) {
+  const head = placeholder ? `<option value="">${placeholder}</option>` : '';
+  const body = options.map(o =>
+    `<option value="${escHtml(o.id)}"${String(o.id) === String(selectedId) ? ' selected' : ''}>${escHtml(o.label)}</option>`).join('');
+  const known = options.some(o => String(o.id) === String(selectedId));
+  const orphan = !known && selectedId
+    ? `<option value="${escHtml(selectedId)}" selected>${escHtml(selectedId)}</option>` : '';
+  return `<select class="form-input" onchange="${onchange}">${head}${orphan}${body}</select>`;
+}
+
+function _msRuleRow(r, i) {
+  const extras = (r && r.extras) || {};
+  const extraInputs = salesExtraFields().map(f => {
+    const v = extras[f.id];
+    return `<input class="form-input ms-input ms-extra-input" type="number" min="0" max="100" step="0.5"
+      title="${escHtml(f.name)}" placeholder="${escHtml(f.name)}" style="border-color:${escHtml(f.color)}"
+      value="${v == null ? '' : v}" onchange="salesMarginSetPct(${i}, 'extra:${escHtml(f.id)}', this.value)">`;
+  }).join('');
+  return `<div class="ms-rule">
+    ${_msSelect([{ id: 'category', label: t('sales.marginScopeCat') }, { id: 'brand', label: t('sales.marginScopeBrand') }, { id: 'product', label: t('sales.marginScopeProduct') }],
+      r.scope, `salesMarginSetRuleScope(${i}, this.value)`, '')}
+    ${_msSelect(_msOptionsFor(r.scope), r.id, `salesMarginSetTarget(${i}, this.value)`, t('sales.marginPick'))}
+    <span class="ms-pcts">
+      <input class="form-input ms-input" type="number" min="0" max="100" step="0.5" placeholder="${t('sales.marginRetail')}"
+        value="${r.retail == null ? '' : r.retail}" onchange="salesMarginSetPct(${i}, 'retail', this.value)">
+      <input class="form-input ms-input" type="number" min="0" max="100" step="0.5" placeholder="${t('sales.marginWholesale')}"
+        value="${r.wholesale == null ? '' : r.wholesale}" onchange="salesMarginSetPct(${i}, 'wholesale', this.value)">
+      ${extraInputs}
+    </span>
+    <button type="button" class="btn btn-secondary ms-del" onclick="salesMarginDropRule(${i})" title="${t('common.delete')}"><i class="fas fa-trash"></i></button>
+  </div>`;
+}
+
+function _msRender() {
+  const overlay = document.getElementById('salesMarginCfgModal');
+  if (!overlay || !_msDraft) return;
+  const cfg = _msDraft;
+  const rows = cfg.rules.map((r, i) => _msRuleRow(r, i)).join('');
+  overlay.innerHTML = `<div class="modal ms-modal">
+    <div class="qk-head">
+      <div class="qk-head-title"><i class="fas fa-percent" style="color:var(--bmw-blue-1)"></i> ${t('sales.marginTitle')}</div>
+      <button class="modal-close" type="button" onclick="closeSalesMarginSettings()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="ms-form">
+      <label class="ms-row"><input type="checkbox" id="msEnabled" ${cfg.enabled ? 'checked' : ''} onchange="salesMarginSetEnabled(this.checked)"> ${t('sales.marginEnabled')}</label>
+      <div class="ms-row">
+        <span class="ms-label">${t('sales.marginStore')}</span>
+        <input class="form-input ms-input" type="number" min="0" max="100" step="0.5" placeholder="${t('sales.marginNone')}"
+          value="${cfg.store.retail == null ? '' : cfg.store.retail}" onchange="salesMarginSetStore('retail', this.value)" title="${t('sales.marginRetail')}">
+        <input class="form-input ms-input" type="number" min="0" max="100" step="0.5" placeholder="${t('sales.marginNone')}"
+          value="${cfg.store.wholesale == null ? '' : cfg.store.wholesale}" onchange="salesMarginSetStore('wholesale', this.value)" title="${t('sales.marginWholesale')}">
+      </div>
+      ${salesExtraFields().map(f => `<div class="ms-row">
+        <span class="ms-label" style="color:${escHtml(f.color)}"><i class="fas fa-tag"></i> ${escHtml(f.name)}</span>
+        <input class="form-input ms-input" type="number" min="0" max="100" step="0.5" placeholder="${t('sales.marginNone')}"
+          style="border-color:${escHtml(f.color)}"
+          value="${(cfg.store.extras && cfg.store.extras[f.id] != null) ? cfg.store.extras[f.id] : ''}"
+          onchange="salesMarginSetStore('extra:${escHtml(f.id)}', this.value)" title="${escHtml(f.name)}">
+      </div>`).join('')}
+      <div class="ms-hint">${t('sales.marginRetail')} / ${t('sales.marginWholesale')} — ${t('sales.marginHint')}</div>
+      <div class="ms-row"><span class="ms-label">${t('sales.marginRules')}</span>
+        <button type="button" class="btn btn-secondary" onclick="salesMarginAddRule()"><i class="fas fa-plus"></i> ${t('sales.marginAdd')}</button>
+      </div>
+      ${cfg.rules.length
+        ? `<div class="ms-rule-head"><span>${t('sales.marginScopeCat')} / ${t('sales.marginScopeBrand')} / ${t('sales.marginScopeProduct')}</span><span>${t('sales.marginPick')}</span><span>${t('sales.marginRetail')} / ${t('sales.marginWholesale')}</span><span></span></div>
+           <div style="display:flex;flex-direction:column;gap:6px">${rows}</div>`
+        : `<div class="ms-hint">${t('sales.marginNone')}</div>`}
+    </div>
+    <div class="sm-foot">
+      <button type="button" class="btn btn-secondary" onclick="closeSalesMarginSettings()">${t('common.cancel')}</button>
+      <button type="button" class="btn btn-primary" onclick="salesMarginSave()">${t('common.save')}</button>
+    </div>
+  </div>`;
+}
+
+function salesMarginSetEnabled(v) { if (_msDraft) _msDraft.enabled = !!v; }
+function salesMarginSetStore(field, v) {
+  if (!_msDraft) return;
+  const n = v === '' ? null : Number(v);
+  const clean = (isFinite(n) && n >= 0 && n <= 100) ? n : null;
+  if (String(field).indexOf('extra:') === 0) {
+    if (!_msDraft.store.extras) _msDraft.store.extras = {};
+    const id = String(field).slice(6);
+    if (clean == null) delete _msDraft.store.extras[id];
+    else _msDraft.store.extras[id] = clean;
+    return;
+  }
+  _msDraft.store[field] = clean;
+}
+function salesMarginAddRule() {
+  if (!_msDraft) return;
+  _msDraft.rules.push({ scope: 'category', id: '', label: '', retail: null, wholesale: null, extras: {} });
+  _msRender();
+}
+// Switching a rule to another level retargets it: a brand id is meaningless as
+// a product key, so the row keeps a valid selection instead of an orphan rule.
+function salesMarginSetRuleScope(i, scope) {
+  const r = _msDraft && _msDraft.rules[i];
+  if (!r) return;
+  r.scope = scope === 'brand' || scope === 'product' ? scope : 'category';
+  const opts = _msOptionsFor(r.scope);
+  r.id = opts.length ? opts[0].id : '';
+  r.label = opts.length ? opts[0].label : '';
+  _msRender();
+}
+function salesMarginSetTarget(i, id) {
+  const r = _msDraft && _msDraft.rules[i];
+  if (!r) return;
+  const hit = _msOptionsFor(r.scope).find(o => o.id === id);
+  r.id = String(id);
+  r.label = hit ? hit.label : '';
+  _msRender();
+}
+function salesMarginSetPct(i, field, v) {
+  const r = _msDraft && _msDraft.rules[i];
+  if (!r) return;
+  const n = v === '' ? null : Number(v);
+  const clean = (isFinite(n) && n >= 0 && n <= 100) ? n : null;
+  if (String(field).indexOf('extra:') === 0) {
+    if (!r.extras) r.extras = {};
+    const id = String(field).slice(6);
+    if (clean == null) delete r.extras[id];
+    else r.extras[id] = clean;
+    return;
+  }
+  r[field] = clean;
+}
+function salesMarginDropRule(i) {
+  if (!_msDraft) return;
+  _msDraft.rules.splice(i, 1);
+  _msRender();
+}
+
+function salesMarginSave() {
+  if (!_msDraft) return;
+  const cleanExtras = (map) => {
+    const out = {};
+    Object.keys(map || {}).forEach(id => {
+      const n = Number(map[id]);
+      if (isFinite(n) && n >= 0 && n <= 100) out[id] = n;
+    });
+    return out;
+  };
+  const clean = {
+    enabled: !!_msDraft.enabled,
+    store: {
+      retail: _msDraft.store.retail,
+      wholesale: _msDraft.store.wholesale,
+      extras: cleanExtras(_msDraft.store.extras),
+    },
+    rules: _msDraft.rules
+      .filter(r => r && r.id && (r.retail != null || r.wholesale != null || Object.keys(cleanExtras(r.extras)).length))
+      .map(r => ({
+        scope: r.scope, id: String(r.id), label: String(r.label || ''),
+        retail: r.retail, wholesale: r.wholesale, extras: cleanExtras(r.extras),
+      })),
+  };
+  try {
+    DB.setMeta(SALES_MARGIN_META, clean);
+    DB.logAudit({ action: 'marginConfig', entity: 'settings', detail: `enabled=${clean.enabled} store=${clean.store.retail}/${clean.store.wholesale} rules=${clean.rules.length}` });
+  } catch (e) {
+    alert((e && e.message) || String(e));
+    return;
+  }
+  closeSalesMarginSettings();
+  // The renderer ships no toast helper, and Electron has no window.prompt either.
+  alert(t('sales.marginSaved'));
+}
+
+/* ============================================================
    PHARMACY-STOCK HELPERS — expiry-aware availability.
    ============================================================ */
+
 function salesPharmacyOn() {
   return typeof window.getPharmacyMode === 'function' && !!window.getPharmacyMode();
 }
@@ -410,15 +1565,15 @@ function salesGroupExpiryChip(g) {
   });
   if (expiredDays !== null) {
     const label = (expiredDays === 0)
-      ? (t('expiry.expiresToday') || 'ينتهي اليوم')
-      : (t('expiry.overdue') || 'متأخر') + ' ' + Math.abs(expiredDays) + ' ' + (t('expiry.days') || 'يوم');
+      ? t('expiry.expiresToday')
+      : t('expiry.overdue') + ' ' + Math.abs(expiredDays) + ' ' + t('expiry.days');
     return '<span class="exp-chip exp-chip-expired" title="' + escHtml(expiredDate || '') + '"><i class="fas fa-ban"></i> ' + escHtml(label) + '</span>';
   }
   if (expiringDays !== null) {
-    return '<span class="exp-chip exp-chip-expiring"><i class="fas fa-hourglass-half"></i> ' + (t('expiry.inDays') || 'بعد') + ' ' + expiringDays + ' ' + (t('expiry.days') || 'يوم') + '</span>';
+    return '<span class="exp-chip exp-chip-expiring"><i class="fas fa-hourglass-half"></i> ' + t('expiry.inDays') + ' ' + expiringDays + ' ' + t('expiry.days') + '</span>';
   }
   if (hasDate) {
-    return '<span class="exp-chip exp-chip-ok"><i class="fas fa-check-circle"></i> ' + (t('expiry.sumOk') || 'سليم') + '</span>';
+    return '<span class="exp-chip exp-chip-ok"><i class="fas fa-check-circle"></i> ' + t('expiry.sumOk') + '</span>';
   }
   return '';
 }
@@ -516,6 +1671,22 @@ function addSalesSubstitute(index) {
 }
 
 function allocateSalesLine(line, key) {
+  if (isFreeSalesKey(key || line.key)) {
+    // An unlisted line has no batches to allocate against: price × qty, full
+    // stop. The same override and per-line discount rules still apply.
+    const qty = Unit.roundQty(Number(line.qty) || 0);
+    const manual = line.manualPrice != null && !isNaN(line.manualPrice);
+    const price = Math.max(salesLineMinPrice(line), 0, Number(manual ? line.manualPrice : line.price) || 0);
+    line.entries = qty > 0
+      ? [{ productId: null, name: line.name, barcode: '', qty: qty, price: price, total: price * qty }]
+      : [];
+    line.blockedExpired = 0;
+    line.shortQty = 0;
+    line.baseTotal = price * qty;
+    line.price = price;
+    line.total = line.baseTotal - Math.max(0, Math.min(line.discount || 0, line.baseTotal));
+    return;
+  }
   const g = getSalesGroupByKey(key);
   if (!g) {
     line.entries = [];
@@ -528,7 +1699,6 @@ function allocateSalesLine(line, key) {
   const entries = [];
   let remaining = Unit.roundQty(line.qty);
   let latestPrice = 0;
-  const wholesale = line.mode === 'wholesale';
   const pharm = salesPharmacyOn();
   let blockedExpired = 0;
   for (const r of g.records) {
@@ -538,9 +1708,14 @@ function allocateSalesLine(line, key) {
       blockedExpired += (r.quantity || 0);
       continue;
     }
-    const take = Unit.roundQty(isFixedRecord(r) ? remaining : Math.min(r.quantity || 0, remaining));
+    if (r.isBundle) {
+      const mx = bundleMaxSellable(r);
+      if (mx <= 0) continue;
+      if (remaining > mx) remaining = mx;
+    }
+    const take = Unit.roundQty(isFixedRecord(r) || r.isBundle ? remaining : Math.min(r.quantity || 0, remaining));
     if (take > 0) {
-      const price = wholesale ? (r.wholesalePrice || r.sellPrice || 0) : (r.sellPrice || 0);
+      const price = Math.max(salesLineMinPrice(line), salesPriceForRecord(r, line.mode));
       entries.push({ productId: r.id, qty: take, price, total: take * price });
       latestPrice = price;
       remaining = Unit.roundQty(remaining - take);
@@ -551,7 +1726,8 @@ function allocateSalesLine(line, key) {
   line.shortQty = Math.max(0, Unit.roundQty(remaining));
   // Apply a manual per-line unit price override (kept across re-allocation)
   if (line.manualPrice != null && !isNaN(line.manualPrice)) {
-    const mp = Math.max(0, line.manualPrice);
+    const minPrice = salesLineMinPrice(line);
+    const mp = Math.max(minPrice, 0, line.manualPrice);
     entries.forEach(e => { e.price = mp; e.total = e.qty * mp; });
     latestPrice = mp;
   }
@@ -577,7 +1753,7 @@ function _buildSalesCardCtx() {
     lowStockThreshold: DB.getLowStockThreshold(),
     restOrder: !!(window.RestService && window.RestService.canOrderFromSales()),
     restSelf: !!(window.RestService && window.RestService.canSelfOrder()),
-    brands: [...BRANDS.global, ...BRANDS.chinese],
+    brands: _salesAllBrands(),
   };
 }
 
@@ -608,6 +1784,7 @@ function salesCardHTML(g, i) {
   const brand = brands.find(b => b.id === rep.brandId);
   const qtyBadge = outOfStock ? 'danger' : (lowStock ? 'warn' : 'ok');
   const wholeVisible = whole > 0 && whole !== price;
+  const minFloorVisible = salesGroupMinPrice(g) > 0;
   const substituteAvailable = hasSalesSubstitutes(g);
   const chips = (salesPharmacyOn() && (salesFamilyChip(g) || salesGroupExpiryChip(g)))
     ? `<div class="prod-card-chips">${salesFamilyChip(g)}${salesGroupExpiryChip(g)}</div>` : '';
@@ -622,6 +1799,7 @@ function salesCardHTML(g, i) {
         <div class="prod-card-meta">
           <span class="prod-meta"><i class="fas fa-tag"></i> ${t('quickEntry.mark')}: <b>${escHtml(rep.mark || '-')}</b></span>
           <span class="prod-meta mono"><i class="fas fa-barcode"></i> ${escHtml(g.barcode || '-')}</span>
+          ${(typeof ProductQR !== 'undefined' ? ProductQR.htmlOf(rep) : '')}
           ${multi ? `<span class="prod-meta"><i class="fas fa-layer-group"></i> ${g.records.length} ${t('sales.multiBatches')}</span>` : ''}
         </div>
       </div>
@@ -635,9 +1813,11 @@ function salesCardHTML(g, i) {
       <div class="prod-field"><span class="prod-field-label"><i class="fas fa-warehouse"></i> ${t('quickEntry.storageLocation')}</span><span class="prod-field-value">${escHtml(rep.storageLocation || '-')}</span></div>
       <div class="prod-field"><span class="prod-field-label"><i class="fas fa-trademark"></i> ${t('inventory.col3')}</span><span class="prod-field-value">${escHtml(brand ? brand.name : (rep.brandId || '-'))}</span></div>
     </div>
-    <div class="prod-card-pricerow ${wholeVisible ? '' : 'single'}">
+    <div class="prod-card-pricerow ${(wholeVisible || minFloorVisible) ? '' : 'single'}">
       <div class="price-pill price-unit"><span>${t('inventory.col6')}${rep ? ' / ' + Unit.esc(Unit.label(rep)) : ''}</span><b>DA${fmtMoney(price)}</b></div>
       ${wholeVisible ? `<div class="price-pill price-whole"><span>${t('quickEntry.wholesalePrice')}</span><b>DA${fmtMoney(whole)}</b></div>` : ''}
+      ${salesExtraPillsHTML(rep)}
+      ${salesMinPriceBadge(g, false)}
     </div>
     ${substituteAvailable ? `<button type="button" class="prod-card-oos-btn" onclick="event.stopPropagation();openSalesSubstitutes(${i})"><i class="fas fa-pills"></i> ${t('sales.findSubstitute')}</button>` : ''}
     ${ctx.restOrder ? `<button type="button" class="rest-order-btn rest-order-btn-primary" onclick="event.stopPropagation();window.RestService.restOrderGroup(${i})"><i class="fas fa-utensils"></i> ${escHtml(t('rest.orderBtn'))}</button>` : ''}
@@ -665,36 +1845,73 @@ function renderSalesProducts(filter) {
     console.error('[sales] #salesProductGrid is missing from sales.html');
     return;
   }
+
+  // Drop a brand that was removed from favourites (or deleted) meanwhile.
+  if (_salesFavBrandActive && _salesFavBrandIds().indexOf(String(_salesFavBrandActive)) === -1) {
+    _salesFavBrandActive = null;
+  }
+  _syncSalesFavBrandsBtn();
+
   const q = _salesSearchQuery;
   const hiding = _salesHideUntilSearch && (!q || q.trim().length < 2);
-  let groups;
-  if (hiding) {
-    // Hide-until-search: render nothing and skip group building + sorting
-    // entirely, so opening the page stays cheap on very large catalogues.
-    groups = [];
-  } else if (q && q.trim().length >= 2) {
-    // Smart multi-word search: every word must match name or barcode, ranked by
-    // match quality, out-of-stock pushed to the bottom, and capped at 200 so a
-    // huge result set is bounded (the grid itself is also windowed).
-    groups = _searchSalesGroups(getSalesGroups(), q, 200);
-  } else {
-    groups = getSalesGroups();
-    // Stable sort: out-of-stock products sink to the bottom, everything else keeps its order
-    groups.sort((a, b) => (salesGroupOutOfStockCached(a) ? 1 : 0) - (salesGroupOutOfStockCached(b) ? 1 : 0));
+  // Groups are also needed (for counts only) when the strip is visible while
+  // hide-until-search is active; that is the only time we build them anyway.
+  const needGroups = !hiding || _salesFavBrandsOn || !!_salesFavBrandActive;
+  let groups = [];
+  if (needGroups) {
+    if (q && q.trim().length >= 2) {
+      // Smart multi-word search: every word must match name or barcode, ranked by
+      // match quality, out-of-stock pushed to the bottom, and capped at 200 so a
+      // huge result set is bounded (the grid itself is also windowed).
+      groups = _searchSalesGroups(getSalesGroups(), q, 200);
+    } else {
+      groups = getSalesGroups();
+      // Stable sort: out-of-stock products sink to the bottom, everything else keeps its order
+      groups.sort((a, b) => (salesGroupOutOfStockCached(a) ? 1 : 0) - (salesGroupOutOfStockCached(b) ? 1 : 0));
+    }
   }
   _salesGroupList = groups;
+
+  // Partition: the active favourite brand gets its own section on top, the rest
+  // stays in the main grid under «بقية المنتجات». Absolute indices are kept so
+  // every card action still targets the right group.
+  const activeId = _salesFavBrandActive ? String(_salesFavBrandActive) : null;
+  const mainItems = [];
+  const favItems = [];
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    if (activeId && _salesGroupBrandId(g) === activeId) favItems.push({ g, idx: i });
+    else mainItems.push({ g, idx: i });
+  }
+  _salesFavGroups = activeId ? favItems : [];
+  _salesMainGroups = hiding ? [] : mainItems;
+
   _salesRenderedCount = 0;
   _salesStart = 0;
   _salesGridLoadingMore = false;
+  _salesFavRendered = 0;
+
+  _renderSalesFavStrip(groups);
+  _renderSalesFavActive();
+
+  const restLabel = document.getElementById('salesFavRestLabel');
+  const restCount = document.getElementById('salesFavRestCount');
+  const showRest = !hiding && !!activeId && _salesMainGroups.length > 0;
+  if (restLabel) restLabel.style.display = showRest ? 'flex' : 'none';
+  if (restCount) restCount.textContent = showRest ? `${_salesMainGroups.length} ${t('common.product')}` : '';
 
   const count = document.getElementById('salesProdCount');
   if (count) count.textContent = `${groups.length} ${t('common.product')}`;
 
   grid.innerHTML = '';
-  if (groups.length === 0) {
+  if (_salesMainGroups.length === 0) {
     grid.innerHTML = `<div class="sales-grid-empty">
-      <i class="fas ${hiding ? 'fa-search' : 'fa-box-open'}"></i>
-      <p>${hiding ? 'اكتب في البحث لعرض المنتجات…' : (q ? t('sales.emptyResults') : t('sales.emptyProducts'))}</p>
+      <i class="fas ${hiding ? 'fa-search' : (activeId ? 'fa-star' : 'fa-box-open')}"></i>
+      <p>${hiding
+        ? t('inventory.hiddenUntilSearch')
+        : (activeId
+          ? t('sales.favBrandsNoRest')
+          : (q ? t('sales.emptyResults') : t('sales.emptyProducts')))}</p>
     </div>`;
     return;
   }
@@ -705,19 +1922,11 @@ function renderSalesProducts(filter) {
     // the infinite scroll (the grid froze at the first page forever).
     _salesRenderRAF = null;
     if (!grid || !grid.isConnected) return;
-    if (_salesRenderedCount >= groups.length) return;
+    if (_salesRenderedCount >= _salesMainGroups.length) return;
     const from = _salesRenderedCount;
-    const to = Math.min(from + SALES_GRID_PAGE_SIZE, groups.length);
+    const to = Math.min(from + SALES_GRID_PAGE_SIZE, _salesMainGroups.length);
     let html = '';
-    if (_salesViewMode === 'list') {
-      for (let i = from; i < to; i++) {
-        html += salesListRowHTML(groups[i], i);
-      }
-    } else {
-      for (let i = from; i < to; i++) {
-        html += salesCardHTML(groups[i], i);
-      }
-    }
+    for (let i = from; i < to; i++) html += _salesItemHTML(_salesMainGroups[i]);
     _salesRenderedCount = to;
     grid.insertAdjacentHTML('beforeend', html);
     _trimSalesGrid();
@@ -731,7 +1940,9 @@ function salesListRowHTML(g, i) {
   const totalQty = getGroupAvailableQty(g);
   const price = getGroupActivePrice(g);
   const whole = getGroupWholesalePrice(g);
-  const buy = (typeof getGroupBuyPrice === 'function' ? getGroupBuyPrice(g) : null) || (groupViableRecords(g)[0] && groupViableRecords(g)[0].buyPrice);
+  const buy = getGroupBuyPrice(g);
+  const showBuy = salesBuyPriceVisible();
+  const buyLabel = t('quickEntry.buyPrice');
   const outOfStock = !fixed && totalQty <= 0;
   const multi = g.records.length > 1;
   const rep = groupViableRecords(g)[0] || g.records[0] || {};
@@ -742,28 +1953,38 @@ function salesListRowHTML(g, i) {
   const allCols = !!_salesListAllCols;
   const extraCells = allCols
     ? `<div class="sales-list-row-cell">${multi ? g.records.length : 1}</div>
-       <div class="sales-list-row-cell">${buy ? 'DA' + fmtMoney(buy) : '-'}</div>
+       <div class="sales-list-row-cell">${showBuy ? (buy ? 'DA' + fmtMoney(buy) : '-') : '••••'}</div>
        <div class="sales-list-row-cell">${escHtml(rep.reference || '-')}</div>
        <div class="sales-list-row-cell">${escHtml(rep.countryOfOrigin || '-')}</div>`
     : '';
+  // The reference and every selling price are now visible on the row itself.
+  // The expandable details keep only the remaining information — no duplicate
+  // reference / price lines that could drift out of sync with the visible ones.
   const extraDetails = allCols ? '' : `
       ${multi ? `<span><b>${t('sales.multiBatches')}:</b> ${g.records.length}</span>` : ''}
-      ${buy ? `<span><b>${t('quickEntry.buyPrice') || 'سعر الشراء'}:</b> DA${fmtMoney(buy)}</span>` : ''}
-      <span><b>${t('quickEntry.reference')}:</b> ${referenceCellHTML(rep.reference)}</span>
+      ${showBuy ? (buy ? `<span><b>${buyLabel}:</b> DA${fmtMoney(buy)}</span>` : '') : `<span><b>${buyLabel}:</b> ••••</span>`}
       <span><b>${t('quickEntry.countryOfOrigin')}:</b> ${escHtml(rep.countryOfOrigin || '-')}</span>`;
+  // Keep the exact per-field colours produced by ExtraPrices.pillHTML — only
+  // the layout is compacted by the .sales-list-extra CSS below.
+  const listPrices = `
+      <div class="sales-list-row-prices">
+        <span class="sales-list-price unit"><b>DA${fmtMoney(price)}</b><span class="sales-list-price-kind">${Unit.esc(unitLabel)}</span></span>
+        <span class="sales-list-price whole"><b>${whole > 0 ? 'DA' + fmtMoney(whole) : '-'}</b><span class="sales-list-price-kind">${escHtml(t('sales.wholesale'))}</span></span>
+        ${salesExtraPillsHTML(rep, 'sales-list-extra')}
+        ${salesMinPriceBadge(g, true)}
+      </div>`;
   return `<div class="sales-list-row ${outOfStock ? 'oos' : ''}" onclick="${outOfStock ? '' : `addSalesGroupToCart(${i})`}" data-idx="${i}">
-    <div class="sales-list-row-main">
-      <div class="sales-list-row-name">${escHtml(g.name)}${unitLabel && unitLabel !== Unit.name('piece') ? ` <span class="sc-unit-badge">${Unit.esc(unitLabel)}</span>` : ''}</div>
+    <div class="sales-list-row-name">${escHtml(g.name)}${rep.reference ? ` <span class="sales-list-ref">${referenceCellHTML(rep.reference)}</span>` : ''}${unitLabel && unitLabel !== Unit.name('piece') ? ` <span class="sc-unit-badge">${Unit.esc(unitLabel)}</span>` : ''}</div>
+    <div class="sales-list-row-body">
+      ${listPrices}
       <div class="sales-list-row-meta">${escHtml(g.barcode || '-')} • ${escHtml(rep.mark || '-')} • ${escHtml(brand ? brand.name : (rep.brandId || '-'))}</div>
-    </div>
-    ${extraCells}
-    <div class="sales-list-row-cell">${fixed ? '∞' : Unit.fmtQty(totalQty)}</div>
-    <div class="sales-list-row-price">DA${fmtMoney(price)}</div>
-    <div class="sales-list-row-price">${whole > 0 ? 'DA' + fmtMoney(whole) : '-'}</div>
-    <div class="sales-list-row-actions">
-      ${outOfStock ? '' : `<button type="button" class="sales-list-row-add" onclick="event.stopPropagation();addSalesGroupToCart(${i})"><i class="fas fa-plus"></i></button>`}
-      ${hasSalesSubstitutes(g) ? `<button type="button" class="btn btn-sm" onclick="event.stopPropagation();openSalesSubstitutes(${i})"><i class="fas fa-pills"></i> ${t('sales.findSubstitute')}</button>` : ''}
-      <button type="button" class="sales-list-row-chevron" onclick="event.stopPropagation();toggleSalesListDetails(this)" title="${t('salesDense.details')}"><i class="fas fa-chevron-down"></i></button>
+      ${extraCells}
+      <div class="sales-list-row-cell">${fixed ? '∞' : Unit.fmtQty(totalQty)}</div>
+      <div class="sales-list-row-actions">
+        ${outOfStock ? '' : `<button type="button" class="sales-list-row-add" onclick="event.stopPropagation();addSalesGroupToCart(${i})"><i class="fas fa-plus"></i></button>`}
+        ${hasSalesSubstitutes(g) ? `<button type="button" class="btn btn-sm" onclick="event.stopPropagation();openSalesSubstitutes(${i})"><i class="fas fa-pills"></i> ${t('sales.findSubstitute')}</button>` : ''}
+        <button type="button" class="sales-list-row-chevron" onclick="event.stopPropagation();toggleSalesListDetails(this)" title="${t('salesDense.details')}"><i class="fas fa-chevron-down"></i></button>
+      </div>
     </div>
     <div class="sales-list-row-details">
       ${extraDetails}
@@ -783,9 +2004,23 @@ function toggleSalesListDetails(btn) {
   if (icon) icon.classList.toggle('fa-chevron-up');
 }
 
-const _debouncedSalesSearch = debounce((q) => { renderSalesProducts(q); }, 200);
+let _salesSearchTimer = null;
+function _cancelSalesSearch() {
+  if (_salesSearchTimer) { clearTimeout(_salesSearchTimer); _salesSearchTimer = null; }
+}
 function filterSalesProducts(q) {
-  _debouncedSalesSearch(q);
+  _cancelSalesSearch();
+  _salesSearchTimer = setTimeout(function () {
+    _salesSearchTimer = null;
+    renderSalesProducts(q);
+    if (q && String(q).trim().length >= 2) { try { DB.logSearch({ query: q, context: 'sales-products' }); } catch (e) {} }
+  }, 200);
+}
+
+function _applySalesGridModeTo(el) {
+  if (!el) return;
+  el.classList.toggle('sales-list-view', _salesViewMode === 'list');
+  el.classList.toggle('all-cols', !!_salesListAllCols);
 }
 
 function _syncSalesViewUI() {
@@ -793,10 +2028,8 @@ function _syncSalesViewUI() {
   const gb = document.getElementById('salesViewGridBtn');
   const lb = document.getElementById('salesViewListBtn');
   const ac = document.getElementById('salesListAllCols');
-  if (g) {
-    g.classList.toggle('sales-list-view', _salesViewMode === 'list');
-    g.classList.toggle('all-cols', !!_salesListAllCols);
-  }
+  _applySalesGridModeTo(g);
+  _applySalesGridModeTo(document.getElementById('salesFavActiveGrid'));
   if (gb) gb.classList.toggle('active', _salesViewMode === 'grid');
   if (lb) lb.classList.toggle('active', _salesViewMode === 'list');
   if (ac) ac.checked = !!_salesListAllCols;
@@ -812,11 +2045,11 @@ function _syncSalesHideBtn() {
   if (_salesHideUntilSearch) {
     btn.classList.add('active');
     btn.setAttribute('aria-pressed', 'true');
-    btn.title = 'عرض كل المنتجات';
+    btn.title = t('inventory.showOnlyProducts');
   } else {
     btn.classList.remove('active');
     btn.setAttribute('aria-pressed', 'false');
-    btn.title = 'إخفاء المنتجات حتى البحث (تظهر المطابقة فقط)';
+    btn.title = t('inventory.hideUntilSearch');
   }
 }
 
@@ -825,7 +2058,7 @@ function toggleSalesHideUntilSearch() {
   try { localStorage.setItem('zmt_sales_hide_until_search', _salesHideUntilSearch ? '1' : '0'); } catch (e) {}
   _syncSalesHideBtn();
   if (_salesHideUntilSearch) {
-    const input = document.getElementById('salesSearch');
+    const input = document.getElementById('salesBarcodeScan');
     if (input) setTimeout(function () { input.focus(); }, 60);
   }
   renderSalesProducts();
@@ -837,11 +2070,8 @@ function setSalesView(mode) {
   const g = document.getElementById('salesProductGrid');
   const gb = document.getElementById('salesViewGridBtn');
   const lb = document.getElementById('salesViewListBtn');
-  if (g) {
-    if (_salesViewMode === 'list') g.classList.add('sales-list-view');
-    else g.classList.remove('sales-list-view');
-    g.classList.toggle('all-cols', !!_salesListAllCols);
-  }
+  _applySalesGridModeTo(g);
+  _applySalesGridModeTo(document.getElementById('salesFavActiveGrid'));
   if (gb) gb.classList.toggle('active', _salesViewMode === 'grid');
   if (lb) lb.classList.toggle('active', _salesViewMode === 'list');
   // Re-render to reflect view mode
@@ -960,63 +2190,466 @@ function initSalesCartWidth() {
 function setupSalesBarcode() {
   const input = document.getElementById('salesBarcodeScan');
   if (!input) return;
+  // Replace the node so a re-entry into the page never stacks handlers.
   const newInput = input.cloneNode(true);
   input.parentNode.replaceChild(newInput, input);
   newInput.addEventListener('keydown', handleSalesBarcodeScan);
-  newInput.addEventListener('input', function() {
-    const cleaned = cleanScannedCode(this.value);
-    if (cleaned !== this.value) this.value = cleaned;
+  // This field is both the scanner and the smart name search: typing filters
+  // the grid, Enter does the real lookup (scale -> barcode -> unique name).
+  newInput.addEventListener('input', function () {
+    const st = document.getElementById('salesBarcodeStatus');
+    if (st && st.textContent !== '...') { st.textContent = t('sales.scannerReady'); st.style.color = '#888'; }
+    filterSalesProducts(this.value);
   });
   newInput.focus();
 }
 
+// A scan is authoritative; a name is only sold automatically when exactly one
+// product matches. The raw query is searched (never the layout-cleaned one) so
+// Arabic names are not mangled by the barcode keyboard map.
+function _salesScanNameMatches(query) {
+  const q = normSearch(query);
+  if (!q || q.length < 2) return [];
+  return _searchSalesGroups(getSalesGroups(), q, 20);
+}
+
 function handleSalesBarcodeScan(e) {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    const input = document.getElementById('salesBarcodeScan');
-    const code = cleanScannedCode(input.value);
-    if (!code) return;
+  if (!e || e.key !== 'Enter') return;
+  e.preventDefault();
+  // A phone scan must never add a line behind an open dialog.
+  if (salesAnyOverlayOpen()) return;
 
-    const beam = document.getElementById('salesScannerBeam');
-    if (beam) beam.classList.add('active');
+  const input = document.getElementById('salesBarcodeScan');
+  if (!input) return;
+  const raw = String(input.value || '').trim();
+  if (!raw) return;
 
-    document.getElementById('salesBarcodeStatus').textContent = '...';
-    document.getElementById('salesBarcodeStatus').style.color = '#0066B1';
+  // This Enter is a lookup, not a live search: drop the pending filter paint so
+  // the cleared field is not filtered by the code we just sold.
+  _cancelSalesSearch();
 
-    const prod = DB.getProductByBarcode(code);
-    if (prod) {
-      const gKey = salesGroupKey(prod);
-      const g = getSalesGroupByKey(gKey);
-      const available = g ? !isGroupOutOfStock(g) : prod.fixed === true || (prod.quantity || 0) > 0;
+  const beam = document.getElementById('salesScannerBeam');
+  if (beam) beam.classList.add('active');
+
+  const statusEl = document.getElementById('salesBarcodeStatus');
+  const setStatus = function (txt, color) {
+    if (!statusEl) return;
+    statusEl.textContent = txt;
+    statusEl.style.color = color;
+  };
+  setStatus('...', '#0066B1');
+
+  const cleaned = cleanScannedCode(raw);
+
+  // A label off the counter scale is read before the shelf is asked: its money,
+  // not a price list, is what the customer is charged.
+  const scaleHit = cleaned ? salesScaleLookup(cleaned) : null;
+  if (scaleHit) {
+    salesScaleHandle(scaleHit);
+  } else {
+    let scanned = cleaned ? DB.getProductByBarcode(cleaned) : null;
+    let scannedBundle = null;
+    // Bundles carry their own printed barcode and are sold exactly like a
+    // product. Products are checked first (historical behaviour), then the
+    // bundle index so an old label never becomes unreachable.
+    if (!scanned && cleaned && typeof DB.getBundleByBarcode === 'function') {
+      scannedBundle = DB.getBundleByBarcode(cleaned);
+      if (scannedBundle) scanned = scannedBundle;
+    }
+    if (scanned) {
+      const gKey = salesGroupKey(scanned);
+      let g = getSalesGroupByKey(gKey);
+      // A bundle created or edited after the till snapshot must still resolve.
+      if (!g && scannedBundle && typeof salesAllProducts === 'function') {
+        _salesProducts = salesAllProducts();
+        invalidateSalesGroupsCache();
+        g = getSalesGroupByKey(gKey);
+      }
+      const available = g ? !isGroupOutOfStock(g) : (scanned.fixed === true || (scanned.quantity || 0) > 0);
       if (!available) {
         // Pharmacy: expired batch blocks the sale — tell the cashier exactly why.
         const expired = g && salesPharmacyOn() && hasExpiredBatches(g);
-        document.getElementById('salesBarcodeStatus').textContent = expired ? t('sales.scannerExpired') : t('sales.unavailable');
-        document.getElementById('salesBarcodeStatus').style.color = '#dc3545';
+        setStatus(expired ? t('sales.scannerExpired') : t('sales.unavailable'), '#dc3545');
         input.value = '';
+        renderSalesProducts('');
         if (beam) setTimeout(() => beam.classList.remove('active'), 400);
         return;
       }
       addSalesLine(gKey);
-      document.getElementById('salesBarcodeStatus').textContent = t('sales.scannerDone');
-      document.getElementById('salesBarcodeStatus').style.color = '#28a745';
+      setStatus(t('sales.scannerDone'), '#28a745');
     } else {
-      document.getElementById('salesBarcodeStatus').textContent = t('sales.scannerNotFound');
-      document.getElementById('salesBarcodeStatus').style.color = '#e65100';
+      const numeric = /^[0-9]+$/.test(cleaned || '');
+      const matches = numeric ? [] : _salesScanNameMatches(raw);
+      if (matches.length === 1) {
+        const g = matches[0];
+        if (isGroupOutOfStock(g)) {
+          const expired = salesPharmacyOn() && hasExpiredBatches(g);
+          setStatus(expired ? t('sales.scannerExpired') : t('sales.unavailable'), '#dc3545');
+          input.value = '';
+          renderSalesProducts('');
+          if (beam) setTimeout(() => beam.classList.remove('active'), 400);
+          return;
+        }
+        addSalesLine(g.key);
+        setStatus(t('sales.scannerDone'), '#28a745');
+      } else if (matches.length > 1) {
+        // Ambiguous: never guess. Keep the text and show the matches so the
+        // cashier chooses the right product from the grid.
+        setStatus(t('sales.scannerMultiple'), '#e65100');
+        renderSalesProducts(raw);
+        if (beam) setTimeout(() => beam.classList.remove('active'), 400);
+        return;
+      } else {
+        setStatus(t('sales.scannerNotFound'), '#e65100');
+      }
     }
-    input.value = '';
-    // Keep focus pinned on the scanner field so consecutive items can be read
-    // without re-selecting the field between scans.
+  }
+
+  input.value = '';
+  renderSalesProducts('');
+  // Keep focus pinned on the scanner field so consecutive items can be read
+  // without re-selecting the field between scans. If a dialog opened (scale
+  // label that needs a decision), it keeps the keyboard.
+  if (!salesAnyOverlayOpen()) {
     setTimeout(() => {
       const s = document.getElementById('salesBarcodeScan');
       if (s && document.activeElement !== s) s.focus();
     }, 0);
-    if (beam) setTimeout(() => beam.classList.remove('active'), 400);
     setTimeout(() => {
       const s = document.getElementById('salesBarcodeStatus');
       if (s) { s.textContent = t('sales.scannerReady'); s.style.color = '#888'; }
     }, 2000);
   }
+  if (beam) setTimeout(() => beam.classList.remove('active'), 400);
+}
+
+// ===== WEIGHT-SCALE LABELS AT THE REGISTER =====
+/* ============================================================
+   A counter scale prints its own in-store code: a prefix, the product's PLU
+   and one of weight / unit price / amount. Where those digits sit is decided
+   per shop in «إعدادات الميزان» on the inventory page, so the register serves
+   every machine instead of one.
+
+   The owner rule the whole path is built on: the money printed on the label
+   is the truth. When the label carries an amount the line total IS that
+   amount and the quantity is derived from it; when it carries only a weight
+   the quantity IS that weight and the price comes from the product card.
+
+   A weighed article's card is «غير محدود», so no shelf stock moves — the
+   sale engine skips the deduction for a fixed record.
+
+   A LAN sub device never reads labels: only the till that owns the machine
+   has its patterns, and a second device inventing weighed lines would put
+   money in the shop's reports that no scale ever printed.
+   ============================================================ */
+
+function salesScaleConfig() {
+  if (typeof ScaleCore === 'undefined' || !ScaleCore) return null;
+  let raw = null;
+  try { raw = DB.getMeta(ScaleCore.META_KEY); } catch (e) { return null; }
+  const cfg = ScaleCore.configFromMeta(raw);
+  return (cfg && cfg.enabled) ? cfg : null;
+}
+
+function salesScaleSubDevice() {
+  try { return localStorage.getItem('zmt_lan_role') === 'sub'; } catch (e) { return false; }
+}
+
+// The price the register would have charged for one unit of that card, in the
+// mode the cashier is currently selling in (piece / wholesale / extra field).
+function salesScaleCardPrice(p) {
+  if (!p) return 0;
+  const g = getSalesGroupByKey(salesGroupKey(p));
+  const r = g ? (groupViableRecords(g)[0] || g.records[0]) : p;
+  return Math.max(0, Number(salesPriceForRecord(r, _salesDefaultMode)) || 0);
+}
+
+// code -> what the label carries, which card it belongs to and what it costs.
+// `res` is null when no quantity is on the label and none can be derived yet;
+// the dialog then asks the cashier for the weight.
+function salesScaleLookup(code) {
+  const cfg = salesScaleConfig();
+  if (!cfg || salesScaleSubDevice()) return null;
+  const decoded = ScaleCore.decode(code, cfg);
+  if (!decoded || !decoded.code) return null;
+  const prod = decoded.plu ? DB.getProductByPlu(decoded.plu) : null;
+  const card = salesScaleCardPrice(prod);
+  return { decoded: decoded, prod: prod, card: card, res: ScaleCore.resolve(decoded, card) };
+}
+
+var _scaleScan = null;
+var _scaleHits = [];
+
+function salesScaleStatus(msg, color) {
+  const st = document.getElementById('salesBarcodeStatus');
+  if (st) { st.textContent = msg; st.style.color = color; }
+}
+
+function salesScaleHandle(hit) {
+  if (hit.res && hit.prod) {
+    const line = salesAddWeighedLine(hit.prod, hit.res, hit.decoded);
+    salesScaleStatus(line ? t('sales.scannerDone') : t('sales.unavailable'), line ? '#28a745' : '#dc3545');
+    return;
+  }
+  openSalesScaleModal(hit);
+  salesScaleStatus(hit.res ? t('sales.scaleUnknownPlu') : t('sales.scaleNeedQty'), '#e65100');
+}
+
+// Labels of the same article land on one cart line: the weight adds up and so
+// does the money the labels printed, so two tickets of 0.250 @ 40 DA give
+// exactly 0.500 and 80.00 DA — never a rounded average price.
+function salesAddWeighedLine(prod, res, decoded) {
+  const g = getSalesGroupByKey(salesGroupKey(prod));
+  if (!g || isGroupOutOfStock(g)) return null;
+  let line = _salesCart.find(c => c.key === g.key);
+  if (!line) {
+    line = { key: g.key, name: g.name, barcode: g.barcode, qty: 0, mode: _salesDefaultMode,
+      price: 0, total: 0, baseTotal: 0, manualPrice: null, discount: 0, entries: [], scale: null };
+    _salesCart.push(line);
+  }
+  const prev = line.scale || { amount: 0, count: 0, fromLabel: false };
+  const qty = Unit.roundQty((Number(line.qty) || 0) + Number(res.qty || 0));
+  const amount = Math.max(0, prev.amount + Number(res.total || 0));
+  line.qty = qty;
+  line.scale = {
+    amount: amount, count: prev.count + 1,
+    fromLabel: !!prev.fromLabel || !!res.amountFromLabel,
+    // The first label decides how the line's weight is written (0.250); a
+    // second one of the same article never changes the article's places.
+    decimals: prev.decimals != null ? prev.decimals
+      : (res.qtyDecimals != null ? res.qtyDecimals : null),
+    plu: (decoded && decoded.plu) || prev.plu || '',
+    code: (decoded && decoded.code) || '',
+  };
+  // The unit price is whatever makes the line total equal the label money.
+  line.manualPrice = qty > 0 ? amount / qty : null;
+  allocateSalesLine(line, g.key);
+  renderSalesCart();
+  const empty = document.getElementById('salesEmptyCart');
+  if (empty) empty.style.display = 'none';
+  return line;
+}
+
+function openSalesScaleModal(hit) {
+  const m = document.getElementById('salesScaleModal');
+  if (!m) return;
+  _scaleScan = hit;
+  if (!m._host) m._host = m.parentNode;
+  if (m.parentNode !== document.body) document.body.appendChild(m);
+  const qtyEl = document.getElementById('salesScaleQty');
+  const priceEl = document.getElementById('salesScalePrice');
+  const searchEl = document.getElementById('salesScaleSearch');
+  const resultsEl = document.getElementById('salesScaleResults');
+  if (qtyEl) qtyEl.value = '';
+  if (priceEl) priceEl.value = '';
+  if (searchEl) searchEl.value = '';
+  if (resultsEl) resultsEl.innerHTML = '';
+  _scaleHits = [];
+  m.style.display = 'flex';
+  renderSalesScaleModal();
+  // Whatever the label left unsaid is the field the cashier has to act on.
+  const first = !hit.res ? document.getElementById('salesScaleQty')
+    : !hit.prod ? document.getElementById('salesScaleSearch') : null;
+  if (first) first.focus();
+}
+
+function closeSalesScaleModal() {
+  const m = document.getElementById('salesScaleModal');
+  if (m) {
+    m.style.display = 'none';
+    if (m._host && m.parentNode === document.body) m._host.appendChild(m);
+  }
+  _scaleScan = null;
+  _scaleHits = [];
+  const scan = document.getElementById('salesBarcodeScan');
+  if (scan) scan.focus();
+}
+
+function renderSalesScaleModal() {
+  const s = _scaleScan;
+  if (!s) return;
+  const facts = document.getElementById('salesScaleFacts');
+  if (facts) facts.innerHTML = salesScaleFactsHTML(s);
+  const qtyRow = document.getElementById('salesScaleQtyRow');
+  const priceRow = document.getElementById('salesScalePriceRow');
+  const linkRow = document.getElementById('salesScaleLinkRow');
+  // A label that printed its weight decided the quantity; one that printed the
+  // money decided the price. The register never asks twice.
+  if (qtyRow) qtyRow.style.display = s.res ? 'none' : '';
+  const labelMoney = s.res ? !!s.res.amountFromLabel : s.decoded.amountFromLabel != null;
+  if (priceRow) priceRow.style.display = labelMoney ? 'none' : '';
+  if (linkRow) linkRow.style.display = s.prod ? 'none' : '';
+  const priceEl = document.getElementById('salesScalePrice');
+  if (priceEl && !labelMoney && String(priceEl.value).trim() === '') {
+    const known = s.res ? s.res.price : (s.decoded.unitPrice != null ? s.decoded.unitPrice : s.card);
+    if (known > 0) priceEl.value = known.toFixed(2);
+  }
+  updateSalesScaleTotal();
+}
+
+function salesScaleFactsHTML(s) {
+  const d = s.decoded;
+  const bits = [];
+  bits.push(`${escHtml(t('inventory.plu'))}: <b>${escHtml(d.plu || '-')}</b>`);
+  if (d.weight != null) bits.push(`${escHtml(t('scale.colWeight'))}: ${d.weight}`);
+  if (d.unitPrice != null) bits.push(`${escHtml(t('scale.colUnitPrice'))}: ${fmtMoney(d.unitPrice)}`);
+  if (d.amount != null) bits.push(`${escHtml(t('scale.colAmount'))}: ${fmtMoney(d.amount)}`);
+  if (s.prod) bits.push(`<b>${escHtml(s.prod.name)}</b>`);
+  bits.push(`<span class="scale-code">${escHtml(d.code)}</span>`);
+  return bits.join(' — ');
+}
+
+// The numbers the line will take: from the label whenever the label can say
+// them, from the cashier for the one thing it could not.
+function salesScaleNumbers() {
+  const s = _scaleScan;
+  if (!s) return null;
+  const d = s.decoded;
+  const money = d.amountFromLabel != null ? d.amountFromLabel : null;
+  // Quantity: the printed weight, or what the cashier typed for it.
+  let qty = d.weight != null ? Unit.roundQty(d.weight) : null;
+  let decimals = d.weight != null ? d.weightDecimals : null;
+  if (qty == null) {
+    const raw = String((document.getElementById('salesScaleQty') || {}).value || '');
+    // Unit.parse reads "-3" as 3, so the minus is refused from the raw text.
+    const q = raw.indexOf('-') === -1 ? Unit.parse(raw) : 0;
+    if (!(q > 0)) return { error: 'sales.scaleQtyBad' };
+    qty = Unit.roundQty(q);
+  }
+  // The label amount is the owner's word: the line total IS that money and the
+  // unit price is whatever the quantity works out to.
+  if (money != null) return { qty: qty, price: qty > 0 ? money / qty : 0, total: money, decimals: decimals };
+  let price = d.unitPrice != null ? d.unitPrice : null;
+  if (price == null) {
+    const el = document.getElementById('salesScalePrice');
+    const p = parseFloat(el ? el.value : '');
+    price = isNaN(p) ? (s.card > 0 ? s.card : null) : Math.max(0, p);
+  }
+  // Nothing on the label, on the field or on a card says what it costs yet.
+  if (price == null) return { error: 'sales.scalePick' };
+  return { qty: qty, price: price, total: qty * price, decimals: decimals };
+}
+
+function updateSalesScaleTotal() {
+  const el = document.getElementById('salesScaleTotal');
+  const add = document.getElementById('salesScaleAddBtn');
+  const n = salesScaleNumbers();
+  // A label that printed its money states the price the customer pays even
+  // before the missing weight is typed: the figure shown never comes from a
+  // price list, and adding stays refused until the quantity says where it goes.
+  const shown = (n && !n.error) ? n.total
+    : (_scaleScan && _scaleScan.decoded.amountFromLabel != null ? _scaleScan.decoded.amountFromLabel : 0);
+  if (el) el.textContent = 'DA' + fmtMoney(shown);
+  if (add) add.disabled = !n || !!n.error || !!(_scaleScan && !_scaleScan.prod);
+}
+
+function salesScaleBad(errorKey) {
+  alert(t(errorKey || 'sales.scaleQtyBad'));
+  const el = document.getElementById(errorKey === 'sales.scalePick' ? 'salesScalePrice' : 'salesScaleQty');
+  if (el) { el.focus(); if (el.select) el.select(); }
+}
+
+function confirmSalesScaleLine() {
+  const s = _scaleScan;
+  if (!s) return;
+  const n = salesScaleNumbers();
+  if (!n || n.error) { salesScaleBad(n && n.error); return; }
+  if (!s.prod) { alert(t('sales.scalePick')); return; }
+  const res = { qty: n.qty, price: n.price, total: n.total,
+    amountFromLabel: s.decoded.amountFromLabel != null, qtyDecimals: n.decimals };
+  const line = salesAddWeighedLine(s.prod, res, s.decoded);
+  if (!line) { alert(t('sales.unavailable')); return; }
+  closeSalesScaleModal();
+}
+
+// «سطر حر»: the label's money is kept, but no card is invented for the article.
+function confirmSalesScaleFree() {
+  const s = _scaleScan;
+  if (!s) return;
+  const n = salesScaleNumbers();
+  if (!n || n.error) { salesScaleBad(n && n.error); return; }
+  const line = addSalesFreeLine({ name: '', qty: n.qty, price: n.price });
+  if (!line) { salesScaleBad('sales.scaleQtyBad'); return; }
+  line.scale = { amount: n.total, count: 1, fromLabel: s.decoded.amountFromLabel != null,
+    decimals: n.decimals, plu: s.decoded.plu || '', code: s.decoded.code || '' };
+  renderSalesCart();
+  closeSalesScaleModal();
+}
+
+// The same intelligence the product grid uses: cached normalised text, real
+// score only for candidates, out-of-stock last.
+function renderSalesScaleResults(q) {
+  const box = document.getElementById('salesScaleResults');
+  if (!box || !_scaleScan) return;
+  const query = String(q || '').trim();
+  if (!query) { box.innerHTML = ''; _scaleHits = []; updateSalesScaleTotal(); return; }
+  _scaleHits = _searchSalesGroups(getSalesGroups(), query, 12);
+  if (!_scaleHits.length) {
+    box.innerHTML = `<div class="scale-none">${escHtml(t('sales.scaleNone'))}</div>`;
+    return;
+  }
+  box.innerHTML = _scaleHits.map((g, i) => {
+    const r = groupViableRecords(g)[0] || g.records[0] || {};
+    const name = g.name || '';
+    const meta = [g.barcode || '', r.plu ? `${escHtml(t('inventory.plu'))}: ${escHtml(String(r.plu))}` : '']
+      .filter(Boolean).join(' · ');
+    return `<button type="button" class="scale-hit" onclick="salesScaleLink(${i})">
+      <span class="scale-hit-name">${escHtml(name)}</span>
+      <span class="scale-hit-meta" dir="ltr">${meta}</span>
+      <span class="scale-hit-price">DA${fmtMoney(salesPriceForRecord(r, _salesDefaultMode))}</span>
+    </button>`;
+  }).join('');
+}
+
+function salesScaleLinkFirst() {
+  if (_scaleHits.length) salesScaleLink(0);
+}
+
+// The link is permanent, exactly as the shop asked: from now on every label
+// carrying this code goes straight onto that card. A code already owned by
+// another card is never moved in silence.
+function salesScaleLink(i) {
+  const s = _scaleScan;
+  const g = _scaleHits[i];
+  if (!s || !g) return;
+  const r = groupViableRecords(g)[0] || g.records[0];
+  const prod = r && DB.getProduct(r.id);
+  if (!prod) { alert(t('sales.unavailable')); return; }
+  const plu = s.decoded.plu;
+  // The code reaching here matched no card in the database — that is why the
+  // window opened — so the chosen card is either already its owner or carries a
+  // different code that must be replaced on purpose, never in silence.
+  if (plu && !ScaleCore.pluMatches(prod.plu, plu)) {
+    if (prod.plu && !confirm(String(t('inventory.pluReplaceConfirm'))
+      .replace('{old}', prod.plu).replace('{new}', plu))) return;
+    DB.updateProduct(prod.id, { plu: String(plu) });
+    invalidateSalesGroupsCache();
+    _salesProducts = (typeof salesAllProducts === 'function') ? salesAllProducts() : (DB.getProducts ? DB.getProducts() : _salesProducts);
+  }
+  s.prod = prod;
+  s.card = salesScaleCardPrice(prod);
+  // The card in hand can change what the label meant (a weight label prices
+  // from the card), so the resolution is redone, not inherited from the search.
+  s.res = ScaleCore.resolve(s.decoded, s.card);
+  // A label that already says the weight needs no further click: the link is
+  // what was missing, so the line goes in exactly as a known PLU would.
+  if (s.res) { confirmSalesScaleLine(); return; }
+  renderSalesScaleModal();
+}
+
+// Esc closes, Enter on the two money fields adds the line, Enter on the search
+// links the best match — the cashier never leaves the keyboard at a till.
+function salesScaleKeyNav(e) {
+  if (e.key === 'Escape' || e.key === 'Esc') {
+    e.preventDefault(); e.stopPropagation();
+    closeSalesScaleModal();
+    return;
+  }
+  const id = e.target && e.target.id;
+  if (e.key !== 'Enter') return;
+  e.preventDefault(); e.stopPropagation();
+  if (id === 'salesScaleSearch') { salesScaleLinkFirst(); return; }
+  confirmSalesScaleLine();
 }
 
 // ===== CUSTOMER =====
@@ -1031,9 +2664,9 @@ function getSalesCustomerCredit() {
 
 function renderCustomerBalanceChip(c) {
   const bal = parseFloat(c && c.balance) || 0;
-  if (bal > 0) return `<span style="color:#dc3545;font-weight:700">دين عليه: DA${fmtMoney(bal)}</span>`;
-  if (bal < 0) return `<span style="color:#1a7f37;font-weight:700">له رصيد: DA${fmtMoney(Math.abs(bal))}</span>`;
-  return '<span style="color:var(--silver-500);font-weight:700">الرصيد: 0</span>';
+  if (bal > 0) return `<span style="color:#dc3545;font-weight:700">${t('sales.custDebtPrefix')}: DA${fmtMoney(bal)}</span>`;
+  if (bal < 0) return `<span style="color:#1a7f37;font-weight:700">${t('sales.custCreditPrefix')}: DA${fmtMoney(Math.abs(bal))}</span>`;
+  return `<span style="color:var(--silver-500);font-weight:700">${t('sales.custZeroLabel')}</span>`;
 }
 
 function renderSalesCreditSection() {
@@ -1054,13 +2687,13 @@ function renderSalesCreditSection() {
   const label = document.getElementById('salesCreditLabel');
   if (!txt || !info || !label) return;
   if (_salesCreditUsed > 0) {
-    txt.textContent = 'إلغاء الخصم';
-    label.textContent = `سيتم خصم DA${fmtMoney(usable)} من رصيد العميل`;
-    info.textContent = `رصيد العميل لصالحه: DA${fmtMoney(credit)} — الباقي بعد الخصم: DA${fmtMoney(Math.max(0, total - usable))}`;
+    txt.textContent = t('sales.creditCancelDiscount');
+    label.textContent = `${t('sales.creditWillDiscount')} DA${fmtMoney(usable)} ${t('sales.creditFromBalance')}`;
+    info.textContent = `${t('sales.creditCustomerBalance')}: DA${fmtMoney(credit)} — ${t('sales.creditAfterDiscount')}: DA${fmtMoney(Math.max(0, total - usable))}`;
   } else {
-    txt.textContent = 'تطبيق الخصم';
-    label.textContent = 'خصم المبلغ من رصيد العميل';
-    info.textContent = `رصيد لصالح العميل (نحن مدينون له): DA${fmtMoney(credit)} — عند تطبيقه يُدفع الخصم من رصيده ويبقى المتبقي نقداً.`;
+    txt.textContent = t('sales.applyDiscount');
+    label.textContent = t('sales.creditDiscountNow');
+    info.textContent = `${t('sales.creditOweNote')}: DA${fmtMoney(credit)} — ${t('sales.creditApplyNote')}`;
   }
 }
 
@@ -1078,7 +2711,12 @@ function toggleSalesCredit() {
 }
 
 function searchSalesCustomer(q) {
-  const results = document.getElementById('salesCustResults');
+  if (q && String(q).trim().length >= 2) { try { DB.logSearch({ query: q, context: 'sales-customers' }); } catch (e) {} }
+  const input = document.getElementById('salesLedCustSearch') || document.getElementById('salesCustSearch');
+  if (input && document.activeElement !== input) {
+    try { input.value = q; } catch (e) {}
+  }
+  const results = document.getElementById('salesLedCustResults') || document.getElementById('salesCustResults');
   q = normSearch(q);
   const customers = DB.getCustomers();
   const matches = q
@@ -1098,20 +2736,35 @@ function searchSalesCustomer(q) {
 function selectSalesCustomer(id) {
   const c = DB.getCustomer(id);
   if (!c) return;
+  // A label belongs to one parent only. Changing the parent must drop it.
+  if (String(c.id) !== String(_salesCustomerId || '')) _resetSalesSubCustomer();
   _salesCustomerId = c.id;
+  _salesWalkin = false;
   _salesDefaultMode = c.type === 'whole' ? 'wholesale' : 'unit';
-  document.getElementById('salesCustSearch').value = c.name;
-  document.getElementById('salesCustResults').innerHTML = '';
-  document.getElementById('salesSelectedCust').style.display = 'flex';
-  document.getElementById('salesSelCustName').textContent = c.name;
-  document.getElementById('salesSelCustType').textContent = c.type === 'whole' ? t('sales.wholesale') : t('sales.unit');
-  document.getElementById('salesSelCustType').className = 'sales-cust-type ' + (c.type === 'whole' ? 'whole' : 'unit');
-  document.getElementById('salesWalkinLabel').style.display = 'none';
+  const s1 = document.getElementById('salesCustSearch'); if (s1) { s1.value = c.name; }
+  const s2 = document.getElementById('salesLedCustSearch'); if (s2) { s2.value = c.name; }
+  const r1 = document.getElementById('salesCustResults'); if (r1) r1.innerHTML = '';
+  const r2 = document.getElementById('salesLedCustResults'); if (r2) r2.innerHTML = '';
+  document.getElementById('salesSelectedCust') && (document.getElementById('salesSelectedCust').style.display = 'flex');
+  document.getElementById('salesLedSelectedCust') && (document.getElementById('salesLedSelectedCust').style.display = 'flex');
+  document.getElementById('salesSelCustName') && (document.getElementById('salesSelCustName').textContent = c.name);
+  document.getElementById('salesLedSelCustName') && (document.getElementById('salesLedSelCustName').textContent = c.name);
+  const st = document.getElementById('salesSelCustType');
+  if (st) { st.textContent = c.type === 'whole' ? t('sales.wholesale') : t('sales.unit'); st.className = 'sales-cust-type ' + (c.type === 'whole' ? 'whole' : 'unit'); }
+  const lst = document.getElementById('salesLedSelCustType');
+  if (lst) lst.textContent = c.type === 'whole' ? t('sales.wholesale') : t('sales.unit');
+  document.getElementById('salesWalkinLabel') && (document.getElementById('salesWalkinLabel').style.display = 'none');
+  document.getElementById('salesLedWalkinLabel') && (document.getElementById('salesLedWalkinLabel').style.display = 'none');
+  document.getElementById('salesCustRow') && (document.getElementById('salesCustRow').style.display = 'none');
+  const lw = document.getElementById('salesLedCustomer'); if (lw) lw.classList.add('has-selection');
+  document.getElementById('salesSupBanner') && (document.getElementById('salesSupBanner').style.display = 'none');
+  document.getElementById('salesLedSupBanner') && (document.getElementById('salesLedSupBanner').style.display = 'none');
   if (c.discount > 0) {
-    document.getElementById('salesSelCustDiscount').textContent = `${t('sales.discount')} ${c.discount}%`;
-    document.getElementById('salesSelCustDiscount').style.display = '';
+    const d1 = document.getElementById('salesSelCustDiscount'); if (d1) { d1.textContent = `${t('sales.discount')} ${c.discount}%`; d1.style.display = ''; }
+    const d2 = document.getElementById('salesLedSelCustDiscount'); if (d2) { d2.textContent = `${t('sales.discount')} ${c.discount}%`; d2.style.display = 'inline-flex'; }
   } else {
-    document.getElementById('salesSelCustDiscount').style.display = 'none';
+    const d1 = document.getElementById('salesSelCustDiscount'); if (d1) d1.style.display = 'none';
+    const d2 = document.getElementById('salesLedSelCustDiscount'); if (d2) d2.style.display = 'none';
   }
   _salesCreditUsed = 0;
   const balEl = document.getElementById('salesSelCustBalance');
@@ -1119,17 +2772,177 @@ function selectSalesCustomer(id) {
   if (balEl) {
     if (bal > 0) {
       balEl.style.display = '';
-      balEl.textContent = `دين عليه: DA${fmtMoney(bal)}`;
+      balEl.textContent = `${t('sales.custDebtPrefix')}: DA${fmtMoney(bal)}`;
       balEl.style.color = '#dc3545';
     } else if (bal < 0) {
       balEl.style.display = '';
-      balEl.textContent = `له رصيد: DA${fmtMoney(Math.abs(bal))}`;
+      balEl.textContent = `${t('sales.custCreditPrefix')}: DA${fmtMoney(Math.abs(bal))}`;
       balEl.style.color = '#1a7f37';
     } else {
       balEl.style.display = 'none';
     }
   }
+  const lbal = document.getElementById('salesLedSelCustBalance');
+  if (lbal) {
+    if (bal > 0) {
+      lbal.style.display = 'inline-flex';
+      lbal.textContent = `${t('sales.custDebtPrefix')}: DA${fmtMoney(bal)}`;
+      lbal.style.color = '#ffb3b3';
+    } else if (bal < 0) {
+      lbal.style.display = 'inline-flex';
+      lbal.textContent = `${t('sales.custCreditPrefix')}: DA${fmtMoney(Math.abs(bal))}`;
+      lbal.style.color = '#9dffb3';
+    } else {
+      lbal.style.display = 'none';
+    }
+  }
+  try { if (typeof _syncSalesCustomerTop === 'function') _syncSalesCustomerTop(); } catch (e) {}
+  _syncSalesSubBadge();
+  _syncSalesPickSubBtn();
   updateSalesTotals();
+}
+
+// ===== CUSTOMER TREE — SUB-CUSTOMER LABEL (F5) =====
+// The parent (_salesCustomerId) stays the account owner for every DB write.
+function _salesTreeEnabled() {
+  return !!(window.CustomerTree && typeof window.CustomerTree.enabled === 'function' && window.CustomerTree.enabled());
+}
+
+function _salesSelectedSub() {
+  if (!_salesSubCustomerId || !window.CustomerTree || typeof window.CustomerTree.findChild !== 'function') return null;
+  return window.CustomerTree.findChild(_salesSubCustomerId);
+}
+
+function _syncSalesSubBadge() {
+  const el = document.getElementById('salesSubCustomerBadge');
+  if (el) {
+    const sub = _salesSelectedSub();
+    if (!sub) { el.style.display = 'none'; el.textContent = ''; }
+    else { el.style.display = 'inline-flex'; el.textContent = (t('customerTree.sub') || 'زبون تابع') + ': ' + sub.name; }
+  }
+  _syncSalesPickSubBtn();
+}
+
+// The button only exists for an actual parent customer AND while the customer
+// tree feature is enabled. F5 keeps working independently, as before.
+function _syncSalesPickSubBtn() {
+  const btn = document.getElementById('salesPickSubBtn');
+  if (!btn) return;
+  btn.style.display = (_salesTreeEnabled() && !!_salesCustomerId && !_salesSupMode) ? 'inline-flex' : 'none';
+}
+
+function _resetSalesSubCustomer() {
+  _salesSubCustomerId = null;
+  _salesSubPickerId = null;
+  _syncSalesSubBadge();
+}
+
+function openSalesSubCustomerModal() {
+  if (!_salesTreeEnabled()) return;
+  if (!_salesCustomerId) { alert(t('customerTree.noParent')); return; }
+  const parent = DB.getCustomer(_salesCustomerId);
+  if (!parent) { alert(t('customerTree.noParent')); return; }
+  const m = document.getElementById('salesSubCustomerModal');
+  if (!m) return;
+  if (!m._host) m._host = m.parentNode;
+  if (m.parentNode !== document.body) document.body.appendChild(m);
+  _salesSubPickerId = _salesSubCustomerId || null;
+  const pEl = document.getElementById('salesSubCustomerParent');
+  if (pEl) pEl.innerHTML = escHtml(t('customerTree.of') || '') + ': <b>' + escHtml(parent.name) + '</b>';
+  ['sscName', 'sscPhone', 'sscAddress'].forEach(function (id) {
+    const f = document.getElementById(id);
+    if (f) f.value = '';
+  });
+  renderSalesSubCustomerList();
+  m.style.display = 'flex';
+  setTimeout(function () { const f = document.getElementById('sscName'); if (f) { try { f.focus(); } catch (e) {} } }, 120);
+}
+
+function closeSalesSubCustomerModal() {
+  const m = document.getElementById('salesSubCustomerModal');
+  if (!m) return;
+  m.style.display = 'none';
+  if (m._host && m.parentNode === document.body) m._host.appendChild(m);
+}
+
+function renderSalesSubCustomerList() {
+  const box = document.getElementById('salesSubCustomerList');
+  if (!box) return;
+  const kids = window.CustomerTree.childrenOf(_salesCustomerId);
+  if (!kids.length) {
+    box.innerHTML = '<div style="padding:12px;color:var(--silver-500);font-size:12px">' +
+      escHtml(t('customerTree.noChildren') || '') + '</div>';
+    return;
+  }
+  const parent = DB.getCustomer(_salesCustomerId);
+  const invoices = DB.getInvoicesByCustomer ? DB.getInvoicesByCustomer(_salesCustomerId) : [];
+  box.innerHTML = kids.map(function (k) {
+    const picked = String(_salesSubPickerId || '') === String(k.id);
+    const debt = parent ? (window.CustomerTree.childDebt(parent, k.id, invoices) || 0) : 0;
+    return '<button type="button" class="ct-pick-row' + (picked ? ' is-picked' : '') +
+      '" onclick="pickSalesSubCustomer(\'' + escHtml(k.id) + '\')">' +
+      '<span class="ct-pick-dot"><i class="fas fa-user-tag"></i></span>' +
+      '<span class="ct-pick-main"><b>' + escHtml(k.name) + '</b>' +
+      (k.phone ? '<small dir="ltr">' + escHtml(k.phone) + '</small>' : '') +
+      (k.address ? '<small>' + escHtml(k.address) + '</small>' : '') + '</span>' +
+      (debt > 0 ? '<span class="ct-pick-debt">' + escHtml(t('customerTree.debt') || '') + ': DA' + fmtMoney(debt) + '</span>' : '') +
+      '</button>';
+  }).join('');
+}
+
+function pickSalesSubCustomer(id) {
+  _salesSubPickerId = id;
+  renderSalesSubCustomerList();
+}
+
+function confirmSalesSelectSubCustomer() {
+  _salesSubCustomerId = _salesSubPickerId || null;
+  _syncSalesSubBadge();
+  closeSalesSubCustomerModal();
+}
+
+function clearSalesSubCustomer() {
+  _resetSalesSubCustomer();
+  closeSalesSubCustomerModal();
+}
+
+function confirmSalesAddSubCustomer() {
+  if (!_salesTreeEnabled() || !_salesCustomerId) return;
+  const nameEl = document.getElementById('sscName');
+  const phoneEl = document.getElementById('sscPhone');
+  const addrEl = document.getElementById('sscAddress');
+  const name = nameEl ? String(nameEl.value || '').trim() : '';
+  if (!name) {
+    alert(t('customerTree.nameRequired'));
+    if (nameEl) { try { nameEl.focus(); } catch (e) {} }
+    return;
+  }
+  const payload = {
+    name: name,
+    phone: phoneEl ? phoneEl.value : '',
+    address: addrEl ? addrEl.value : '',
+  };
+  // addChildEx distinguishes «empty name» from «could not persist». Showing the
+  // same alert for both was the reason a typed name appeared to be rejected.
+  const res = (typeof window.CustomerTree.addChildEx === 'function')
+    ? window.CustomerTree.addChildEx(_salesCustomerId, payload)
+    : { ok: !!(window.CustomerTree.addChild(_salesCustomerId, payload)), error: 'legacy' };
+  if (!res.ok) {
+    console.warn('[Sales] sub-customer save failed:', res.error);
+    if (res.error === 'noParent') alert(t('customerTree.noParent'));
+    else if (res.error === 'emptyName') alert(t('customerTree.nameRequired'));
+    else alert(t('customerTree.saveFailed'));
+    if (nameEl) { try { nameEl.focus(); } catch (e) {} }
+    return;
+  }
+  const created = res.child;
+  _salesSubCustomerId = created.id;
+  _salesSubPickerId = created.id;
+  _syncSalesSubBadge();
+  closeSalesSubCustomerModal();
+  if (window.ThermalPrint && window.ThermalPrint.toast) {
+    try { window.ThermalPrint.toast(t('customerTree.saved'), 'ok'); } catch (e) {}
+  }
 }
 
 // ===== ADD CUSTOMER FROM SALES PAGE =====
@@ -1141,6 +2954,11 @@ function openSalesAddCustomer() {
   document.getElementById('sacName').value = '';
   document.getElementById('sacPhone').value = '';
   document.getElementById('sacAddress').value = '';
+  if (window.ZmtPartyLegal && typeof window.ZmtPartyLegal.clear === 'function') {
+    window.ZmtPartyLegal.clear('sac');
+  }
+  const sacLimit = document.getElementById('sacCreditLimit');
+  if (sacLimit) sacLimit.value = '0';
   document.getElementById('sacType').value = 'unit';
   document.getElementById('sacDiscount').value = '0';
   m.style.display = 'flex';
@@ -1156,17 +2974,23 @@ function closeSalesAddCustomer() {
 
 function confirmSalesAddCustomer() {
   const name = document.getElementById('sacName').value.trim();
-  if (!name) { alert(t('customers.nameRequired') || 'الرجاء إدخال اسم العميل'); return; }
+  if (!name) { alert(t('customers.nameRequired')); return; }
   const discount = parseFloat(document.getElementById('sacDiscount').value) || 0;
-  if (discount < 0 || discount > 100) { alert(t('customers.discountRange') || 'نسبة الخصم يجب أن تكون بين 0 و 100'); return; }
+  if (discount < 0 || discount > 100) { alert(t('customers.discountRange')); return; }
+  const limitEl = document.getElementById('sacCreditLimit');
+  const creditLimit = limitEl ? (parseFloat(limitEl.value) || 0) : 0;
+  if (creditLimit < 0) { alert(t('customers.prompts.invalidCreditLimit')); return; }
+  const legal = window.ZmtPartyLegal && typeof window.ZmtPartyLegal.read === 'function'
+    ? window.ZmtPartyLegal.read('sac') : {};
 
-  const cust = DB.addCustomer({
+  const cust = DB.addCustomer(Object.assign({
     name,
     phone: document.getElementById('sacPhone').value.trim(),
     address: document.getElementById('sacAddress').value.trim(),
     type: document.getElementById('sacType').value === 'whole' ? 'whole' : 'unit',
     discount,
-  });
+    creditLimit,
+  }, legal));
   if (cust) DB.logAudit({ action: 'add', entity: 'customer', entityId: cust.id, detail: name });
 
   closeSalesAddCustomer();
@@ -1176,23 +3000,43 @@ function confirmSalesAddCustomer() {
 
 function setSalesWalkin() {
   _salesCustomerId = null;
+  _resetSalesSubCustomer();
+  _salesWalkin = true;
   _salesCreditUsed = 0;
   _salesDefaultMode = 'unit';
-  document.getElementById('salesCustSearch').value = '';
-  document.getElementById('salesCustResults').innerHTML = '';
-  document.getElementById('salesSelectedCust').style.display = 'none';
-  document.getElementById('salesWalkinLabel').style.display = 'flex';
+  const s1 = document.getElementById('salesCustSearch'); if (s1) s1.value = '';
+  const s2 = document.getElementById('salesLedCustSearch'); if (s2) s2.value = '';
+  const r1 = document.getElementById('salesCustResults'); if (r1) r1.innerHTML = '';
+  const r2 = document.getElementById('salesLedCustResults'); if (r2) r2.innerHTML = '';
+  document.getElementById('salesSelectedCust') && (document.getElementById('salesSelectedCust').style.display = 'none');
+  document.getElementById('salesLedSelectedCust') && (document.getElementById('salesLedSelectedCust').style.display = 'none');
+  document.getElementById('salesWalkinLabel') && (document.getElementById('salesWalkinLabel').style.display = 'flex');
+  document.getElementById('salesLedWalkinLabel') && (document.getElementById('salesLedWalkinLabel').style.display = 'flex');
+  const lw = document.getElementById('salesLedCustomer'); if (lw) lw.classList.add('has-selection');
+  document.getElementById('salesSupBanner') && (document.getElementById('salesSupBanner').style.display = 'none');
+  document.getElementById('salesLedSupBanner') && (document.getElementById('salesLedSupBanner').style.display = 'none');
+  try { if (typeof _syncSalesCustomerTop === 'function') _syncSalesCustomerTop(); } catch (e) {}
   updateSalesTotals();
 }
 
 function clearSalesCustomer() {
   _salesCustomerId = null;
+  _resetSalesSubCustomer();
+  _salesWalkin = false;
   _salesCreditUsed = 0;
   _salesDefaultMode = 'unit';
-  document.getElementById('salesSelectedCust').style.display = 'none';
-  document.getElementById('salesWalkinLabel').style.display = 'none';
-  document.getElementById('salesCustSearch').value = '';
-  document.getElementById('salesCustResults').innerHTML = '';
+  const _csr = document.getElementById('salesCustRow'); if (_csr) _csr.style.display = '';
+  const _lcsr = document.getElementById('salesLedCustomer'); if (_lcsr) _lcsr.classList.remove('has-selection');
+  document.getElementById('salesSelectedCust') && (document.getElementById('salesSelectedCust').style.display = 'none');
+  document.getElementById('salesLedSelectedCust') && (document.getElementById('salesLedSelectedCust').style.display = 'none');
+  document.getElementById('salesWalkinLabel') && (document.getElementById('salesWalkinLabel').style.display = 'none');
+  document.getElementById('salesLedWalkinLabel') && (document.getElementById('salesLedWalkinLabel').style.display = 'none');
+  const lw = document.getElementById('salesLedCustomer'); if (lw) lw.classList.remove('has-selection');
+  const s1 = document.getElementById('salesCustSearch'); if (s1) s1.value = '';
+  const s2 = document.getElementById('salesLedCustSearch'); if (s2) s2.value = '';
+  const r1 = document.getElementById('salesCustResults'); if (r1) r1.innerHTML = '';
+  const r2 = document.getElementById('salesLedCustResults'); if (r2) r2.innerHTML = '';
+  try { if (typeof _syncSalesCustomerTop === 'function') _syncSalesCustomerTop(); } catch (e) {}
   updateSalesTotals();
 }
 
@@ -1200,9 +3044,11 @@ function clearSalesCustomer() {
 
 function openSupSaleMode() {
   if (_salesCart.length > 0) {
-    if (!confirm('سيتم إفراغ محتوى القائمة الحالية. هل تريد المتابعة؟')) return;
+    if (!confirm(t('sales.supClearWarn'))) return;
   }
   _salesCustomerId = null;
+  _resetSalesSubCustomer();
+  _salesWalkin = false;
   _salesCreditUsed = 0;
   _salesCart = [];
   _salesSuppId = null;
@@ -1210,10 +3056,16 @@ function openSupSaleMode() {
   _salesDefaultMode = 'unit';
   setSalesPayMethod('cash');
   resetSupSalePayUI();
-  document.getElementById('salesSelectedCust').style.display = 'none';
-  document.getElementById('salesWalkinLabel').style.display = 'none';
+  document.getElementById('salesSelectedCust') && (document.getElementById('salesSelectedCust').style.display = 'none');
+  document.getElementById('salesLedSelectedCust') && (document.getElementById('salesLedSelectedCust').style.display = 'none');
+  document.getElementById('salesWalkinLabel') && (document.getElementById('salesWalkinLabel').style.display = 'none');
+  document.getElementById('salesLedWalkinLabel') && (document.getElementById('salesLedWalkinLabel').style.display = 'none');
+  document.getElementById('salesSupBanner') && (document.getElementById('salesSupBanner').style.display = 'none');
+  document.getElementById('salesLedSupBanner') && (document.getElementById('salesLedSupBanner').style.display = 'none');
+  const lw = document.getElementById('salesLedCustomer'); if (lw) lw.classList.add('has-selection');
   const row = document.getElementById('salesCustRow');
   if (row) row.style.display = 'none';
+  try { if (typeof _syncSalesCustomerTop === 'function') _syncSalesCustomerTop(); } catch (e) {}
   renderSalesCart();
   renderSalesProducts();
   openSupSalePicker();
@@ -1239,6 +3091,7 @@ function closeSupSalePicker() {
 }
 
 function searchSupSaleSuppliers(q) {
+  if (q && String(q).trim().length >= 2) { try { DB.logSearch({ query: q, context: 'sup-sale-supplier' }); } catch (e) {} }
   renderSupSaleList(q || '');
 }
 
@@ -1255,7 +3108,7 @@ function supBalChip(s) {
   const bal = parseFloat(s.balance) || 0;
   const cls = bal > 0 ? 'pos' : bal < 0 ? 'neg' : 'zero';
   const sign = bal > 0 ? '+' : bal < 0 ? '-' : '';
-  const cap = bal > 0 ? 'علينا له' : bal < 0 ? 'له علينا' : 'الرصيد';
+  const cap = bal > 0 ? t('sales.supDebtCap') : bal < 0 ? t('sales.supCreditCap') : t('sales.supZeroCap');
   return `<div class="sup-pick-bal ${cls}">
     <span class="sup-pick-bal-cap">${cap}</span>
     <strong dir="ltr">${sign}DA${fmtMoney(Math.abs(bal))}</strong>
@@ -1274,9 +3127,9 @@ function renderSupSaleList(q) {
     : suppliers;
   matches.sort((a, b) => String(a.name).localeCompare(String(b.name), 'ar'));
   const countEl = document.getElementById('supSalePickerCount');
-  if (countEl) countEl.textContent = matches.length + ' مورد';
+  if (countEl) countEl.textContent = matches.length + ' ' + t('sales.supplierName');
   if (matches.length === 0) {
-    results.innerHTML = `<div class="sup-pick-empty"><i class="fas fa-search"></i><div>لا يوجد مورد بهذا الاسم</div></div>`;
+    results.innerHTML = `<div class="sup-pick-empty"><i class="fas fa-search"></i><div>${t('sales.supNotFound')}</div></div>`;
     return;
   }
   results.innerHTML = matches.map(s => `
@@ -1294,47 +3147,79 @@ function selectSupSaleSupplier(id) {
   const s = DB.getSuppliers().find(x => x.id === id);
   if (!s) return;
   _salesSuppId = s.id;
+  _salesSupMode = true;
+  _syncSalesPickSubBtn();
   updateSupSaleBanner(s);
   closeSupSalePicker();
+  try { if (typeof _syncSalesCustomerTop === 'function') _syncSalesCustomerTop(); } catch (e) {}
   const scan = document.getElementById('salesBarcodeScan');
   if (scan) scan.focus();
 }
 
 function updateSupSaleBanner(s) {
   const banner = document.getElementById('salesSupBanner');
-  if (!banner) return;
+  const lsb = document.getElementById('salesLedSupBanner');
   const nameEl = document.getElementById('salesSupName');
+  const lname = document.getElementById('salesLedSupName');
   if (nameEl) nameEl.textContent = s.name;
+  if (lname) lname.textContent = s.name;
   const balEl = document.getElementById('salesSupBalance');
+  const lbal = document.getElementById('salesLedSupBalance');
+  const bal = parseFloat(s.balance) || 0;
+  const fmt = function(v){ try { return fmtMoney ? fmtMoney(v) : Number(v).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2}); } catch(e){ return Number(v).toFixed(2); } };
   if (balEl) {
-    const bal = parseFloat(s.balance) || 0;
     if (bal > 0) {
-      balEl.textContent = 'علينا له: +DA' + fmtMoney(bal);
+      balEl.textContent = t('sales.supDebtCap') + ': +DA' + fmt(bal);
       balEl.style.color = '#dc3545';
     } else if (bal < 0) {
-      balEl.textContent = 'له علينا: -DA' + fmtMoney(Math.abs(bal));
+      balEl.textContent = t('sales.supCreditCap') + ': -DA' + fmt(Math.abs(bal));
       balEl.style.color = '#198754';
     } else {
-      balEl.textContent = 'الرصيد: DA0.00';
+      balEl.textContent = t('sales.supZeroCap') + ': DA0.00';
       balEl.style.color = 'var(--silver-500)';
     }
   }
-  banner.style.display = 'flex';
+  if (lbal) {
+    if (bal > 0) {
+      lbal.textContent = t('sales.supDebtCap') + ': +DA' + fmt(bal);
+      lbal.style.color = '#ffb3b3';
+    } else if (bal < 0) {
+      lbal.textContent = t('sales.supCreditCap') + ': -DA' + fmt(Math.abs(bal));
+      lbal.style.color = '#9dffb3';
+    } else {
+      lbal.textContent = t('sales.supZeroCap') + ': DA0.00';
+      lbal.style.color = 'rgba(255,255,255,0.8)';
+    }
+  }
+  if (banner) banner.style.display = 'flex';
+  if (lsb) lsb.style.display = 'flex';
+  const lw = document.getElementById('salesLedCustomer'); if (lw) lw.classList.add('has-selection');
+  try { if (typeof _syncSalesCustomerTop === 'function') _syncSalesCustomerTop(); } catch (e) {}
 }
 
 function cancelSupSaleMode() {
   _salesSuppId = null;
   _salesSupMode = false;
+  _syncSalesPickSubBtn();
   _salesDefaultMode = 'unit';
   resetSupSalePayUI();
+  try { updateSalesRemaining(); } catch (e) {}
   const banner = document.getElementById('salesSupBanner');
   if (banner) banner.style.display = 'none';
+  const lsb = document.getElementById('salesLedSupBanner');
+  if (lsb) lsb.style.display = 'none';
+  const lw = document.getElementById('salesLedCustomer'); if (lw) lw.classList.remove('has-selection');
   const row = document.getElementById('salesCustRow');
   if (row) row.style.display = '';
   const search = document.getElementById('salesCustSearch');
   if (search) search.value = '';
+  const lsearch = document.getElementById('salesLedCustSearch');
+  if (lsearch) lsearch.value = '';
   const results = document.getElementById('salesCustResults');
   if (results) results.innerHTML = '';
+  const lresults = document.getElementById('salesLedCustResults');
+  if (lresults) lresults.innerHTML = '';
+  try { if (typeof _syncSalesCustomerTop === 'function') _syncSalesCustomerTop(); } catch (e) {}
 }
 
 // In ''super-sale'' mode only cash-on-delivery is offered: hide CCP/mixed pills,
@@ -1351,7 +3236,7 @@ function syncSupSalePaySection() {
   if (label) {
     if (_salesSupMode) {
       if (!label.dataset.orig) label.dataset.orig = label.textContent;
-      label.textContent = 'نقد مقبوض الآن من المورد (اختياري)';
+      label.textContent = t('sales.supCashReceivedNow');
     } else if (label.dataset.orig) {
       label.textContent = label.dataset.orig;
     }
@@ -1367,6 +3252,10 @@ function resetSupSalePayUI() {
   }
   const info = document.getElementById('salesSupPayInfo');
   if (info) info.style.display = 'none';
+  const remDisplay = document.getElementById('salesRemainingDisplay');
+  if (remDisplay) remDisplay.style.display = '';
+  const payStatus = document.getElementById('salesPayStatus');
+  if (payStatus) payStatus.style.display = '';
 }
 
 function renderSupSalePayInfo(total, paid) {
@@ -1386,12 +3275,12 @@ function renderSupSalePayInfo(total, paid) {
   if (debitEl) debitEl.textContent = 'DA' + fmtMoney(debit);
   const beforeEl = document.getElementById('salesSupBalBefore');
   if (beforeEl) {
-    beforeEl.textContent = fmtSupBalance(cur) + (cur > 0 ? ' (علينا له)' : cur < 0 ? ' (له علينا)' : '');
+    beforeEl.textContent = fmtSupBalance(cur) + (cur > 0 ? ' (' + t('sales.supDebtCap') + ')' : cur < 0 ? ' (' + t('sales.supCreditCap') + ')' : '');
     beforeEl.style.color = cur > 0 ? '#dc3545' : cur < 0 ? '#198754' : 'var(--silver-600)';
   }
   const afterEl = document.getElementById('salesSupBalAfter');
   if (afterEl) {
-    afterEl.textContent = fmtSupBalance(after) + (after > 0 ? ' (علينا له)' : after < 0 ? ' (له علينا)' : '');
+    afterEl.textContent = fmtSupBalance(after) + (after > 0 ? ' (' + t('sales.supDebtCap') + ')' : after < 0 ? ' (' + t('sales.supCreditCap') + ')' : '');
     afterEl.style.color = after > 0 ? '#dc3545' : after < 0 ? '#198754' : 'var(--silver-700)';
   }
 }
@@ -1455,12 +3344,137 @@ function selectSalesTransfer(id) {
 
 function confirmSalesTransfer() {
   if (!_transferCustomerId) return;
+  // «تحويل الزبون» changes the account owner: never carry a child label over.
+  if (String(_transferCustomerId) !== String(_salesCustomerId || '')) _resetSalesSubCustomer();
   _salesCustomerId = _transferCustomerId;
   closeSalesTransfer();
   confirmSalesCheckout();
 }
 
 // ===== CART =====
+
+// ---- free line: an item sold that has no record in the inventory ----
+// A free line carries no product group, so it has no batches, no stock to
+// deduct, no shelf price and no price modes: the typed price × typed quantity
+// is the whole line, and its entire amount is margin.
+const FREE_KEY = 'free:';
+let _salesFreeSeq = 0;
+
+function isFreeSalesKey(key) { return String(key || '').indexOf(FREE_KEY) === 0; }
+
+// The cap a line's quantity may reach. Nothing caps an unlisted item — only a
+// real product group is limited by what the shelves hold. A key with no group
+// left (product removed while its line was in the cart) has no known limit,
+// which is what the quantity buttons and the typed entry always assumed.
+function salesLineMaxQty(line) {
+  if (!line) return 999999;
+  if (isFreeSalesKey(line.key)) return 999999;
+  const g = getSalesGroupByKey(line.key);
+  return g ? getGroupMaxQty(g) : 999999;
+}
+
+function addSalesFreeLine(opts) {
+  opts = opts || {};
+  const qty = Unit.roundQty(Number(opts.qty) || 0);
+  const price = Math.max(0, Number(opts.price) || 0);
+  if (!(qty > 0)) return null;
+  const name = String(opts.name || '').trim() || t('sales.freeDefaultName');
+  const line = {
+    key: FREE_KEY + (++_salesFreeSeq), name: name, barcode: '', qty: qty,
+    mode: 'unit', price: price, total: qty * price, baseTotal: qty * price,
+    manualPrice: price, discount: 0, free: true, minPrice: 0,
+    entries: [{ productId: null, name: name, barcode: '', qty: qty, price: price, total: qty * price }],
+  };
+  _salesCart.push(line);
+  renderSalesCart();
+  return line;
+}
+
+const FREE_FIELDS = ['salesFreeName', 'salesFreeQty', 'salesFreePrice'];
+
+function openSalesFreeLine() {
+  const m = document.getElementById('salesFreeModal');
+  if (!m) return;
+  if (!m._host) m._host = m.parentNode;
+  if (m.parentNode !== document.body) document.body.appendChild(m);
+  document.getElementById('salesFreeName').value = '';
+  document.getElementById('salesFreeQty').value = '1';
+  document.getElementById('salesFreePrice').value = '';
+  updateSalesFreeTotal();
+  m.style.display = 'flex';
+  // The quantity is the field the cashier always edits, so it opens focused
+  // with its "1" selected: type over it or press Enter for a single unit.
+  const qty = document.getElementById('salesFreeQty');
+  if (qty) { qty.focus(); if (qty.select) qty.select(); }
+}
+
+function closeSalesFreeLine() {
+  const m = document.getElementById('salesFreeModal');
+  if (m) {
+    m.style.display = 'none';
+    if (m._host && m.parentNode === document.body) m._host.appendChild(m);
+  }
+  const scan = document.getElementById('salesBarcodeScan');
+  if (scan) scan.focus();
+}
+
+function salesFreeTotal() {
+  const raw = String((document.getElementById('salesFreeQty') || {}).value || '');
+  const q = raw.indexOf('-') === -1 ? Unit.parse(raw) : 0;
+  const p = parseFloat((document.getElementById('salesFreePrice') || {}).value);
+  return Unit.roundQty(q > 0 ? q : 0) * (isNaN(p) ? 0 : Math.max(0, p));
+}
+
+function updateSalesFreeTotal() {
+  const el = document.getElementById('salesFreeTotal');
+  if (el) el.textContent = 'DA' + fmtMoney(salesFreeTotal());
+}
+
+function confirmSalesFreeLine() {
+  const qtyEl = document.getElementById('salesFreeQty');
+  const priceEl = document.getElementById('salesFreePrice');
+  const rawQty = String(qtyEl.value || '');
+  const qty = Unit.parse(rawQty);
+  const price = parseFloat(priceEl.value);
+  // Unit.parse drops a minus sign (it reads "-3" as 3), so a negative quantity
+  // has to be refused from the raw text — the rule is zero and negative never
+  // reach the cart.
+  if (rawQty.indexOf('-') !== -1 || !(qty > 0)) {
+    alert(t('sales.freeQtyBad'));
+    qtyEl.focus(); if (qtyEl.select) qtyEl.select();
+    return;
+  }
+  if (isNaN(price)) {
+    alert(t('sales.freePriceBad'));
+    priceEl.focus(); if (priceEl.select) priceEl.select();
+    return;
+  }
+  addSalesFreeLine({ name: document.getElementById('salesFreeName').value, qty: Unit.roundQty(qty), price: Math.max(0, price) });
+  closeSalesFreeLine();
+}
+
+// Arrows walk the three fields (left/down forward, right/up back, matching the
+// direction the rest of the app's tables use); Enter adds, Esc cancels.
+function salesFreeKeyNav(e) {
+  if (e.key === 'Escape' || e.key === 'Esc') {
+    e.preventDefault(); e.stopPropagation(); closeSalesFreeLine(); return;
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault(); e.stopPropagation(); confirmSalesFreeLine(); return;
+  }
+  const i = FREE_FIELDS.indexOf(e.target && e.target.id);
+  if (i < 0) return;
+  const rtl = (typeof window.isRTL === 'function') ? window.isRTL() : ((window.__lang || 'ar') === 'ar');
+  let n = -1;
+  // Down always advances; Left advances in RTL (reading order) and Right does
+  // in LTR, so the physical arrow points the way the layout flows.
+  if (e.key === 'ArrowDown' || (rtl ? e.key === 'ArrowLeft' : e.key === 'ArrowRight')) n = Math.min(FREE_FIELDS.length - 1, i + 1);
+  else if (e.key === 'ArrowUp' || (rtl ? e.key === 'ArrowRight' : e.key === 'ArrowLeft')) n = Math.max(0, i - 1);
+  if (n < 0 || n === i) return;
+  e.preventDefault(); e.stopPropagation();
+  const el = document.getElementById(FREE_FIELDS[n]);
+  if (el) { el.focus(); if (el.select) el.select(); }
+}
 
 function addToSalesCart(productId) {
   const prod = DB.getProduct(productId);
@@ -1490,7 +3504,16 @@ function addSalesLine(key) {
   } else {
     // Every new line starts at exactly 1, whatever the product's unit; the
     // cashier types any decimal value by hand.
-    line = { key, name: g.name, barcode: g.barcode, qty: 1, mode: _salesDefaultMode, price: 0, total: 0, baseTotal: 0, manualPrice: null, discount: 0, entries: [] };
+    // Block selling a product alone if it's reserved for a bundle.
+    const _rep = g.records && g.records[0];
+    if (_rep && !_rep.isBundle) {
+      const _reserved = (typeof bundleReservedQty === 'function') ? bundleReservedQty(_rep.id) : 0;
+      if (_reserved > 0 && getGroupAvailableQty(g) <= _reserved) {
+        alert(t('sales.bundleSaleBlocked'));
+        return;
+      }
+    }
+    line = { key, name: g.name, barcode: g.barcode, qty: 1, mode: _salesDefaultMode, price: 0, total: 0, baseTotal: 0, manualPrice: null, discount: 0, entries: [], minPrice: Math.max(0, ...((g.records || []).map(r => Number(r && r.minPrice) || 0))) };
     allocateSalesLine(line, key);
     _salesCart.push(line);
   }
@@ -1500,6 +3523,10 @@ function addSalesLine(key) {
 }
 
 function renderSalesCart() {
+  // A «المواصلة» answer belongs to the prices that were on the screen when it
+  // was given; editing the cart afterwards asks again.
+  _salesMarginBypass = false;
+  _salesCreditBypass = false;
   const section = document.getElementById('salesCartSection');
   const items = document.getElementById('salesCartItems');
   const count = document.getElementById('salesCartCount');
@@ -1520,26 +3547,42 @@ function renderSalesCart() {
   const qkBtn = document.getElementById('salesQkOpenBtn');
   if (qkBtn) qkBtn.disabled = false;
 
+  // A field deleted while a line was using it: fall back to the unit price.
+  _salesCart.forEach(line => {
+    if (line.mode !== 'unit' && line.mode !== 'wholesale' && !salesExtraFieldOfMode(line.mode)) {
+      line.mode = 'unit';
+      allocateSalesLine(line, line.key);
+    }
+  });
+
   items.innerHTML = _salesCart.map((line, i) => {
     const g = getSalesGroupByKey(line.key);
-    const maxQty = g ? getGroupMaxQty(g) : 99;
+    const free = isFreeSalesKey(line.key);
+    const maxQty = salesLineMaxQty(line);
     const mixed = line.entries.length > 1;
     const shortQty = line.shortQty || 0;
     const expiredWarn = (salesPharmacyOn() && (line.blockedExpired || 0) > 0)
       ? `<div class="sc-warn-note"><i class="fas fa-ban"></i> ${t('sales.batchExpiredPartial')} (${line.blockedExpired})</div>` : '';
     const shortWarn = shortQty > 0
       ? `<div class="sc-warn-note short"><i class="fas fa-exclamation-circle"></i> ${t('sales.subShortage')} ${Math.max(0, line.qty - shortQty)} / ${line.qty}</div>` : '';
+    // The floor is part of the line's identity on screen: the cashier can see
+    // the minimum before typing a price, not only after it snaps back.
+    const floor = salesLineMinPrice(line);
+    const floorNote = floor > 0
+      ? `<div class="sc-minprice-note" id="scFloor_${i}"><i class="fas fa-arrow-down"></i> ${escHtml(t('quickEntry.minPrice'))}: DA${fmtMoney(floor)}</div>`
+      : '';
     const unitName = (g && g.records && g.records[0])
       ? Unit.label(g.records[0]) : '';
     return `<div class="sc-item">
       <div class="sc-item-info">
-        <div class="sc-item-name">${escHtml(line.name)}${unitName ? `<span class="sc-unit-badge">${Unit.esc(unitName)}</span>` : ''}${mixed ? `<span class="sc-mixed-badge" title="${t('sales.mixedPrice')}"><i class="fas fa-layer-group"></i> ${t('sales.mixedPrice')}</span>` : ''}</div>
+        <div class="sc-item-name">${escHtml(line.name)}${line.scale ? `<span class="sc-scale-badge" title="${escHtml(line.scale.fromLabel ? t('sales.scaleFromLabelTag') : t('sales.scaleTag'))}"><i class="fas fa-weight-hanging"></i> ${escHtml(t('sales.scaleTag'))}</span>` : ''}${free ? `<span class="sc-free-badge" title="${escHtml(t('sales.freeDefaultName'))}">${escHtml(t('sales.freeTag'))}</span>` : (unitName ? `<span class="sc-unit-badge">${Unit.esc(unitName)}</span>` : '')}${mixed ? `<span class="sc-mixed-badge" title="${t('sales.mixedPrice')}"><i class="fas fa-layer-group"></i> ${t('sales.mixedPrice')}</span>` : ''}</div>
         <div class="sc-item-bar" dir="ltr">${escHtml(line.barcode)}</div>
         ${expiredWarn}
         ${shortWarn}
         <div style="margin-top:3px">
-          <button class="sc-mode-btn ${line.mode === 'wholesale' ? 'sc-mode-btn-active' : ''}" onclick="toggleSalesLineMode(${i})">${line.mode === 'wholesale' ? t('sales.wholesale') : t('sales.unit')}</button>
+          ${free ? '' : `<button class="sc-mode-btn ${line.mode !== 'unit' ? 'sc-mode-btn-active' : ''}" onclick="toggleSalesLineMode(${i})" title="${t('sales.switchPriceMode')}${salesExtraFields().length ? ' ' + t('sales.switchPriceModeExtra') : ''}">${salesLineModeLabel(line.mode)}</button>`}
         </div>
+        ${floorNote}
       </div>
       <div class="sc-item-controls">
         <button class="sc-qty-btn" onclick="decSalesCartQty(${i})" ${line.qty <= Unit.step(line.qty) ? 'disabled' : ''}>−</button>
@@ -1576,8 +3619,7 @@ function renderSalesCart() {
 function incSalesCartQty(idx) {
   const line = _salesCart[idx];
   if (!line) return;
-  const g = getSalesGroupByKey(line.key);
-  const maxQty = g ? getGroupMaxQty(g) : 999999;
+  const maxQty = salesLineMaxQty(line);
   const step = Unit.step(line.qty);
   if (line.qty < maxQty) {
     line.qty = Math.min(maxQty, Unit.roundQty(line.qty + step));
@@ -1602,8 +3644,7 @@ function updateSalesCartQty(idx, val) {
   if (!line) return;
   let qty = Unit.parse(val);
   if (!(qty > 0)) qty = 1;
-  const g = getSalesGroupByKey(line.key);
-  const maxQty = g ? getGroupMaxQty(g) : 999999;
+  const maxQty = salesLineMaxQty(line);
   // No fixed 0.5 grid any more: any decimal up to 6 places is accepted.
   line.qty = Math.min(maxQty, Unit.roundQty(qty));
   allocateSalesLine(line, line.key);
@@ -1623,7 +3664,10 @@ function removeFromSalesCart(idx) {
 function toggleSalesLineMode(idx) {
   const line = _salesCart[idx];
   if (!line) return;
-  line.mode = line.mode === 'wholesale' ? 'unit' : 'wholesale';
+  // An unlisted line has no shelf prices to cycle through — its price is the
+  // one the cashier typed.
+  if (isFreeSalesKey(line.key)) return;
+  line.mode = salesNextLineMode(line.mode);
   allocateSalesLine(line, line.key);
   renderSalesCart();
 }
@@ -1632,9 +3676,13 @@ function updateSalesLinePrice(idx, val) {
   const line = _salesCart[idx];
   if (!line) return;
   const v = parseFloat(val);
-  line.manualPrice = (val === '' || isNaN(v)) ? null : Math.max(0, v);
+  const minPrice = salesLineMinPrice(line);
+  const below = (val !== '' && !isNaN(v) && v < minPrice);
+  line.manualPrice = (val === '' || isNaN(v)) ? null : Math.max(minPrice, v);
   allocateSalesLine(line, line.key);
   renderSalesCart();
+  salesMarginLiveCheck();
+  if (below) salesFlashFloor(idx);
 }
 
 function updateSalesLineDiscount(idx, val) {
@@ -1644,16 +3692,30 @@ function updateSalesLineDiscount(idx, val) {
   line.discount = (val === '' || isNaN(v)) ? 0 : Math.max(0, v);
   allocateSalesLine(line, line.key);
   renderSalesCart();
+  salesMarginLiveCheck();
 }
 
 function onSalesLinePriceInput(idx, val) {
   const line = _salesCart[idx];
   if (!line) return;
   const v = parseFloat(val);
-  line.manualPrice = (val === '' || isNaN(v)) ? null : Math.max(0, v);
+  const minPrice = salesLineMinPrice(line);
+  const below = (val !== '' && !isNaN(v) && v < minPrice);
+  line.manualPrice = (val === '' || isNaN(v)) ? null : Math.max(minPrice, v);
   allocateSalesLine(line, line.key);
   updateSalesTotals();
   updateSalesLineTotal(idx);
+  if (below) salesFlashFloor(idx);
+}
+
+// One-shot red pulse on the line's floor chip when a typed price is refused.
+function salesFlashFloor(idx) {
+  const el = document.getElementById('scFloor_' + idx);
+  if (!el) return;
+  el.classList.remove('flash');
+  // Force a reflow so the animation restarts on a repeated refusal.
+  void el.offsetWidth;
+  el.classList.add('flash');
 }
 
 function onSalesLineDiscountInput(idx, val) {
@@ -1732,7 +3794,8 @@ function _qkSelect(idx) {
 function _qkRowsHtml() {
   return _salesCart.map(function (line, i) {
     const g = getSalesGroupByKey(line.key);
-    const maxQty = g ? getGroupMaxQty(g) : 99;
+    const free = isFreeSalesKey(line.key);
+    const maxQty = salesLineMaxQty(line);
     const atCap = line.qty >= maxQty;
     const active = i === _qkIndex;
     const unitLabel = t('sales.unitPrice') || 'Prix';
@@ -1740,7 +3803,7 @@ function _qkRowsHtml() {
     return `<div class="qk-row${active ? ' active' : ''}" onclick="_qkSelect(${i})">
       <div class="qk-pos">${i + 1}</div>
       <div class="qk-info">
-        <div class="qk-name">${escHtml(line.name)}${uName ? `<span class="sc-unit-badge">${Unit.esc(uName)}</span>` : ''}${atCap ? `<span class="qk-full">${t('sales.qtyModalFull')}</span>` : ''}</div>
+        <div class="qk-name">${escHtml(line.name)}${free ? `<span class="sc-free-badge">${escHtml(t('sales.freeTag'))}</span>` : (uName ? `<span class="sc-unit-badge">${Unit.esc(uName)}</span>` : '')}${atCap ? `<span class="qk-full">${t('sales.qtyModalFull')}</span>` : ''}</div>
         <div class="qk-bar" dir="ltr">${escHtml(line.barcode || '')}</div>
         <div class="qk-price">${unitLabel} <span dir="ltr">${Number(line.price || 0).toFixed(2)}</span> DA</div>
       </div>
@@ -1816,13 +3879,20 @@ function _qkHandler(e) {
     _qkRender();
     return;
   }
-  if (e.key === 'ArrowUp' || e.key === 'ArrowRight' || e.key === 'Up' || e.key === 'Right') {
+  const _qkRtl = (typeof window.isRTL === 'function') ? window.isRTL() : ((window.__lang || 'ar') === 'ar');
+  const _qkUp = e.key === 'ArrowUp' || e.key === 'Up';
+  const _qkDown = e.key === 'ArrowDown' || e.key === 'Down';
+  const _qkRight = e.key === 'ArrowRight' || e.key === 'Right';
+  const _qkLeft = e.key === 'ArrowLeft' || e.key === 'Left';
+  const _qkPrev = _qkUp || (_qkRtl ? _qkRight : _qkLeft);
+  const _qkNext = _qkDown || (_qkRtl ? _qkLeft : _qkRight);
+  if (_qkPrev) {
     _qkIndex = (_qkIndex - 1 + count) % count;
     _qkBuffer = null;
     _qkRender();
     return;
   }
-  if (e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'Down' || e.key === 'Left') {
+  if (_qkNext) {
     _qkIndex = (_qkIndex + 1) % count;
     _qkBuffer = null;
     _qkRender();
@@ -1841,8 +3911,7 @@ function _qkHandler(e) {
   if (/^[0-9]$/.test(e.key) || e.key === '.' || e.key === ',' || e.code === 'NumpadDecimal') {
     const line = _salesCart[_qkIndex];
     if (!line) return;
-    const g = getSalesGroupByKey(line.key);
-    const maxQty = g ? getGroupMaxQty(g) : 99;
+    const maxQty = salesLineMaxQty(line);
     const base = _qkBuffer === null ? '' : _qkBuffer;
     // 12 chars is enough for 0.000001 and still bounded.
     const next = (base + (e.code === 'NumpadDecimal' ? '.' : e.key)).slice(-12);
@@ -1924,11 +3993,18 @@ function getSalesQtyStep() {
 // Top-of-page LED grand-total (digital display).
 function updateSalesLed() {
   const totalEl = document.getElementById('salesLedTotal');
-  if (totalEl) totalEl.textContent = 'DA' + fmtMoney(_salesComputedTotal || 0);
+  if (totalEl) {
+    const total = (_salesCart && _salesCart.length > 0) ? (_salesComputedTotal || 0) : 0;
+    totalEl.textContent = 'DA' + fmtMoney(total);
+  }
   const itemsEl = document.getElementById('salesLedItems');
   if (itemsEl) {
-    const pieces = Unit.roundQty(_salesCart.reduce((s, l) => s + (Number(l.qty) || 0), 0));
-    itemsEl.textContent = Unit.fmtQty(pieces);
+    if (!_salesCart || _salesCart.length === 0) {
+      itemsEl.textContent = Unit.fmtQty ? Unit.fmtQty(0) : '0';
+    } else {
+      const pieces = Unit.roundQty(_salesCart.reduce((s, l) => s + (Number(l.qty) || 0), 0));
+      itemsEl.textContent = Unit.fmtQty ? Unit.fmtQty(pieces) : pieces;
+    }
   }
 }
 
@@ -2012,6 +4088,41 @@ function calcTimbreFiscal(ttc) {
 
 // ===== INVOICE PREVIEW =====
 
+// The post-sale preview is built here rather than through invoices.js because
+// that page script is loaded only when the invoices page is opened. Read the
+// same shared switches so a Référence / Marque choice applies to both paths.
+function _previewInvColumns() {
+  var cfg = null;
+  try {
+    if (window.DisplaySettings && typeof window.DisplaySettings.invoiceColumns === 'function') {
+      cfg = window.DisplaySettings.invoiceColumns();
+    }
+  } catch (e) {}
+  if (!cfg) {
+    try {
+      var raw = localStorage.getItem('zmt_display_settings');
+      cfg = raw ? JSON.parse(raw) : null;
+    } catch (e) { cfg = null; }
+  }
+  cfg = cfg || {};
+  function isOn(v) { return v === true || v === 1 || v === '1' || v === 'true'; }
+  var ref = (cfg.invShowReference !== undefined) ? cfg.invShowReference : cfg.reference;
+  var mark = (cfg.invShowMark !== undefined) ? cfg.invShowMark : cfg.mark;
+  return { reference: isOn(ref), mark: isOn(mark) };
+}
+
+// Older lines may not carry the product snapshot; fall back to the live record
+// exactly like the invoices page does, so enabling a column never shows blanks.
+function _previewItemExtra(item, field) {
+  if (item && item[field]) return String(item[field]);
+  var pid = item && item.productId;
+  if (!pid || typeof DB === 'undefined' || typeof DB.getProduct !== 'function') return '';
+  try {
+    var p = DB.getProduct(pid);
+    return (p && p[field]) ? String(p[field]) : '';
+  } catch (e) { return ''; }
+}
+
 function showInvoicePreview(inv) {
   const existing = document.getElementById('invoicePreviewModal');
   if (existing) existing.remove();
@@ -2050,6 +4161,7 @@ function showInvoicePreview(inv) {
   const custDiscAmount = originalSubtotal * ((inv.customerDiscount || 0) / 100);
   const extraDiscAmount = inv.extraDiscount || 0;
   const lineDiscTotal = inv.items.reduce((s, it) => s + (it.lineDiscount || 0), 0);
+  const invCols = _previewInvColumns();
 
   const modal = document.createElement('div');
   modal.id = 'invoicePreviewModal';
@@ -2130,12 +4242,14 @@ function showInvoicePreview(inv) {
                 ? (supInfo && supInfo.supp
                   ? `<div style="font-size:14px;font-weight:600;color:#1a1a1a;margin-top:2px">${escHtml(supInfo.supp.name)}</div>
                      ${supInfo.supp.phone ? `<div style="font-size:11px;color:#666">Tél: ${escHtml(supInfo.supp.phone)}</div>` : ''}
-                     ${supInfo.supp.address ? `<div style="font-size:11px;color:#666">Adresse: ${escHtml(supInfo.supp.address)}</div>` : ''}`
+                     ${supInfo.supp.address ? `<div style="font-size:11px;color:#666">Adresse: ${escHtml(supInfo.supp.address)}</div>` : ''}
+                     ${salesPartyLegalHTML(supInfo.supp, true)}`
                   : `<div style="font-size:14px;color:#888">Fournisseur</div>`)
                 : (customer
                   ? `<div style="font-size:14px;font-weight:600;color:#1a1a1a;margin-top:2px">${escHtml(customer.name)}</div>
                      ${customer.phone ? `<div style="font-size:11px;color:#666">Tél: ${escHtml(customer.phone)}</div>` : ''}
-                     ${customer.address ? `<div style="font-size:11px;color:#666">Adresse: ${escHtml(customer.address)}</div>` : ''}`
+                     ${customer.address ? `<div style="font-size:11px;color:#666">Adresse: ${escHtml(customer.address)}</div>` : ''}
+                     ${salesPartyLegalHTML(customer, false)}`
                   : `<div style="font-size:14px;color:#888">Client non enregistré</div>`)
               }
             </td>
@@ -2148,11 +4262,20 @@ function showInvoicePreview(inv) {
           </tr>
         </table>
 
+        ${(inv.subCustomerName || inv.subCustomerId) ? `
+        <!-- Customer tree: historical sub-customer snapshot, printed on the invoice -->
+        <div class="ct-tree-note" style="margin:0 0 14px;padding:8px 12px;border-inline-start:3px solid #2563eb;background:#f8faff;color:#334155;font-size:11px;direction:ltr;text-align:left">
+          <div style="font-weight:700">${escHtml(t('customerTree.printLabel') || 'Client secondaire')}: ${escHtml(inv.subCustomerName || '')}</div>
+          ${inv.note ? `<div style="margin-top:3px">${escHtml(inv.note)}</div>` : ''}
+        </div>` : ''}
+
         <!-- Items Table -->
         <table style="width:100%;border-collapse:collapse;font-size:12px" dir="ltr">
           <thead>
             <tr style="background:#f2f2f2;border-bottom:2px solid #1a1a1a">
+              ${invCols.reference ? '<th style="padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:110px">Référence</th>' : ''}
               <th style="padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd">Désignation</th>
+              ${invCols.mark ? '<th style="padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:110px">Marque</th>' : ''}
               <th style="padding:8px 10px;text-align:center;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:60px">Qté</th>
               <th style="padding:8px 10px;text-align:right;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:100px">Prix unitaire</th>
               <th style="padding:8px 10px;text-align:right;font-size:10px;text-transform:uppercase;color:#555;letter-spacing:0.5px;border:1px solid #ddd;width:100px">Total</th>
@@ -2161,7 +4284,9 @@ function showInvoicePreview(inv) {
           <tbody>
             ${inv.items.map((item, i) => `
               <tr style="${i % 2 === 0 ? 'background:#fafafa' : ''}">
+                ${invCols.reference ? `<td style="padding:7px 10px;border:1px solid #eee;font-size:12px;color:#333" dir="ltr">${escHtml(_previewItemExtra(item, 'reference'))}</td>` : ''}
                 <td style="padding:7px 10px;border:1px solid #eee;font-size:12px;color:#333">${escHtml(item.name)}</td>
+                ${invCols.mark ? `<td style="padding:7px 10px;border:1px solid #eee;font-size:12px;color:#333" dir="ltr">${escHtml(_previewItemExtra(item, 'mark'))}</td>` : ''}
                 <td style="padding:7px 10px;border:1px solid #eee;text-align:center;font-size:12px;color:#333">${Unit.qtyUnit(item.qty, item)}</td>
                 <td style="padding:7px 10px;border:1px solid #eee;text-align:right;font-size:12px;color:#333">
                   ${(item.originalPrice && item.originalPrice !== item.price) ? `<span style="text-decoration:line-through;color:#999;font-size:10px">${fmtMoney(item.originalPrice)}</span> ` : ''}
@@ -2213,16 +4338,16 @@ function showInvoicePreview(inv) {
         ${inv.type === 'sup_sale' ? `
         ${supInfo && supInfo.due > 0 ? `
         <div style="margin-top:14px;padding:12px 16px;background:#fff3e0;border:1px solid #ffcc80;border-radius:6px;font-size:13px;color:#e65100;display:flex;justify-content:space-between;align-items:center" dir="ltr">
-          <strong>المتبقي على المورد (Restant dû par le fournisseur):</strong>
+          <strong>${t('invoices.remainingOnSupplier')}</strong>
           <strong style="font-size:16px">${fmtMoney(supInfo.due)} DA</strong>
         </div>` : `
         <div style="margin-top:14px;padding:12px 16px;background:#e8f5e9;border:1px solid #a5d6a7;border-radius:6px;font-size:13px;color:#2e7d32" dir="ltr">
-          <strong>دين المورد مسوّى بالكامل (Dette réglée)</strong>
+          <strong>${t('invoices.supDebtSettled')}</strong>
         </div>`}
         <div style="margin-top:8px;font-size:11px;color:#666" dir="ltr">
-          مبلغ الفاتورة: <strong>${fmtMoney(inv.totalAmount)} DA</strong>
-          ${paidAmount > 0 ? ` &nbsp;|&nbsp; مقبوض نقداً: <strong>${fmtMoney(paidAmount)} DA</strong>` : ''}
-          ${(typeof inv.supExpense === 'number') ? ` &nbsp;|&nbsp; مسجّل في المصروفات: <strong>${fmtMoney(inv.supExpense)} DA</strong>` : ''}
+          ${t('invoices.invoiceAmount')}: <strong>${fmtMoney(inv.totalAmount)} DA</strong>
+          ${paidAmount > 0 ? ` &nbsp;|&nbsp; ${t('invoices.cashReceived')}: <strong>${fmtMoney(paidAmount)} DA</strong>` : ''}
+          ${(typeof inv.supExpense === 'number') ? ` &nbsp;|&nbsp; ${t('invoices.expenseRecorded')}: <strong>${fmtMoney(inv.supExpense)} DA</strong>` : ''}
         </div>` : `
         ${effPaid < inv.totalAmount ? `
         <div style="margin-top:14px;padding:10px 14px;background:#fff3e0;border:1px solid #ffcc80;border-radius:6px;font-size:12px;color:#e65100" dir="ltr">
@@ -2234,7 +4359,7 @@ function showInvoicePreview(inv) {
         </div>`}
         ${creditUsed > 0 ? `
         <div style="margin-top:8px;padding:10px 14px;background:#e8f5e9;border:1px solid #a5d6a7;border-radius:6px;font-size:12px;color:#1a7f37" dir="rtl">
-          تم خصم <strong>DA${fmtMoney(creditUsed)}</strong> من رصيد العميل عند البيع
+          ${t('sales.creditDiscountDone')} <strong>DA${fmtMoney(creditUsed)}</strong> ${t('sales.creditDiscountSource')}
         </div>` : ''}`}
 
         ${payMethods.ccp > 0 ? `
@@ -2326,6 +4451,7 @@ function printInvoicePreview(mode) {
   styles.forEach(s => styleHtml += s.outerHTML);
 
   const isBw = mode === 'bw';
+  const ppRule = (typeof PrintPaper !== 'undefined' && PrintPaper) ? PrintPaper.pageRule(10) : '@page { margin: 10mm; size: A4; }';
 
   win.document.write(`
     <!DOCTYPE html>
@@ -2335,7 +4461,7 @@ function printInvoicePreview(mode) {
       <title>Facture</title>
       ${styleHtml}
       <style>
-        @page { margin: 10mm; size: A4; }
+        ${ppRule}
         body { margin: 0; padding: 0; font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
         * { box-sizing: border-box; }
         #invoicePrintArea { padding: 30px 35px; }
@@ -2394,6 +4520,53 @@ function confirmSalesCheckout() {
     if (c && c.discount > 0) custDiscPct = c.discount;
   }
 
+  // The floor is asked about before a single record exists: once the invoice is
+  // written the sale cannot be pulled back. «بيع لمورد» is outside the rule, and
+  // «المواصلة» spends its bypass on this click only.
+  const marginBypass = _salesMarginBypass;
+  _salesMarginBypass = false;
+  const overpayBypass = _salesOverpayBypass;
+  _salesOverpayBypass = false;
+  let creditBypass = _salesCreditBypass;
+  _salesCreditBypass = false;
+  // The bypass is only meaningful for a manager. Any other state (e.g. a stale
+  // flag left by an old dialog) is discarded so the limit is checked again.
+  if (creditBypass && !((typeof Auth !== 'undefined') && typeof Auth.isManager === 'function' && Auth.isManager())) {
+    creditBypass = false;
+  }
+  if (!_salesSupMode && !marginBypass) {
+    const extraEl = document.getElementById('salesExtraDisc');
+    const v = salesMarginScan(custDiscPct, extraEl ? (parseFloat(extraEl.value) || 0) : 0);
+    if (v.length && showSalesMarginWarning(v, 'checkout')) return;
+  }
+  // Credit limit (سقف الدين): warn before the invoice is written — once it is
+  // persisted the sale cannot be pulled back, exactly like the margin floor.
+  if (!_salesSupMode && !creditBypass) {
+    const custForCredit = _salesCustomerId ? DB.getCustomer(_salesCustomerId) : null;
+    const creditLimit = custForCredit ? (parseFloat(custForCredit.creditLimit) || 0) : 0;
+    if (creditLimit > 0 && custForCredit) {
+      const saleTotal = _salesComputedTotal || 0;
+      const paidAmt = (typeof getSalesPaidAmount === 'function') ? (getSalesPaidAmount().total || 0) : 0;
+      const projectedBalance = (parseFloat(custForCredit.balance) || 0) + saleTotal - paidAmt;
+      if (projectedBalance > creditLimit + 0.005) {
+        if (showSalesCreditWarning(projectedBalance, creditLimit, saleTotal, parseFloat(custForCredit.balance) || 0)) return;
+      }
+    }
+  }
+
+  // Customer tree: resolve the label BEFORE the cart is cleared. This label is
+  // metadata for the parent's invoice only — it never becomes a second payer.
+  let subCustomer = null;
+  let subNote = '';
+  if (_salesTreeEnabled() && _salesSubCustomerId && !_salesSupMode) {
+    const chosen = window.CustomerTree.findChild(_salesSubCustomerId);
+    // Final guard: the label must belong to the current parent account.
+    if (chosen && String(chosen.parentId) === String(_salesCustomerId)) {
+      subCustomer = chosen;
+      subNote = window.CustomerTree.noteFor(subCustomer, DB.getCustomer(_salesCustomerId)) || '';
+    }
+  }
+
   const pay = getSalesPaidAmount();
   let res;
   try {
@@ -2403,14 +4576,22 @@ function confirmSalesCheckout() {
         barcode: l.barcode,
         entries: l.entries,
         lineDiscount: l.discount || 0,
+        // A weighed line keeps the label's place-count on the invoice too,
+        // so the paper says 0.250 كغ exactly as the scale printed it.
+        qtyDecimals: l.scale && l.scale.decimals != null ? l.scale.decimals : null,
       })),
       customerId: _salesCustomerId,
+      // Optional sub-customer label + French note. SaleCore keeps customerId
+      // and the single balance write on the parent, unchanged.
+      subCustomer: subCustomer,
+      note: subNote || undefined,
       supplierId: _salesSuppId,
       supMode: _salesSupMode,
       customerDiscountPct: custDiscPct,
       extraDiscount: parseFloat(document.getElementById('salesExtraDisc').value) || 0,
       pay: { method: _salesPayMethod, cash: pay.cash, ccp: pay.ccp, total: pay.total },
       creditUsed: _salesCreditUsed,
+      allowOverpay: overpayBypass,
     }, {
       fullPayment: t('sales.fullPaymentNote'),
       partialPayment: t('sales.partialPaymentNote'),
@@ -2427,31 +4608,33 @@ function confirmSalesCheckout() {
       alert(`"${res.error.name}" ${t('sales.notAvailableQty')}\n${t('sales.available')} ${res.error.available}`);
       return;
     }
-    if (res.error && res.error.code === 'PAID_EXCEEDS') { alert(t('sales.paidExceedsTotal')); return; }
+    if (res.error && res.error.code === 'PAID_EXCEEDS') {
+      if (!_salesSupMode && showSalesOverpayWarning(res.error.total, res.error.paid)) return;
+      alert(t('sales.paidExceedsTotal'));
+      return;
+    }
     alert((res.error && res.error.message) || t('sales.cartEmptyAlert'));
     return;
   }
   const inv = res.invoice;
 
+  // The invoice is already persisted at this point, so nothing below may throw:
+  // the old hardcoded getElementById('salesSelectedCust') chain was written for
+  // the previous layout and crashed here — leaving the cart on screen so a
+  // second click recorded the same sale twice. clearSalesCart() null-guards
+  // every id (old panel + new LED variants) and resets the totals strip too;
+  // the cart is emptied first so clearSalesCart() takes its silent branch and
+  // the cashier is never asked "تفريغ السلة؟" after a sale he just confirmed.
   _salesCart = [];
-  _salesCustomerId = null;
-  _salesSuppId = null;
-  _salesSupMode = false;
-  _salesCreditUsed = 0;
-  _salesDefaultMode = 'unit';
-  document.getElementById('salesSelectedCust').style.display = 'none';
-  document.getElementById('salesWalkinLabel').style.display = 'none';
-  document.getElementById('salesCustSearch').value = '';
-  const _supResetBanner = document.getElementById('salesSupBanner');
-  if (_supResetBanner) _supResetBanner.style.display = 'none';
-  const _supResetRow = document.getElementById('salesCustRow');
-  if (_supResetRow) _supResetRow.style.display = '';
-  document.getElementById('salesPaySection').style.display = 'none';
-  document.getElementById('salesExtraDisc').value = '0';
-  resetSalesPaymentUI();
-  resetSupSalePayUI();
-  renderSalesCart();
-  renderSalesProducts();
+  clearSalesCart();
+
+  // Explicit "sale recorded" feedback: in thermal mode no preview window opens,
+  // so without this the cashier only sees the cart vanish.
+  try {
+    if (window.ThermalPrint && window.ThermalPrint.toast) {
+      window.ThermalPrint.toast(t('inventory.invoiceSaved') + ' DA' + fmtMoney(inv.totalAmount), 'ok');
+    }
+  } catch (e) {}
 
   // Thermal mode: print the receipt silently straight to the roll printer and
   // never open the normal print window. On any failure we fall back to the
@@ -2459,11 +4642,11 @@ function confirmSalesCheckout() {
   if (window.ThermalPrint && window.ThermalPrint.isEnabled()) {
     window.ThermalPrint.printSale(inv, res).then(function (r) {
       if (r && r.ok) {
-        window.ThermalPrint.toast(t('thermal.printed') || 'تمت الطباعة على الطابعة الحرارية', 'ok');
+        window.ThermalPrint.toast(t('thermal.printed'), 'ok');
       } else if (r && r.fallback) {
         showInvoicePreview(inv);
       } else {
-        window.ThermalPrint.toast((t('thermal.testFail') || 'فشل الطباعة') + ' ' + ((r && r.error) || ''), 'err');
+        window.ThermalPrint.toast(t('thermal.testFail') + ' ' + ((r && r.error) || ''), 'err');
         showInvoicePreview(inv);
       }
     });
@@ -2482,10 +4665,67 @@ function confirmSalesCheckout() {
 }
 
 function clearSalesCart() {
-  if (_salesCart.length === 0) return;
+  if (_salesCart.length === 0) {
+    _salesCart = [];
+    _salesCustomerId = null;
+    _resetSalesSubCustomer();
+    _salesWalkin = false;
+    _salesSuppId = null;
+    _salesSupMode = false;
+    _salesCreditUsed = 0;
+    _salesDefaultMode = 'unit';
+    _salesPaidTouched = false;
+    _salesComputedTotal = 0;
+    const sb2 = document.getElementById('salesSelectedCust');
+    if (sb2) sb2.style.display = 'none';
+    const lsb2 = document.getElementById('salesLedSelectedCust');
+    if (lsb2) lsb2.style.display = 'none';
+    const wl = document.getElementById('salesWalkinLabel');
+    if (wl) wl.style.display = 'none';
+    const lwl = document.getElementById('salesLedWalkinLabel');
+    if (lwl) lwl.style.display = 'none';
+    const cs = document.getElementById('salesCustSearch');
+    if (cs) cs.value = '';
+    const lcs = document.getElementById('salesLedCustSearch');
+    if (lcs) lcs.value = '';
+    const cr = document.getElementById('salesCustResults');
+    if (cr) cr.innerHTML = '';
+    const lcr = document.getElementById('salesLedCustResults');
+    if (lcr) lcr.innerHTML = '';
+    const _supResetBanner = document.getElementById('salesSupBanner');
+    if (_supResetBanner) _supResetBanner.style.display = 'none';
+    const _supResetBannerL = document.getElementById('salesLedSupBanner');
+    if (_supResetBannerL) _supResetBannerL.style.display = 'none';
+    const lw = document.getElementById('salesLedCustomer');
+    if (lw) lw.classList.remove('has-selection');
+    const _supResetRow = document.getElementById('salesCustRow');
+    if (_supResetRow) _supResetRow.style.display = '';
+    const psec = document.getElementById('salesPaySection');
+    if (psec) psec.style.display = 'none';
+    const ed = document.getElementById('salesExtraDisc');
+    if (ed) ed.value = '0';
+    resetSalesPaymentUI();
+    resetSupSalePayUI();
+    const csec = document.getElementById('salesCartSection');
+    if (csec) csec.style.display = 'none';
+    const escart = document.getElementById('salesEmptyCart');
+    if (escart) escart.style.display = '';
+    const emptyQkBtn2 = document.getElementById('salesQkOpenBtn');
+    if (emptyQkBtn2) emptyQkBtn2.disabled = true;
+    try { if (typeof _syncSalesCustomerTop === 'function') _syncSalesCustomerTop(); } catch (e) {}
+    renderSalesInCartStrip();
+    renderSalesProducts();
+    try { updateSalesTotals(); } catch (e) {}
+    try { updateSalesLed(); } catch (e) {}
+    const bs = document.getElementById('salesBarcodeScan');
+    if (bs) { try { bs.focus(); } catch (e) {} }
+    return;
+  }
   if (!confirm(t('sales.clearCartConfirm'))) return;
   _salesCart = [];
   _salesCustomerId = null;
+  _resetSalesSubCustomer();
+  _salesWalkin = false;
   _salesSuppId = null;
   _salesSupMode = false;
   _salesCreditUsed = 0;
@@ -2494,24 +4734,47 @@ function clearSalesCart() {
   _salesComputedTotal = 0;
   const sb2 = document.getElementById('salesSelectedCust');
   if (sb2) sb2.style.display = 'none';
-  document.getElementById('salesWalkinLabel').style.display = 'none';
-  document.getElementById('salesCustSearch').value = '';
+  const lsb2 = document.getElementById('salesLedSelectedCust');
+  if (lsb2) lsb2.style.display = 'none';
+  const wl = document.getElementById('salesWalkinLabel');
+  if (wl) wl.style.display = 'none';
+  const lwl = document.getElementById('salesLedWalkinLabel');
+  if (lwl) lwl.style.display = 'none';
+  const cs = document.getElementById('salesCustSearch');
+  if (cs) cs.value = '';
+  const lcs = document.getElementById('salesLedCustSearch');
+  if (lcs) lcs.value = '';
+  const cr = document.getElementById('salesCustResults');
+  if (cr) cr.innerHTML = '';
+  const lcr = document.getElementById('salesLedCustResults');
+  if (lcr) lcr.innerHTML = '';
   const _supResetBanner = document.getElementById('salesSupBanner');
   if (_supResetBanner) _supResetBanner.style.display = 'none';
+  const _supResetBannerL = document.getElementById('salesLedSupBanner');
+  if (_supResetBannerL) _supResetBannerL.style.display = 'none';
+  const lw = document.getElementById('salesLedCustomer');
+  if (lw) lw.classList.remove('has-selection');
   const _supResetRow = document.getElementById('salesCustRow');
   if (_supResetRow) _supResetRow.style.display = '';
-  document.getElementById('salesPaySection').style.display = 'none';
-  document.getElementById('salesExtraDisc').value = '0';
+  const psec = document.getElementById('salesPaySection');
+  if (psec) psec.style.display = 'none';
+  const ed = document.getElementById('salesExtraDisc');
+  if (ed) ed.value = '0';
   resetSalesPaymentUI();
   resetSupSalePayUI();
-  document.getElementById('salesCartSection').style.display = 'none';
-  document.getElementById('salesEmptyCart').style.display = '';
+  const csec = document.getElementById('salesCartSection');
+  if (csec) csec.style.display = 'none';
+  const escart = document.getElementById('salesEmptyCart');
+  if (escart) escart.style.display = '';
   const emptyQkBtn2 = document.getElementById('salesQkOpenBtn');
   if (emptyQkBtn2) emptyQkBtn2.disabled = true;
+  try { if (typeof _syncSalesCustomerTop === 'function') _syncSalesCustomerTop(); } catch (e) {}
   renderSalesInCartStrip();
   renderSalesProducts();
-  updateSalesLed();
-  document.getElementById('salesBarcodeScan').focus();
+  try { updateSalesTotals(); } catch (e) {}
+  try { updateSalesLed(); } catch (e) {}
+  const bs = document.getElementById('salesBarcodeScan');
+  if (bs) { try { bs.focus(); } catch (e) {} }
 }
 
 // ===== SALES HISTORY =====
@@ -2527,7 +4790,7 @@ function openSalesHistory() {
   window._invSalesHistory = true;
 
   if (!body.dataset.loaded) {
-    body.innerHTML = '<div class="placeholder-box" style="padding:48px"><i class="fas fa-spinner fa-spin" style="font-size:34px;color:#0066B1"></i><p>جارٍ التحميل...</p></div>';
+    body.innerHTML = '<div class="placeholder-box" style="padding:48px"><i class="fas fa-spinner fa-spin" style="font-size:34px;color:#0066B1"></i><p>' + t('sales.loading') + '</p></div>';
     fetch('pages/invoices.html')
       .then(r => r.text())
       .then(html => {
@@ -2537,7 +4800,7 @@ function openSalesHistory() {
         _shInitInvoices(body);
       })
       .catch(() => {
-        body.innerHTML = '<div class="placeholder-box" style="padding:48px"><i class="fas fa-exclamation-triangle" style="font-size:34px;color:#e74c3c"></i><p>تعذّر تحميل سجل المبيعات</p></div>';
+        body.innerHTML = '<div class="placeholder-box" style="padding:48px"><i class="fas fa-exclamation-triangle" style="font-size:34px;color:#e74c3c"></i><p>' + t('sales.loadError') + '</p></div>';
       });
   } else {
     _shInitInvoices(body);
@@ -2583,11 +4846,29 @@ function closeSalesHistory() {
 window._pageSyncHandlers = window._pageSyncHandlers || {};
 window._pageSyncHandlers['sales'] = function salesSyncData() {
   window.syncPreserveRefresh({
-    search: ['salesSearch', 'salesCustSearch'],
+    search: ['salesBarcodeScan', 'salesCustSearch'],
     render: () => {
-      _salesProducts = DB.getProducts();
+      _salesProducts = (typeof salesAllProducts === 'function') ? salesAllProducts() : (DB.getProducts ? DB.getProducts() : _salesProducts);
       invalidateSalesGroupsCache();
       renderSalesProducts(_salesSearchQuery);
     },
   });
 };
+
+// Ctrl+X flips purchase-cost visibility globally. Only the list view renders the
+// cost, so the grid view is left untouched — repainting it would throw away the
+// cashier's scroll position for nothing.
+window.addEventListener('zmt:buyprice-toggle', function () {
+  if (_salesViewMode !== 'list') return;
+  renderSalesProducts(_salesSearchQuery);
+});
+
+// Extra sale-price fields edited on the inventory page (same tab → no storage
+// event): repaint the cards and the cart modes without disturbing quantities.
+document.addEventListener('zmt:extra-prices-changed', function () {
+  const page = document.getElementById('page-sales');
+  if (!page || !page.classList.contains('active')) return;
+  _salesCardCtx = null;
+  renderSalesProducts(_salesSearchQuery);
+  if (_salesCart.length) renderSalesCart();
+});

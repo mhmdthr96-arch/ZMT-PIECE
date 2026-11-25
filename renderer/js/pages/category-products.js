@@ -2,6 +2,16 @@ var editingProductId = null;
 var _invoiceCart = [];
 var _cartSupplierId = null;
 
+// Paint the shared extra sale-price fields into this page's forms. The field
+// list/values come from ExtraPrices, so whatever is configured in Settings
+// shows up here exactly like on the inventory and quick-entry screens.
+function _catRenderExtraInputs(wrapId, scope, rec) {
+  const wrap = document.getElementById(wrapId);
+  if (!wrap) return;
+  if (typeof ExtraPrices === 'undefined' || !ExtraPrices) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = ExtraPrices.inputsHTML(scope, rec);
+}
+
 function init_category_products() {
   // Brand-scoped product screen: we arrive here directly from a brand card.
   const ctx = window.brandCtx;
@@ -166,6 +176,7 @@ function resetAddForm() {
   if (prodExpiryEl) prodExpiryEl.value = '';
   const prodFamilyEl = document.getElementById('prodFamily');
   if (prodFamilyEl) prodFamilyEl.value = '';
+  _catRenderExtraInputs('catExtraPricesWrap', 'catAdd', null);
   document.getElementById('supplierSearchInput').value = '';
   document.getElementById('supplierResults').innerHTML = '';
   document.getElementById('selectedSupplierInfo').style.display = 'none';
@@ -207,6 +218,7 @@ function catResetQuickAddForm() {
   if (barEl) barEl.value = '';
   if (familyEl) familyEl.value = '';
   if (sellEl) sellEl.value = '0';
+  _catRenderExtraInputs('catQuickAddExtrasWrap', 'catQuick', null);
 }
 
 function catQaBarcodeKey(e) {
@@ -223,8 +235,10 @@ function catConfirmQuickAddProduct() {
   const barcode = document.getElementById('qaBar').value.trim();
   const family = document.getElementById('qaFamily').value.trim();
   const sellPrice = document.getElementById('qaSell').value;
+  const extraPrices = (typeof ExtraPrices !== 'undefined' && ExtraPrices)
+    ? ExtraPrices.readInputs('catQuick') : {};
 
-  const res = quickAddProduct({ name, barcode, brandId: ctx ? ctx.brandId : null, family, sellPrice });
+  const res = quickAddProduct({ name, barcode, brandId: ctx ? ctx.brandId : null, family, sellPrice, extraPrices });
   if (!res.ok) {
     alert(res.error || 'تعذرت الإضافة');
     return;
@@ -268,6 +282,7 @@ function catHighlightSearch(items, idx) {
 }
 
 function searchExistingProduct(q) {
+  if (q && String(q).trim().length >= 2) { try { DB.logSearch({ query: q, context: 'category-products' }); } catch (e) {} }
   const results = document.getElementById('searchResults');
   q = normSearch(q);
 
@@ -309,11 +324,13 @@ function selectExistingProduct(id) {
   if (prodExpirySel) prodExpirySel.value = p.expiryDate || '';
   const prodFamilySel = document.getElementById('prodFamily');
   if (prodFamilySel) prodFamilySel.value = p.family || '';
+  if (typeof ExtraPrices !== 'undefined' && ExtraPrices) ExtraPrices.fillInputs('catAdd', p);
 }
 
 // ===== SUPPLIER SEARCH =====
 
 function searchSuppliers(q) {
+  if (q && String(q).trim().length >= 2) { try { DB.logSearch({ query: q, context: 'category-suppliers' }); } catch (e) {} }
   const results = document.getElementById('supplierResults');
   q = normSearch(q);
 
@@ -424,8 +441,10 @@ function getFormItem() {
   const countryOfOrigin = (document.getElementById('newProdCountry')?.value || '').trim();
   const mark = (document.getElementById('newProdMark')?.value || '').trim();
   const storageLocation = (document.getElementById('newProdStorage')?.value || '').trim();
+  const extraPrices = (typeof ExtraPrices !== 'undefined' && ExtraPrices)
+    ? ExtraPrices.readInputs('catAdd') : {};
 
-  return { productId, name, barcode, qty, buyPrice, sellPrice, wholesalePrice, family, reference, countryOfOrigin, mark, storageLocation, expiryDate };
+  return { productId, name, barcode, qty, buyPrice, sellPrice, wholesalePrice, family, reference, countryOfOrigin, mark, storageLocation, expiryDate, extraPrices };
 }
 
 function addToCart() {
@@ -529,12 +548,13 @@ function confirmInvoice() {
       brandId: ctx.brandId,
       buyPrice: item.buyPrice, sellPrice: item.sellPrice,
       wholesalePrice: item.wholesalePrice || 0,
+      extraPrices: item.extraPrices || {},
       quantity: item.qty, supplierId,
       family: item.family || '',
       reference: item.reference || '', countryOfOrigin: item.countryOfOrigin || '',
       mark: item.mark || '', storageLocation: item.storageLocation || '',
       expiryDate: item.expiryDate || '',
-    });
+    }, { source: 'category-invoice' });
 
     if (!res.ok) {
       const msg = res.existing
@@ -625,6 +645,7 @@ function editProduct(id) {
   if (prodExpiryEdit) prodExpiryEdit.value = p.expiryDate || '';
   const prodFamilyEdit = document.getElementById('prodFamily');
   if (prodFamilyEdit) prodFamilyEdit.value = p.family || '';
+  _catRenderExtraInputs('catExtraPricesWrap', 'catAdd', p);
   if (p.supplierId) {
     const sup = DB.getSuppliers().find(s => s.id === p.supplierId);
     if (sup) {

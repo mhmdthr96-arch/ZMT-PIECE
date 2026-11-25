@@ -1,25 +1,41 @@
 <div class="page" id="page-inventory">
   <div class="page-header">
     <div class="page-header-content">
-      <h1><i class="fas fa-warehouse"></i> <span data-i18n="inventory.title">المخزون</span></h1>
-      <p><span data-i18n="inventory.sub">إدارة مخزون قطع الغيار</span></p>
-      <div id="invScopeChip" style="display:none;align-items:center;gap:6px;margin-top:6px;padding:3px 10px;border:1px solid var(--silver-400,#999);border-radius:20px;font-size:12px;color:var(--silver-600,#666);max-width:max-content"></div>
+      <div class="inv-header">
+        <div class="inv-header-title">
+          <h1><i class="fas fa-warehouse"></i> <span data-i18n="inventory.title">المخزون</span></h1>
+          <p><span data-i18n="inventory.sub">إدارة مخزون قطع الغيار</span></p>
+          <div id="invScopeChip" style="display:none;align-items:center;gap:6px;margin-top:6px;padding:3px 10px;border:1px solid var(--silver-400,#999);border-radius:20px;font-size:12px;color:var(--silver-600,#666);max-width:max-content"></div>
+        </div>
+        <div class="inv-header-tools">
+          <div class="search-bar inv-search-big">
+            <i class="fas fa-search"></i>
+            <input type="text" data-i18n-placeholder="inventory.search" placeholder="بحث في المخزون..." id="invSearch">
+          </div>
+          <div class="sales-view-toggle inv-view-toggle" role="group" aria-label="عرض البطاقات">
+            <button type="button" class="sales-view-btn active" id="invViewGridBtn" onclick="setInventoryView('grid')" title="عرض شبكة" aria-label="عرض شبكة" data-i18n-title="sales.viewNetwork"><i class="fas fa-th-large"></i></button>
+            <button type="button" class="sales-view-btn" id="invViewListBtn" onclick="setInventoryView('list')" title="عرض قائمة" aria-label="عرض قائمة" data-i18n-title="sales.viewList"><i class="fas fa-list"></i></button>
+          </div>
+          <button class="btn inv-customize-btn" id="btnInvToolbarSettings" onclick="openInvToolbarSettings()" title="تخصيص الأزرار" data-i18n-title="inventory.customizeBtn"><i class="fas fa-sliders-h"></i> <span data-i18n="inventory.customizeBtn">تخصيص الأزرار</span></button>
+        </div>
+      </div>
     </div>
   </div>
 
   <div class="page-body">
-    <div class="toolbar">
-      <div class="search-bar">
-        <i class="fas fa-search"></i>
-        <input type="text" data-i18n-placeholder="inventory.search" placeholder="بحث في المخزون..." id="invSearch">
-      </div>
-      <button class="btn btn-sm zmt-hide-toggle" id="invHideUntilSearchBtn" onclick="toggleInvHideUntilSearch()" title="إخفاء المنتجات حتى البحث (تظهر المطابقة فقط)" aria-pressed="false"><i class="fas fa-eye-slash"></i> <span>إخفاء حتى البحث</span></button>
-      <button class="btn btn-primary hide-user" onclick="openInvAddModal()"><i class="fas fa-plus"></i> <span data-i18n="inventory.addWithInvoice">إضافة مخزون + فاتورة</span></button>
+    <div class="toolbar" id="invToolbar">
+      <button class="btn btn-sm zmt-hide-toggle" id="invHideUntilSearchBtn" onclick="toggleInvHideUntilSearch()" title="إخفاء المنتجات حتى البحث (تظهر المطابقة فقط)" aria-pressed="false" data-i18n-title="sales.hideUntilSearch"><i class="fas fa-eye-slash"></i> <span data-i18n="sales.hideUntilSearchShort">إخفاء حتى البحث</span></button>
+      <button class="btn btn-primary hide-user" id="btnInvAddInvoice" onclick="openInvAddModal()"><i class="fas fa-plus"></i> <span data-i18n="inventory.addWithInvoice">إضافة مخزون + فاتورة</span></button>
       <button class="btn" id="btnAddInvDirect" onclick="openInvAddDirect()" style="background:#17a2b8;color:#fff"><i class="fas fa-cube"></i> <span data-i18n="inventory.addDirect">إضافة منتج من غير فاتورة</span></button>
       <button class="btn" id="btnQuickAddProduct" onclick="openQuickAddProduct()" style="background:#28a745;color:#fff"><i class="fas fa-bolt"></i> <span data-i18n="inventory.quickAdd">إضافة منتج ثابت</span></button>
+  <button class="btn" id="btnAddBundle" onclick="openBundleModal()" style="background:#fd7e14;color:#fff"><i class="fas fa-gift"></i> <span data-i18n="bundle.addBundle">إضافة باقة</span></button>
+  <button class="btn" id="btnShowBundles" onclick="openBundlesList()" style="background:#6f42c1;color:#fff"><i class="fas fa-list"></i> <span data-i18n="bundle.bundles">الباقات</span></button>
+  <button class="btn" id="btnExtraPriceFields" onclick="openExtraPriceFieldsModal()" style="background:#17a2b8;color:#fff"><i class="fas fa-tags"></i> <span data-i18n="inventory.addFieldBtn">إضافة حقل</span></button>
+  <button class="btn" id="invScaleBtn" onclick="openScaleSettingsModal()" style="background:#6f42c1;color:#fff"><i class="fas fa-weight-hanging"></i> <span data-i18n="inventory.scaleSettings">إعدادات الميزان</span></button>
+  <button class="btn" id="invScaleSyncBtn" onclick="ScaleSync.open()" style="background:#0d9488;color:#fff"><i class="fas fa-cloud-upload-alt"></i> <span data-i18n="inventory.scaleSync">مزامنة الميزان</span></button>
       <button class="btn btn-primary" onclick="navigateTo('transfer')" id="btnTransferProducts" style="display:none"><i class="fas fa-exchange-alt"></i> <span id="btnTransferText" data-i18n="inventory.transferBtn">نقل منتجات</span></button>
-      <button class="btn hide-user" onclick="exportProductsExcel()"><i class="fas fa-file-excel"></i> <span data-i18n="inventory.exportExcel">تصدير Excel</span></button>
-      <button class="btn hide-user" onclick="document.getElementById('importCsvInput').click()"><i class="fas fa-upload"></i> <span data-i18n="inventory.importCSV">استيراد CSV / Excel</span></button>
+      <button class="btn hide-user" id="btnInvExportExcel" onclick="exportProductsExcel()"><i class="fas fa-file-excel"></i> <span data-i18n="inventory.exportExcel">تصدير Excel</span></button>
+      <button class="btn hide-user" id="btnInvImportCsv" onclick="document.getElementById('importCsvInput').click()"><i class="fas fa-upload"></i> <span data-i18n="inventory.importCSV">استيراد CSV / Excel</span></button>
       <input type="file" id="importCsvInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="importProductsCSV(this)">
     </div>
 
@@ -111,6 +127,13 @@
         <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invWholePrice" value="0" min="0" dir="ltr">
       </div>
 
+      <div class="form-group fv-minPrice">
+        <label data-i18n="quickEntry.minPrice">السعر الأدنى</label>
+        <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invMinPrice" value="0" min="0" dir="ltr" data-i18n-placeholder="quickEntry.minPricePlaceholder" placeholder="0 = بدون حد">
+      </div>
+
+      <div id="invExtraPricesWrap"></div>
+
       <div class="form-row">
         <div class="form-group">
           <label data-i18n="inventory.expiryDate">تاريخ انتهاء الصلاحية</label>
@@ -120,7 +143,7 @@
 
       <div class="qe-subrow" style="border:1px solid var(--silver-300);border-radius:8px;padding:12px;margin:14px 0">
         <div style="font-size:12px;font-weight:700;color:var(--silver-600);margin-bottom:8px;display:flex;align-items:center;gap:6px">
-          <i class="fas fa-info-circle" style="color:var(--bmw-blue-1)"></i> <span>تفاصيل إضافية للمنتج</span>
+          <i class="fas fa-info-circle" style="color:var(--bmw-blue-1)"></i> <span data-i18n="inventory.productExtraDetails">تفاصيل إضافية للمنتج</span>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -128,15 +151,21 @@
             <input type="text" class="form-input" id="invReference" dir="ltr">
           </div>
           <div class="form-group">
-            <label data-i18n="quickEntry.countryOfOrigin">البلد المنشأ</label>
-            <input type="text" class="form-input" id="invCountry">
+            <label data-i18n="inventory.plu">PLU الميزان</label>
+            <input type="text" class="form-input" id="invPlu" dir="ltr">
           </div>
         </div>
         <div class="form-row">
           <div class="form-group">
+            <label data-i18n="quickEntry.countryOfOrigin">البلد المنشأ</label>
+            <input type="text" class="form-input" id="invCountry">
+          </div>
+          <div class="form-group">
             <label data-i18n="quickEntry.mark">المارك</label>
             <input type="text" class="form-input" id="invMark">
           </div>
+        </div>
+        <div class="form-row">
           <div class="form-group">
             <label data-i18n="quickEntry.storageLocation">مكان التخزين</label>
             <input type="text" class="form-input" id="invStorage">
@@ -145,7 +174,7 @@
         <div class="form-row">
           <div class="form-group">
             <label data-i18n="inventory.family">العائلة</label>
-            <input type="text" class="form-input" id="invFamily" list="familyDatalist" placeholder="مثال: مضادات حيوية / متلازمات...">
+            <input type="text" class="form-input" id="invFamily" list="familyDatalist" placeholder="مثال: مضادات حيوية / متلازمات..." data-i18n-placeholder="invoices.productExample">
           </div>
         </div>
       </div>
@@ -273,6 +302,13 @@
         <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invDirectWhole" value="0" min="0" dir="ltr">
       </div>
 
+      <div class="form-group fv-minPrice">
+        <label data-i18n="quickEntry.minPrice">السعر الأدنى</label>
+        <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="invDirectMinPrice" value="0" min="0" dir="ltr" data-i18n-placeholder="quickEntry.minPricePlaceholder" placeholder="0 = بدون حد">
+      </div>
+
+      <div id="invExtraDirectWrap"></div>
+
       <div class="form-row">
         <div class="form-group">
           <label data-i18n="inventory.expiryDate">تاريخ انتهاء الصلاحية</label>
@@ -300,7 +336,7 @@
       <!-- Details -->
       <div class="qe-subrow" style="border:1px solid var(--silver-300);border-radius:8px;padding:12px;margin:14px 0">
         <div style="font-size:12px;font-weight:700;color:var(--silver-600);margin-bottom:8px;display:flex;align-items:center;gap:6px">
-          <i class="fas fa-info-circle" style="color:var(--bmw-blue-1)"></i> <span>تفاصيل إضافية للمنتج</span>
+          <i class="fas fa-info-circle" style="color:var(--bmw-blue-1)"></i> <span data-i18n="inventory.productExtraDetails">تفاصيل إضافية للمنتج</span>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -318,6 +354,12 @@
             <input type="text" class="form-input" id="invDirectMark">
           </div>
           <div class="form-group">
+            <label data-i18n="inventory.plu">PLU الميزان</label>
+            <input type="text" class="form-input" id="invDirectPlu" dir="ltr">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
             <label data-i18n="quickEntry.storageLocation">مكان التخزين</label>
             <input type="text" class="form-input" id="invDirectStorage">
           </div>
@@ -325,7 +367,7 @@
         <div class="form-row">
           <div class="form-group">
             <label data-i18n="inventory.family">العائلة</label>
-            <input type="text" class="form-input" id="invDirectFamily" list="familyDatalist" placeholder="مثال: مضادات حيوية / متلازمات...">
+            <input type="text" class="form-input" id="invDirectFamily" list="familyDatalist" placeholder="مثال: مضادات حيوية / متلازمات..." data-i18n-placeholder="invoices.productExample">
           </div>
         </div>
       </div>
@@ -362,20 +404,22 @@
       <div class="form-group">
         <label data-i18n="inventory.barcode">الباركود <span style="font-size:10px;font-weight:400;color:var(--silver-500)" data-i18n="inventory.optional">(اختياري)</span></label>
         <div class="barcode-row">
-          <input type="text" class="form-input" id="qaBar" placeholder="الباركود" dir="ltr" autocomplete="off" onkeydown="qaBarcodeKey(event)">
+          <input type="text" class="form-input" id="qaBar" placeholder="الباركود" dir="ltr" autocomplete="off" onkeydown="qaBarcodeKey(event)" data-i18n-placeholder="inventory.col1">
           <button class="btn btn-sm" onclick="document.getElementById('qaBar').value=DB.generateBarcode()" data-i18n="inventory.generate2">توليد</button>
         </div>
       </div>
 
       <div class="form-group">
         <label data-i18n="inventory.family">العائلة</label>
-        <input type="text" class="form-input" id="qaFamily" list="familyDatalist" placeholder="مثال: مضادات حيوية / متلازمات...">
+        <input type="text" class="form-input" id="qaFamily" list="familyDatalist" placeholder="مثال: مضادات حيوية / متلازمات..." data-i18n-placeholder="invoices.productExample">
       </div>
 
       <div class="form-group">
         <label data-i18n="inventory.sellPrice">سعر البيع <span class="required">*</span></label>
         <input type="text" class="form-input no-spinner num-input" inputmode="decimal" id="qaSell" value="0" min="0" dir="ltr">
       </div>
+
+      <div id="invExtraQuickWrap"></div>
 
       <button class="btn btn-success" onclick="confirmQuickAddProduct()" style="width:100%;margin-top:4px">
         <i class="fas fa-check"></i> <span data-i18n="inventory.quickAddBtn">إضافة المنتج</span>

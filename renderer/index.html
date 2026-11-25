@@ -4,11 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ZMT PIECE</title>
+  <!-- Apply the saved UI language before the first paint so a non-Arabic
+       session never flashes the RTL layout. app.js owns the rest. -->
+  <script>
+    try {
+      var __savedLang = localStorage.getItem('zmt_lang');
+      if (__savedLang && ['ar', 'en', 'fr', 'zh'].indexOf(__savedLang) !== -1) {
+        document.documentElement.lang = __savedLang;
+        document.documentElement.dir = __savedLang === 'ar' ? 'rtl' : 'ltr';
+      }
+    } catch (e) {}
+  </script>
   <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
   <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/theme-overrides.css">
   <link rel="stylesheet" href="css/license.css">
   <link rel="stylesheet" href="css/rest.css">
   <link rel="stylesheet" href="css/price-display.css">
+  <link rel="stylesheet" href="css/debt-alerts.css">
 </head>
 <body>
   <!-- Error Shield: MUST load first so init-phase renderer crashes show a
@@ -21,43 +34,67 @@
       <div class="title-bar-drag">
         <div class="title-bar-brand">
           <div class="brand-logo-mini">
-            <img src="../assets/logo.png" alt="ZMT" style="width:22px;height:22px;border-radius:4px;object-fit:cover">
+            <img src="../assets/logo.png" alt="ZMT" style="width:44px;height:44px;border-radius:8px;object-fit:cover">
           </div>
           <span>ZMT <small id="appTitleText">PIECE</small></span>
         </div>
+        <nav class="title-shortcuts" id="titleShortcuts" aria-label="روابط سريعة" data-i18n-aria-label="menu.quickLinksAria">
+          <a class="title-shortcut ts-phone" href="tel:0772363629" title="اتصل بالدعم: 0772363629" data-i18n-title="support.call">
+            <i class="fas fa-phone-volume"></i>
+            <span class="ts-text" dir="ltr">0772363629</span>
+          </a>
+          <span class="title-shortcut ts-company" title="ZMT SOFTWARE">
+            <i class="fas fa-building"></i>
+            <span class="ts-text">ZMT SOFTWARE</span>
+          </span>
+          <button class="title-shortcut-toggle" id="titleShortcutsToggle" type="button"
+            onclick="toggleTitleShortcuts()" aria-expanded="true" title="إظهار/إخفاء الروابط السريعة" data-i18n-title="menu.quickLinks">
+            <i class="fas fa-chevron-down"></i>
+          </button>
+        </nav>
       </div>
       <div class="title-bar-center">
         <span class="connection-status" id="connectionStatus">
           <span class="conn-dot" id="connDot"></span>
-          <span class="conn-text" id="connText">متصل</span>
+          <span class="conn-text" id="connText" data-i18n="online">متصل</span>
         </span>
       </div>
       <div class="title-bar-controls">
         <div class="tb-support" id="tbSupport">
-          <button class="tb-btn tb-support-btn" id="btnSupport" title="الدعم الاحترافي">
-            <i class="fas fa-headset"></i>
-            <span id="supportLabel">دعم احترافي</span>
+          <button class="tb-btn tb-support-btn" id="btnSupport" title="الدعم الاحترافي" data-i18n-title="support.pro">
+            <svg class="tb-svg-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
+              <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1-2-2v-2a2 2 0 0 1-2-3H9a2 2 0 0 1-2 3v2a2 2 0 0 1-2 3h-2a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h1a2 2 0 0 1 2 2z"></path>
+            </svg>
             <i class="fas fa-chevron-down tb-caret"></i>
           </button>
           <div class="tb-dropdown" id="supportDropdown">
             <button class="tb-dropdown-item" id="supportAnyDesk">
-              <i class="fas fa-desktop"></i> دعم عن بُعد (AnyDesk)
+              <i class="fas fa-desktop"></i><span data-i18n="support.anydesk"> دعم عن بُعد (AnyDesk)</span>
             </button>
             <button class="tb-dropdown-item" id="supportRustDesk">
-              <i class="fas fa-network-wired"></i> اتصال عن بُعد (RustDesk)
+              <i class="fas fa-network-wired"></i><span data-i18n="support.rustdesk"> اتصال عن بُعد (RustDesk)</span>
             </button>
             <a class="tb-dropdown-item" id="supportWhatsapp" target="_blank" rel="noopener">
-              <i class="fab fa-whatsapp"></i> تواصل واتساب
+              <i class="fab fa-whatsapp"></i><span data-i18n="support.whatsapp"> تواصل واتساب</span>
             </a>
             <a class="tb-dropdown-item" id="supportEmail">
-              <i class="fas fa-envelope"></i> راسلنا بريداً
+              <i class="fas fa-envelope"></i><span data-i18n="support.email"> راسلنا بريداً</span>
             </a>
           </div>
         </div>
-        <button class="tb-btn" id="btnToggleSidebar" title="إظهار/إخفاء القائمة (Ctrl+B)">
+        <div class="tb-support" id="tbPrintPaper">
+          <button class="tb-btn tb-support-btn" id="btnPrintPaper" title="نمط الطابعة — حجم ورق الفواتير" aria-haspopup="menu" data-i18n-title="menu.printPaper">
+            <svg class="tb-svg-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M9 13h6M9 17h4"></path></svg>
+            <span id="printPaperLabel" data-i18n="menu.print">نمط الطابعة</span>
+            <i class="fas fa-chevron-down tb-caret"></i>
+          </button>
+          <div class="tb-dropdown tb-pp-dropdown" id="printPaperDropdown"></div>
+        </div>
+        <button class="tb-btn" id="btnToggleSidebar" title="إظهار/إخفاء القائمة (Ctrl+B)" data-i18n-title="menu.toggleMenu">
           <i class="fas fa-bars"></i>
         </button>
-        <button class="tb-btn tb-ds" id="btnDisplaySettings" title="إعدادات العرض" aria-haspopup="dialog">
+        <button class="tb-btn tb-ds" id="btnDisplaySettings" title="إعدادات العرض" aria-haspopup="dialog" data-i18n-title="menu.theme">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
             <g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
               <path d="M3 7h4.6"/><path d="M12.4 7h8.6"/>
@@ -74,10 +111,10 @@
           <i class="fas fa-globe"></i>
           <span class="lang-label" id="langLabel">AR</span>
         </button>
-        <button class="tb-btn" id="btnTheme" title="الوضع الليلي">
+        <button class="tb-btn" id="btnTheme" title="الوضع الليلي" data-i18n-title="settings.darkMode">
           <i class="fas fa-moon"></i>
         </button>
-        <button class="tb-btn tb-update" id="btnUpdate" title="التحديثات">
+        <button class="tb-btn tb-update" id="btnUpdate" title="التحديثات" data-i18n-title="menu.updates">
           <i class="fas fa-cloud-arrow-down"></i>
           <span class="tb-update-badge" id="updateBadge" style="display:none"></span>
         </button>
@@ -91,11 +128,15 @@
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <div class="sidebar-logo">
-          <img src="../assets/logo.png" alt="ZMT" style="width:36px;height:36px;border-radius:8px;object-fit:cover">
+          <img src="../assets/logo.png" alt="ZMT" style="width:72px;height:72px;border-radius:12px;object-fit:cover">
           <div class="logo-text">
             <h2>ZMT</h2>
             <span data-i18n="appTitle">PIECE</span>
           </div>
+        </div>
+        <div class="sidebar-company" id="sidebarCompany" style="display:none">
+          <span class="sidebar-company-label" data-i18n="menu.currentCompany">الشركة الحالية</span>
+          <span class="sidebar-company-name" id="sidebarCompanyName"></span>
         </div>
       </div>
 
@@ -113,9 +154,12 @@
         <a class="nav-item" data-page="expiry" href="#"><i class="fas fa-hourglass-half"></i><span data-i18n="nav.expiry">انتهاء الصلاحية</span></a>
         <a class="nav-item" data-page="supplier-returns" href="#"><i class="fas fa-box-open"></i><span data-i18n="nav.supplierReturns">السلع الفاسدة</span></a>
         <a class="nav-item" data-page="suppliers" href="#"><i class="fas fa-truck"></i><span data-i18n="nav.suppliers">الموردين</span></a>
+        <a class="nav-item" data-page="supplier-movements" href="#"><i class="fas fa-truck-ramp-box"></i><span data-i18n="nav.supplierMovements">حركات الموردين</span></a>
         <a class="nav-item" data-page="customers" href="#"><i class="fas fa-users"></i><span data-i18n="nav.customers">العملاء</span></a>
+        <a class="nav-item" data-page="customer-movements" href="#"><i class="fas fa-users-viewfinder"></i><span data-i18n="nav.customerMovements">حركات العملاء</span></a>
         <a class="nav-item" data-page="employees" href="#"><i class="fas fa-id-badge"></i><span data-i18n="nav.employees">الموظفين</span></a>
         <a class="nav-item" data-page="debts" href="#"><i class="fas fa-hand-holding-usd"></i><span data-i18n="nav.debts">الديون</span></a>
+        <a class="nav-item" data-page="debt-details" href="#"><i class="fas fa-scale-unbalanced"></i><span data-i18n="nav.debtDetails">تفاصيل الديون</span></a>
         <a class="nav-item" data-page="store-debts" href="#"><i class="fas fa-store"></i><span data-i18n="nav.storeDebts">ديون المحلات</span></a>
 
         <a class="nav-item" data-page="branches-monitor" href="#" id="navBranchesMonitor" style="display:none;">
@@ -145,7 +189,7 @@
         <div id="sidebarUserInfo" style="display:flex;align-items:center;gap:8px;padding:8px 12px;width:100%;box-sizing:border-box;">
           <i class="fas fa-user-circle" style="font-size:18px;color:var(--silver-400);"></i>
           <span id="sidebarUserName" style="flex:1;font-size:12px;color:var(--silver-500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">ZMT PIECE v1.0</span>
-          <button onclick="userLogout()" style="background:none;border:none;cursor:pointer;padding:4px;color:var(--silver-500);font-size:14px;" title="تسجيل الخروج"><i class="fas fa-sign-out-alt"></i></button>
+          <button onclick="userLogout()" style="background:none;border:none;cursor:pointer;padding:4px;color:var(--silver-500);font-size:14px;" title="تسجيل الخروج" data-i18n-title="menu.logout"><i class="fas fa-sign-out-alt"></i></button>
         </div>
       </div>
     </aside>
@@ -172,86 +216,133 @@
       <div class="license-form-section" id="licenseFormSection">
         <div class="license-status" id="licenseStatus" style="display:none"></div>
         <div class="license-input-group">
-          <label>معرف هذا الجهاز (للإخبار به عند الطلب)</label>
+          <label data-i18n="auth.deviceId">معرف هذا الجهاز (للإخبار به عند الطلب)</label>
           <div class="zmt-device-row">
             <input type="text" id="licenseDeviceId" class="license-input license-input-readonly"
-                   readonly dir="ltr" placeholder="جارٍ قراءة الجهاز...">
+                   readonly dir="ltr" placeholder="جارٍ قراءة الجهاز..." data-i18n-placeholder="auth.reading">
             <button type="button" class="zmt-copy-btn" id="licenseCopyIdBtn"
-                    onclick="copyLicenseMachineId()" title="نسخ معرف الجهاز ورمز المتجر" aria-label="نسخ معرف الجهاز ورمز المتجر">
+                    onclick="copyLicenseMachineId()" title="نسخ معرف الجهاز ورمز المتجر" aria-label="نسخ معرف الجهاز ورمز المتجر" data-i18n-title="auth.copyIdStore" data-i18n-aria-label="auth.copyIdStore">
               <i class="fas fa-copy"></i>
             </button>
           </div>
           <div class="zmt-qr-box" id="licenseQrBox" style="display:none"></div>
           <div class="license-hint">
-            <i class="fas fa-qrcode"></i>
+            <i class="fas fa-qrcode"></i><span data-i18n="auth.offlineDetail">
             لتفعيل من هاتف الموزِّع: امسح رمز QR (أعلاه) بتطبيق محرّر الرخص في الهاتف لملء المعرّف ورمز المتجر تلقائياً.
-          </div>
+          </span></div>
         </div>
         <div class="license-input-group">
-          <label>رمز المتجر</label>
+          <label data-i18n="auth.storeCode">رمز المتجر</label>
           <input type="text" id="licenseStoreCode" class="license-input"
-                 placeholder="رمز المتجر..." dir="ltr" autocomplete="off" spellcheck="false">
+                 placeholder="رمز المتجر..." dir="ltr" autocomplete="off" spellcheck="false" data-i18n-placeholder="auth.storeCode">
         </div>
         <div class="license-input-group">
-          <label>كلمة مرور المتجر</label>
+          <label data-i18n="auth.storePassword">كلمة مرور المتجر</label>
           <input type="password" id="licenseStorePassword" class="license-input"
-                 placeholder="كلمة المرور..." dir="ltr" autocomplete="off" spellcheck="false">
+                 placeholder="كلمة المرور..." dir="ltr" autocomplete="off" spellcheck="false" data-i18n-placeholder="common.password">
         </div>
         <div class="license-input-group">
-          <label>مفتاح التفعيل</label>
+          <label data-i18n="auth.activationKey">مفتاح التفعيل</label>
           <input type="text" id="licenseKeyInput" class="license-input"
                   placeholder="ZMT-XXXX-XXXX-XXXX" dir="ltr"
                   autocomplete="off" spellcheck="false">
         </div>
         <div class="eula-box">
           <button type="button" class="eula-show-btn" onclick="openEulaModal()">
-            <i class="fas fa-file-contract"></i> عرض الشروط والأحكام كاملة
-          </button>
-          <div class="eula-text" id="eulaTextPage">
+            <i class="fas fa-file-contract"></i><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+          </span><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+          </span><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+          </span><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+          </span><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+          </span><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+          </span><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+          </span></button>
+          <div class="eula-text" id="eulaTextPage" data-i18n="auth.termsShort">
             باستخدام برنامج ZMT PIECE فإنك تقر بأن المسؤولية القانونية عن استخدام البرنامج تقع على المستخدم، وأن البرنامج يُقدَّم كما هو دون أي ضمانات. جميع البيانات المدخلة تبقى تحت مسؤوليتك. يُحظر إعادة بيع أو توزيع أو اختراق البرنامج دون إذن خطي من ZMT SOFTWARE. بموافقتك تقر بقبول هذه الشروط.
           </div>
           <label class="eula-check">
             <input type="checkbox" id="eulaAcceptPage">
-            <span>أقر بقراءة الشروط وأوافق على استخدام البرنامج</span>
+            <span data-i18n="auth.agree">أقر بقراءة الشروط وأوافق على استخدام البرنامج</span>
           </label>
         </div>
         <button class="license-activate-btn" id="licenseActivateBtn" onclick="doLicenseActivate()">
-          <i class="fas fa-key"></i> تفعيل البرنامج
-        </button>
+          <i class="fas fa-key"></i><span data-i18n="auth.activate"> تفعيل البرنامج
+        </span><span data-i18n="auth.activate"> تفعيل البرنامج
+        </span><span data-i18n="auth.activate"> تفعيل البرنامج
+        </span><span data-i18n="auth.activate"> تفعيل البرنامج
+        </span><span data-i18n="auth.activate"> تفعيل البرنامج
+        </span><span data-i18n="auth.activate"> تفعيل البرنامج
+        </span><span data-i18n="auth.activate"> تفعيل البرنامج
+        </span></button>
         <div class="license-hint">
-          <i class="fas fa-info-circle"></i>
+          <i class="fas fa-info-circle"></i><span data-i18n="auth.contactSupplier">
           تواصل مع المزود للحصول على مفتاح التفعيل ورمز المتجر
-        </div>
-        <div class="license-divider"><span>أو — تفعيل بدون إنترنت (من هاتف الموزّع)</span></div>
+        </span></div>
+        <div class="license-divider"><span data-i18n="auth.offlineActivate">أو — تفعيل بدون إنترنت (من هاتف الموزّع)</span></div>
         <div class="license-input-group">
           <button type="button" class="license-switch-btn license-import-btn"
                   onclick="document.getElementById('licensePhoneFile').click()">
-            <i class="fas fa-mobile-alt"></i> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
-          </button>
+            <i class="fas fa-mobile-alt"></i><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+          </span><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+          </span><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+          </span><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+          </span><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+          </span><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+          </span><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+          </span></button>
           <input type="file" id="licensePhoneFile" accept=".zmtlic,.json,application/json,text/plain" style="display:none">
           <div class="license-hint">
-            <i class="fas fa-info-circle"></i>
-            في هاتف الموزِّع: افتح محرّر الرخص ← امسح رمز QR أعلاه ← اختر المدة ← «توليد ملف الترخيص» ← انقل ملف <b>.zmtlic</b> هنا عبر USB.
-          </div>
+            <i class="fas fa-info-circle"></i><span data-i18n="auth.offlineSteps">
+            في هاتف الموزِّع: افتح محرّر الرخص ← امسح رمز QR أعلاه ← اختر المدة ← «توليد ملف الترخيص» ← انقل ملف </span><b>.zmtlic</b><span data-i18n="auth.offlineSteps"> هنا عبر USB.
+          </span></div>
         </div>
         <div class="license-switch">
           <button class="license-switch-btn" id="licenseSwitchBtn" onclick="doLicenseSwitchAccount()">
-            <i class="fas fa-user-friends"></i> حساب مختلف — تسجيل الدخول
-          </button>
+            <i class="fas fa-user-friends"></i><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+          </span><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+          </span><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+          </span><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+          </span><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+          </span><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+          </span><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+          </span></button>
         </div>
         <div class="license-switch">
           <button class="license-switch-btn license-switch-danger" onclick="doLicenseDeactivate()">
-            <i class="fas fa-trash"></i> حذف مفتاح التفعيل نهائياً
-          </button>
+            <i class="fas fa-trash"></i><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+          </span><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+          </span><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+          </span><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+          </span><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+          </span><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+          </span><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+          </span></button>
+        </div>
+        <div class="license-switch" style="margin-top:8px">
+          <button class="license-switch-btn" onclick="openDeviceResetModal()" style="border-color:#dc3545;color:#dc3545">
+            <i class="fas fa-undo"></i><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+          </span><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+          </span><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+          </span><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+          </span><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+          </span><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+          </span><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+          </span></button>
         </div>
       </div>
       <div class="license-success-section" id="licenseSuccessSection" style="display:none">
         <div class="license-success-icon"><i class="fas fa-check-circle"></i></div>
-        <h2 style="color:#28a745;margin-bottom:8px">تم التفعيل بنجاح!</h2>
+        <h2 style="color:#28a745;margin-bottom:8px" data-i18n="auth.active">تم التفعيل بنجاح!</h2>
         <p id="licenseSuccessLabel" style="color:var(--silver-600);margin-bottom:20px"></p>
         <button class="license-activate-btn" onclick="doLicenseEnterApp()" style="background:#28a745">
-          <i class="fas fa-arrow-left"></i> الدخول للبرنامج
-        </button>
+          <i class="fas fa-arrow-left"></i><span data-i18n="auth.login"> الدخول للبرنامج
+        </span><span data-i18n="auth.login"> الدخول للبرنامج
+        </span><span data-i18n="auth.login"> الدخول للبرنامج
+        </span><span data-i18n="auth.login"> الدخول للبرنامج
+        </span><span data-i18n="auth.login"> الدخول للبرنامج
+        </span><span data-i18n="auth.login"> الدخول للبرنامج
+        </span><span data-i18n="auth.login"> الدخول للبرنامج
+        </span></button>
       </div>
       <div class="license-footer"><span>ZMT SOFTWARE</span></div>
     </div>
@@ -261,17 +352,17 @@
   <div class="freeze-overlay" id="freezeOverlay" style="display:none">
     <div class="freeze-card">
       <div class="freeze-icon"><i class="fas fa-lock"></i></div>
-      <h1>انتهت مدة التفعيل</h1>
-      <p style="color:var(--silver-500);margin-bottom:8px">يرجى إدخال مفتاح تفعيل جديد لاستمرار العمل</p>
-      <p style="color:var(--silver-400);font-size:12px;margin-bottom:20px">بياناتك محفوظة وستعود بعد التفعيل</p>
+      <h1 data-i18n="auth.expired">انتهت مدة التفعيل</h1>
+      <p style="color:var(--silver-500);margin-bottom:8px" data-i18n="auth.expiredHint">يرجى إدخال مفتاح تفعيل جديد لاستمرار العمل</p>
+      <p style="color:var(--silver-400);font-size:12px;margin-bottom:20px" data-i18n="auth.dataSaved">بياناتك محفوظة وستعود بعد التفعيل</p>
 
       <div class="freeze-input-group">
-        <label style="font-size:12px;color:var(--silver-400)">معرف هذا الجهاز (للإخبار به عند الطلب)</label>
+        <label style="font-size:12px;color:var(--silver-400)" data-i18n="auth.deviceId">معرف هذا الجهاز (للإخبار به عند الطلب)</label>
         <div class="zmt-device-row">
           <input type="text" id="freezeDeviceId" class="license-input license-input-readonly"
-                 readonly dir="ltr" placeholder="جارٍ قراءة الجهاز...">
+                 readonly dir="ltr" placeholder="جارٍ قراءة الجهاز..." data-i18n-placeholder="auth.reading">
           <button type="button" class="zmt-copy-btn" id="freezeCopyIdBtn"
-                  onclick="copyFreezeMachineId()" title="نسخ معرف الجهاز" aria-label="نسخ معرف الجهاز">
+                  onclick="copyFreezeMachineId()" title="نسخ معرف الجهاز" aria-label="نسخ معرف الجهاز" data-i18n-title="auth.copyId" data-i18n-aria-label="auth.copyId">
             <i class="fas fa-copy"></i>
           </button>
         </div>
@@ -280,49 +371,96 @@
 
       <div class="freeze-input-group">
         <input type="text" id="freezeStoreCode" class="license-input"
-               placeholder="رمز المتجر" dir="ltr" autocomplete="off" spellcheck="false">
+               placeholder="رمز المتجر" dir="ltr" autocomplete="off" spellcheck="false" data-i18n-placeholder="auth.storeCode">
       </div>
       <div class="freeze-input-group">
         <input type="password" id="freezeStorePassword" class="license-input"
-               placeholder="كلمة مرور المتجر" dir="ltr" autocomplete="off" spellcheck="false">
+               placeholder="كلمة مرور المتجر" dir="ltr" autocomplete="off" spellcheck="false" data-i18n-placeholder="auth.storePassword">
       </div>
       <div class="freeze-input-group">
         <input type="text" id="freezeKeyInput" class="license-input"
-                placeholder="مفتاح التفعيل الجديد (ZMT-XXXX-XXXX-XXXX)" dir="ltr" autocomplete="off" spellcheck="false">
+                placeholder="مفتاح التفعيل الجديد (ZMT-XXXX-XXXX-XXXX)" dir="ltr" autocomplete="off" spellcheck="false" data-i18n-placeholder="auth.keyNewPlaceholder">
       </div>
-      <div class="license-divider"><span>أو — تفعيل بدون إنترنت (من هاتف الموزّع)</span></div>
+      <div class="license-divider"><span data-i18n="auth.offlineActivate">أو — تفعيل بدون إنترنت (من هاتف الموزّع)</span></div>
       <button type="button" class="license-switch-btn license-import-btn"
               onclick="document.getElementById('freezePhoneFile').click()">
-        <i class="fas fa-mobile-alt"></i> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
-      </button>
+        <i class="fas fa-mobile-alt"></i><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+      </span><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+      </span><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+      </span><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+      </span><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+      </span><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+      </span><span data-i18n="auth.importFile"> استيراد ملف ترخيص من الهاتف (USB / أي طريقة)
+      </span></button>
       <input type="file" id="freezePhoneFile" accept=".zmtlic,.json,application/json,text/plain" style="display:none">
       <div class="eula-box">
         <button type="button" class="eula-show-btn" onclick="openEulaModal()">
-          <i class="fas fa-file-contract"></i> عرض الشروط والأحكام كاملة
-        </button>
-        <div class="eula-text" id="eulaText">
+          <i class="fas fa-file-contract"></i><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+        </span><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+        </span><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+        </span><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+        </span><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+        </span><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+        </span><span data-i18n="auth.viewTerms"> عرض الشروط والأحكام كاملة
+        </span></button>
+        <div class="eula-text" id="eulaText" data-i18n="auth.termsFull">
           باستخدام برنامج ZMT PIECE فإنك تقر بأن المسؤولية القانونية عن استخدام البرنامج تقع على المستخدم، وأن البرنامج يُقدَّم كما هو دون أي ضمانات صريحة أو ضمنية. جميع البيانات المدخلة تبقى تحت مسؤوليتك. يُحظر إعادة بيع أو توزيع أو اختراق البرنامج دون إذن خطي من ZMT SOFTWARE. بموافقتك تقر بقبول هذه الشروط.
         </div>
         <label class="eula-check">
           <input type="checkbox" id="eulaAcceptFreeze">
-          <span>أقر بقراءة الشروط وأوافق على استخدام البرنامج</span>
+          <span data-i18n="auth.agree">أقر بقراءة الشروط وأوافق على استخدام البرنامج</span>
         </label>
       </div>
       <div class="license-status" id="freezeStatus" style="display:none"></div>
       <button class="license-activate-btn" onclick="doFreezeActivate()">
-        <i class="fas fa-key"></i> تفعيل واستمرار
-      </button>
+        <i class="fas fa-key"></i><span data-i18n="auth.activateContinue"> تفعيل واستمرار
+      </span><span data-i18n="auth.activateContinue"> تفعيل واستمرار
+      </span><span data-i18n="auth.activateContinue"> تفعيل واستمرار
+      </span><span data-i18n="auth.activateContinue"> تفعيل واستمرار
+      </span><span data-i18n="auth.activateContinue"> تفعيل واستمرار
+      </span><span data-i18n="auth.activateContinue"> تفعيل واستمرار
+      </span><span data-i18n="auth.activateContinue"> تفعيل واستمرار
+      </span></button>
       <button type="button" class="license-switch-btn" id="freezeSyncTimeBtn"
               onclick="doLicenseSyncTime()" style="width:100%;margin-top:8px">
-        <i class="fas fa-clock"></i> تصحيح ساعة الجهاز الآن
-      </button>
+        <i class="fas fa-clock"></i><span data-i18n="auth.fixClock"> تصحيح ساعة الجهاز الآن
+      </span><span data-i18n="auth.fixClock"> تصحيح ساعة الجهاز الآن
+      </span><span data-i18n="auth.fixClock"> تصحيح ساعة الجهاز الآن
+      </span><span data-i18n="auth.fixClock"> تصحيح ساعة الجهاز الآن
+      </span><span data-i18n="auth.fixClock"> تصحيح ساعة الجهاز الآن
+      </span><span data-i18n="auth.fixClock"> تصحيح ساعة الجهاز الآن
+      </span><span data-i18n="auth.fixClock"> تصحيح ساعة الجهاز الآن
+      </span></button>
       <div class="license-switch">
         <button class="license-switch-btn license-switch-danger" onclick="doLicenseDeactivate()">
-          <i class="fas fa-trash"></i> حذف مفتاح التفعيل نهائياً
-        </button>
+          <i class="fas fa-trash"></i><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+        </span><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+        </span><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+        </span><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+        </span><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+        </span><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+        </span><span data-i18n="auth.clearKey"> حذف مفتاح التفعيل نهائياً
+        </span></button>
         <button class="license-switch-btn" onclick="doLicenseSwitchAccount()">
-          <i class="fas fa-user-friends"></i> حساب مختلف — تسجيل الدخول
-        </button>
+          <i class="fas fa-user-friends"></i><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+        </span><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+        </span><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+        </span><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+        </span><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+        </span><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+        </span><span data-i18n="auth.loginDifferent"> حساب مختلف — تسجيل الدخول
+        </span></button>
+      </div>
+      <div class="license-switch" style="margin-top:8px">
+        <button class="license-switch-btn" onclick="openDeviceResetModal()" style="border-color:#dc3545;color:#dc3545">
+          <i class="fas fa-undo"></i><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+        </span><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+        </span><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+        </span><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+        </span><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+        </span><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+        </span><span data-i18n="auth.resetDeviceFirst"> إعادة تصفير الجهاز كأول مرة
+        </span></button>
       </div>
       <div class="license-footer" style="margin-top:20px">
         <span>ZMT SOFTWARE — ZERIBIT MOHAMMED TAHAR</span>
@@ -334,12 +472,35 @@
   <div class="eula-modal-overlay" id="eulaModal" style="display:none">
     <div class="eula-modal">
       <div class="eula-modal-header">
-        <span class="eula-modal-title">شروط الاستخدام — ZMT PIECE</span>
+        <span class="eula-modal-title" data-i18n="auth.termsTitle">شروط الاستخدام — ZMT PIECE</span>
         <button class="eula-modal-close" type="button" onclick="closeEulaModal()">×</button>
       </div>
       <div class="eula-modal-body" id="eulaModalBody"></div>
       <div class="eula-modal-footer">
-        <button class="license-activate-btn" type="button" style="width:auto;padding:10px 28px" onclick="closeEulaModal()">إغلاق</button>
+        <button class="license-activate-btn" type="button" style="width:auto;padding:10px 28px" onclick="closeEulaModal()" data-i18n="rest.close">إغلاق</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DEVICE HARD RESET — Electron's renderer has no window.prompt() -->
+  <div class="eula-modal-overlay" id="deviceResetModal" style="display:none">
+    <div class="eula-modal" style="width:470px">
+      <div class="eula-modal-header">
+        <span class="eula-modal-title" style="color:#ff6b6b" data-i18n="auth.resetDeviceFirst">إعادة تصفير الجهاز كأول مرة</span>
+        <button class="eula-modal-close" type="button" onclick="closeDeviceResetModal()">×</button>
+      </div>
+      <div class="eula-modal-body" style="padding:18px 20px;color:#cfd6e0;font-size:13px;line-height:1.9">
+        <p style="margin:0 0 14px" data-i18n="auth.resetConfirm">سيتم مسح مفتاح التفعيل وبصمة الجهاز وبيانات فحص الوقت نهائياً، ويعود الجهاز كأن البرنامج مُثبَّت لأول مرة. أدخل كلمة المرور للمتابعة.</p>
+        <div class="license-input-group">
+          <label for="deviceResetPwd" data-i18n="common.password">كلمة المرور</label>
+          <input type="password" id="deviceResetPwd" class="license-input" autocomplete="off"
+                 placeholder="كلمة المرور" onkeydown="onDeviceResetKey(event)" data-i18n-placeholder="common.password">
+        </div>
+        <div id="deviceResetError" style="color:#ff6b6b;font-size:12px;min-height:16px;margin-top:6px"></div>
+      </div>
+      <div class="eula-modal-footer">
+        <button class="license-switch-btn" type="button" onclick="closeDeviceResetModal()" data-i18n="pd.cancel">إلغاء</button>
+        <button class="license-activate-btn" type="button" style="width:auto;padding:10px 26px" onclick="confirmDeviceHardReset()" data-i18n="auth.resetShort">تصفير الجهاز</button>
       </div>
     </div>
   </div>
@@ -348,7 +509,7 @@
   <div class="watermark-countdown" id="watermarkCountdown" style="display:none">
     <div class="watermark-inner">
       <i class="fas fa-clock"></i>
-      <span id="watermarkText">متبقي 0 يوم</span>
+      <span id="watermarkText" data-i18n="license.watermarkRemaining">متبقي 0 يوم</span>
     </div>
   </div>
 
@@ -359,8 +520,11 @@
   <script src="js/vendor/pako.min.js"></script>
   <script src="js/vendor/jsbarcode.min.js"></script>
   <script src="js/vendor/qrcodegen.js"></script>
+  <script src="js/product-qr.js"></script>
   <script src="js/vendor/sql-asm.js"></script>
   <script src="js/lib/file-detector.js"></script>
+  <!-- Sable Stock (GSSP / ss2021) backup reader: ZipCrypto decrypt + MySQL-dump parser -->
+  <script src="js/lib/gssp-reader.js"></script>
   <script src="js/lib/keyword-matcher.js"></script>
   <script src="js/lib/parsers.js"></script>
   <script src="js/lib/smart-detector.js"></script>
@@ -371,6 +535,8 @@
   <script src="js/lib/invoice-logo.js"></script>
   <!-- Measurement units + decimal quantities (single source of truth) -->
   <script src="js/lib/units.js"></script>
+  <!-- Company isolation: pins the launch company scope before auth/DB init -->
+  <script src="js/company-profile.js"></script>
   <script src="js/auth.js"></script>
   <!-- Shared family suggestions (العائلة) used by every product-entry form -->
   <datalist id="familyDatalist"></datalist>
@@ -378,6 +544,14 @@
   <script src="js/db.js"></script>
   <script src="js/payroll.js"></script>
   <script src="js/sale-core.js"></script>
+  <script src="js/scale-core.js"></script>
+  <script src="js/scale-sync-core.js"></script>
+  <script src="js/purchase-core.js"></script>
+  <script src="js/invoice-convert.js"></script>
+  <script src="js/extra-prices.js"></script>
+  <script src="js/print-paper.js"></script>
+  <!-- Shared colour / black&white print mode (used by debt details + movements) -->
+  <script src="js/lib/print-mode.js"></script>
   <script src="js/phone-sale-service.js"></script>
   <script src="js/supabase-service.js"></script>
   <script src="js/lan-service.js"></script>
@@ -385,16 +559,42 @@
   <script src="js/pages/data-migration.js"></script>
   <script src="js/pages/net-account.js"></script>
   <script src="js/pages/supplier-returns.js"></script>
+  <!-- Debt details page: preloaded BEFORE app.js so its preload-seeding marks it
+       loaded and the router calls init_debt_details() instead of re-injecting
+       the file. This also makes window.ddShowDebtAlertReminder available at
+       start-up, so the once-a-day critical-debts reminder works even before the
+       page has ever been opened. -->
+  <script src="js/pages/debt-details.js"></script>
   <script src="js/license.js"></script>
   <script src="js/sound.js"></script>
   <script src="js/shortcuts.js"></script>
   <script src="js/display-settings.js"></script>
+<script src="js/field-visibility.js"></script>
+  <!-- Shared field order / column widths / tiered auto-fill for F1 + Smart Add -->
+  <script src="js/form-layout.js"></script>
+  <!-- Shared customer tree (single-ledger sub-customer labels) -->
+  <script src="js/customer-tree.js"></script>
+  <script src="js/invoice-ocr.js"></script>
+    <script src="js/pages/invoices-smart.js"></script>
+    <script src="vendor/pdfjs/pdf.min.js"></script>
+    <script src="vendor/tesseract/tesseract.min.js"></script>
   <script src="js/thermal-print.js"></script>
   <script src="js/cash-drawer.js"></script>
   <script src="js/app.js"></script>
   <script src="js/rest-core.js"></script>
   <script src="js/rest-service.js"></script>
   <script src="js/barcode-print.js"></script>
+  <script src="js/return-invoice.js"></script>
+  <script src="js/stock-count.js"></script>
+  <script src="js/pages/activity-log.js"></script>
+  <script src="js/pages/theme-settings.js"></script>
+  <!-- Party movements ledger + printable reports (shared engine) -->
+  <script src="js/lib/party-movements.js"></script>
+  <!-- Brand movements: read-only analytics inside the customer movements page -->
+  <script src="js/lib/brand-movements.js"></script>
+  <!-- Top-bar coloured action shortcuts (بيع / إدخال سريع / إضافة ذكية / حركات) -->
+  <script src="js/top-actions.js"></script>
+  <script src="js/scale-sync.js"></script>
   <script src="js/updater.js"></script>
 </body>
 </html>

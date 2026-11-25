@@ -58,15 +58,31 @@
       </div>
       <div class="form-group">
         <label data-i18n="customers.formPhone">رقم الهاتف</label>
-        <input type="text" class="form-input" id="custPhone" placeholder="مثال: 0555123456" dir="ltr">
+        <input type="text" class="form-input" id="custPhone" placeholder="مثال: 0555123456" dir="ltr" data-i18n-placeholder="customers.phoneExample">
       </div>
       <div class="form-group">
         <label data-i18n="customers.formAddress">العنوان</label>
-        <input type="text" class="form-input" id="custAddress" placeholder="مثال: الجزائر العاصمة">
+        <input type="text" class="form-input" id="custAddress" placeholder="مثال: الجزائر العاصمة" data-i18n-placeholder="customers.formAddressPl">
       </div>
       <div class="form-group">
         <label data-i18n="customers.formEmail">البريد الإلكتروني (اختياري)</label>
         <input type="email" class="form-input" id="custEmail" placeholder="example@domain.com" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.rc">RC (اختياري)</label>
+        <input type="text" class="form-input" id="custRc" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.nif">NIF (اختياري)</label>
+        <input type="text" class="form-input" id="custNif" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.nis">NIS (اختياري)</label>
+        <input type="text" class="form-input" id="custNis" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.article">N° article (اختياري)</label>
+        <input type="text" class="form-input" id="custArticle" dir="ltr">
       </div>
       <div class="form-group">
         <label data-i18n="customers.formType">نوع العميل</label>
@@ -80,6 +96,11 @@
         <label data-i18n="customers.formDiscount">نسبة الخصم (%)</label>
         <input type="number" class="form-input no-spinner" id="custDiscount" value="0" min="0" max="100" step="0.001">
         <small style="color:var(--silver-500);font-size:11px" data-i18n="customers.formDiscountHelp">من 0.001% إلى 100% - اختياري</small>
+      </div>
+      <div class="form-group">
+        <label data-i18n="customers.formCreditLimit">سقف الدين (اختياري)</label>
+        <input type="number" class="form-input no-spinner" id="custCreditLimit" value="0" min="0" step="0.01">
+        <small style="color:var(--silver-500);font-size:11px" data-i18n="customers.formCreditLimitHelp">0 تعني بلا حد — يُنبه عند تجاوزه عند البيع</small>
       </div>
       <div class="form-group">
         <label data-i18n="customers.formPhoto">الصورة الشخصية (اختياري)</label>
@@ -102,12 +123,12 @@
 <div class="modal-overlay" id="custRecordsModal">
   <div class="modal" style="max-width:780px">
     <div class="modal-header">
-      <h3><i class="fas fa-clipboard-list"></i> سجل العميل — <span id="custRecordsName" style="color:var(--bmw-blue-1)"></span></h3>
+      <h3><i class="fas fa-clipboard-list"></i><span data-i18n="customers.customerHistory"> سجل العميل — </span><span id="custRecordsName" style="color:var(--bmw-blue-1)"></span></h3>
       <button class="modal-close" onclick="closeCustRecords()">&times;</button>
     </div>
     <div class="modal-body">
       <div class="rec-stats" id="custRecStats"></div>
-      <div class="rec-section-title"><i class="fas fa-undo-alt" style="color:#e65100"></i> مرتجعات العميل</div>
+      <div class="rec-section-title"><i class="fas fa-undo-alt" style="color:#e65100"></i><span data-i18n="customers.returnedCustomers"> مرتجعات العميل</span></div>
       <div id="custRecList"></div>
     </div>
   </div>

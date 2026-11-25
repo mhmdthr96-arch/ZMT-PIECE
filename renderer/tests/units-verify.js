@@ -39,6 +39,9 @@ const invoicesHtml = read('renderer/pages/invoices.html');
 const saleCore = read('renderer/js/sale-core.js');
 const phoneApp = read('renderer/phone-sales/app.js');
 const phoneSvc = read('renderer/js/phone-sale-service.js');
+const inventoryHtml = read('renderer/pages/inventory.html');
+const inventoryJs = read('renderer/js/pages/inventory.js');
+const appJs = read('renderer/js/app.js');
 
 // ---------- 1. loading & API ----------
 console.log('\n--- 1. التحميل والواجهة ---');
@@ -119,7 +122,7 @@ check(has(read('renderer/js/rest-service.js'), 'qtyUnit'), 'فاتورة 80mm ت
 // ---------- 4. decimal inputs & unit order ----------
 console.log('\n--- 4. حقول الكميات وترتيب الوحدة ---');
 check(has(salesJs, 'sc-qty-input num-input" inputmode="decimal"'), 'كمية سلة البيع عشرية (inputmode=decimal)');
-check(has(qeHtml, 'qe-col-num" data-i18n="quickEntry.qty"'), 'عمود الكمية في الإدخال السريع');
+check(/qe-col-num"(?:\s+data-col="qty")?\s+data-i18n="quickEntry\.qty"/.test(qeHtml), 'عمود الكمية في الإدخال السريع');
 {
   const iQty = qeHtml.indexOf('data-i18n="quickEntry.qty"');
   const iUnit = qeHtml.indexOf('data-i18n="units.label"');
@@ -148,8 +151,32 @@ check(has(salesJs, 'n > 700') || has(salesJs, '> 700'), 'عرض السلة لا 
 check(has(salesJs, "window.DisplaySettings.setLive('salesCart'") || has(salesJs, "setLive('salesCart'"), 'السحب يحدّث إعدادات العرض');
 check(has(css, '--sales-cart-width: 420px'), 'العرض الافتراضي 420px');
 check(has(css, 'grid-template-columns: 1fr !important;'), 'أقل من 1100px ⇒ عمود واحد');
-check(has(css, '.sales-pay { position: sticky; bottom: 0;'), 'منطقة الدفع ملتصقة بالأسفل');
+check(has(salesHtml, 'id="salesCommandBar"') && has(css, '.sales-pay-bar {'), 'منطقة الدفع داخل شريط الأوامر أعلى الصفحة');
 check(has(css, '.sales-cart-items-wrap { flex: 1 1 auto; min-height: 0; overflow-y: auto; }'), 'عناصر السلة وحدها تُمرَّر');
+
+// ---------- 5b. richer sales list rows ----------
+console.log('\n--- 5b. بطاقات القائمة الأغنى ---');
+{
+  const listFn = salesJs.slice(salesJs.indexOf('function salesListRowHTML'), salesJs.indexOf('function toggleSalesListDetails'));
+  check(has(listFn, '<span class="sales-list-ref">'), 'المرجع بجانب اسم المنتج في القائمة');
+  check(has(listFn, 'class="sales-list-row-prices"'), 'شريط أسعار مستقل داخل الصف');
+  check(has(listFn, 'class="sales-list-price unit"') && has(listFn, 'class="sales-list-price whole"'), 'سعر القطعة والجملة ب(label) واضحة');
+  check(has(listFn, "salesExtraPillsHTML(rep, 'sales-list-extra')"), 'حقول السعر الإضافية بلونها الخاص');
+  check(listFn.indexOf('quickEntry.sellPrice') === -1 && listFn.indexOf('quickEntry.wholesalePrice') === -1, 'لا تكرار للأسعار في التفاصيل القابلة للفتح');
+}
+check(has(css, '.sales-list-ref .ref-link') && has(css, 'color: var(--silver-900) !important'), 'المرجع داكن وعريض مع بقاءه قابلاً للنقر');
+check(has(css, '.sales-list-price.unit') && has(css, '.sales-list-price.whole') && has(css, '.sales-list-extra.price-pill'), 'ألوان الأسعار الثلاثة في القائمة');
+
+// ---------- 5c. inventory grid/list toggle ----------
+console.log('\n--- 5c. تبديل شبكة/قائمة في المخزون ---');
+check(has(inventoryHtml, 'id="invViewGridBtn"') && has(inventoryHtml, 'id="invViewListBtn"'), 'زرّا شبكة/قائمة في المخزون');
+check(has(inventoryHtml, 'data-i18n-title="sales.viewNetwork"') && has(inventoryHtml, 'data-i18n-title="sales.viewList"'), 'الزرّان يستعملان ترجمات الأيقونات الحالية');
+check(has(inventoryJs, 'function setInventoryView') && has(inventoryJs, "localStorage.setItem('zmt_inv_view_mode'"), 'وضع عرض المخزون يُحفظ');
+check(has(inventoryJs, "grid.classList.toggle('inv-list-view'"), 'التبديل يضيف صنف القائمة على الحاوية نفسها');
+check(has(inventoryJs, "id: 'invViewGridBtn'") && has(inventoryJs, "id: 'invViewListBtn'"), 'الزرّان في تخصيص أزرار المخزون');
+check(has(css, '.prod-grid.inv-list-view') && has(css, '.prod-grid:not(.inv-list-view) > .prod-card'), 'قواعد القائمة والشبكة منفصلتان');
+check(has(inventoryHtml, 'id="invGrid"') && has(inventoryJs, 'new InfiniteScrollPager'), 'حاوية التمرير والصفحات بقيت كما هي');
+check(has(inventoryJs, 'ondblclick=') && has(inventoryJs, 'openPrintBarcodeModal') && has(inventoryJs, '_registerProdCtxHandlers'), 'أزرار البطاقة والطباعة والقائمة السياقية بقيت');
 
 // ---------- 6. display settings slider ----------
 console.log('\n--- 6. شريط عرض السلة في إعدادات العرض ---');
@@ -159,7 +186,12 @@ check(has(displayJs, 'applySalesCartWidth'), 'إعدادات العرض تُطب
 check(has(read('renderer/js/app.js'), "salesCart: 'عرض سلة البيع'"), 'ترجمة عربية لعرض السلة');
 check(has(read('renderer/js/app.js'), "salesCart: 'Sales cart width'"), 'ترجمة إنجليزية لعرض السلة');
 check(has(read('renderer/js/app.js'), "salesCart: 'Largeur du panier de vente'"), 'ترجمة فرنسية لعرض السلة');
-check(has(read('renderer/js/app.js'), "salesCart: '销售购物车宽度'"), 'ترجمة صينية لعرض السلة');
+check(has(appJs, "salesCart: '销售购物车宽度'"), 'ترجمة صينية لعرض السلة');
+check(has(displayJs, "key: 'salesHeight', css: '--sales-card-h', min: 0, max: 520, def: 0"), 'منزلق ارتفاع بطاقات البيع (0 = تلقائي)');
+check(has(displayJs, "key: 'invHeight', css: '--inv-card-h', min: 0, max: 520, def: 0"), 'منزلق ارتفاع بطاقات المخزون (0 = تلقائي)');
+check(has(css, '--sales-card-h: auto;') && has(css, '--inv-card-h: auto;'), 'الافتراضية تلقائي ⇒ لا تغيير في التثبيت الأول');
+check(has(appJs, "salesHeight: 'ارتفاع بطاقات البيع'") && has(appJs, "salesHeight: 'Sales card height'") && has(appJs, "salesHeight: 'Hauteur des cartes de vente'") && has(appJs, "salesHeight: '销售卡片高度'"), 'تسميات ارتفاع البيع باللغات الأربع');
+check(has(appJs, "invHeight: 'ارتفاع بطاقات المخزون'") && has(appJs, "invHeight: 'Inventory card height'") && has(appJs, "invHeight: 'Hauteur des cartes de stock'") && has(appJs, "invHeight: '库存卡片高度'"), 'تسميات ارتفاع المخزون باللغات الأربع');
 
 // ---------- summary ----------
 console.log('\n============================================');

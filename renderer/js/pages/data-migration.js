@@ -27,7 +27,13 @@ let _migrationState = {
 };
 
 function openMigration() {
-  _migrationState = { step: 1, file: null, fileBuffer: null, filePath: null, fileType: null, parsedData: null, db: null, firebird: null, firebirdPagesLoaded: {}, selectedTable: null, headers: [], rows: [], mapping: {}, totalRows: 0, columnAnalysis: null, selectedBrands: [], brandConfirmed: false, tableRole: 'products', previewPage: 0, finalPage: 0, aiMode: false, aiResult: null, aiProcessing: false, gestionStock: false };
+  // Permission gate: the manager can hide «ترحيل البيانات» from a user.
+  try {
+    if (typeof Auth !== 'undefined' && typeof Auth.canView === 'function' &&
+        typeof Auth.isLoggedIn === 'function' && Auth.isLoggedIn() &&
+        !Auth.canView('data-migration')) return;
+  } catch (e) {}
+  _migrationState = { step: 1, file: null, fileBuffer: null, filePath: null, fileType: null, parsedData: null, db: null, firebird: null, firebirdPagesLoaded: {}, selectedTable: null, headers: [], rows: [], mapping: {}, totalRows: 0, columnAnalysis: null, selectedBrands: [], brandConfirmed: false, tableRole: 'products', previewPage: 0, finalPage: 0, aiMode: false, aiResult: null, aiProcessing: false, gestionStock: false, mssqlBak: null, gssp: null };
   document.getElementById('migrationModal').style.display = 'flex';
   document.getElementById('migrationFileInput').value = '';
   document.getElementById('migrationFileInfo').style.display = 'none';
@@ -81,7 +87,12 @@ function resetMigrationFile() {
   _migrationState.db = null;
   _migrationState.firebird = null;
   _migrationState.firebirdPagesLoaded = {};
+  _migrationState.gssp = null;
   document.getElementById('migrationFileInput').value = '';
+  const sel = document.getElementById('migrationForceType');
+  if (sel) sel.value = 'auto';
+  const fw = document.getElementById('migrationForceTypeWrap');
+  if (fw) fw.style.display = 'none';
   document.getElementById('migrationFileInfo').style.display = 'none';
   document.getElementById('migrationDropZone').style.display = 'block';
   document.getElementById('migrationNextBtn').disabled = true;
@@ -118,6 +129,7 @@ async function migrationNextStep() {
   
   if (step === 1) {
     migrationUpdateStatus(t('migration.reading'), 'info');
+    if (!(await migrationPreflight())) return;
     const parsed = await migrationAutoParse();
     if (!parsed) return;
     
@@ -381,30 +393,88 @@ async function handleMigrationFile(e) {
   }
 }
 
+// Manual format override. "auto" keeps every historical behaviour; choosing a
+// concrete reader only affects the file currently loaded in step 1. It is the
+// guaranteed escape hatch for legacy backups whose extension lies about their
+// real content.
+function migrationForcedType() {
+  const sel = document.getElementById('migrationForceType');
+  const v = sel ? String(sel.value || 'auto') : 'auto';
+  return v && v !== 'auto' ? v : null;
+}
+
+function migrationEngineHint(type, err) {
+  const msg = (err && err.message) ? err.message : String(err || '');
+  let hint = '';
+  if (type === 'mssql-bak') hint = t('migration.engineHintSql');
+  else if (type === 'firebird') hint = t('migration.engineHintFirebird');
+  else if (type === 'sqlite') hint = t('migration.engineHintSqlite');
+  else hint = t('migration.engineHintGeneric');
+  return (hint ? hint + ' — ' : '') + msg;
+}
+
+// Lightweight check only: never installs anything, never duplicates the real
+// parser's work. A missing IPC bridge used to surface as a generic read error.
+async function migrationPreflight() {
+  const type = _migrationState.fileType;
+  const api = window.electronAPI || {};
+  try {
+    if (type === 'mssql-bak' && typeof api.mssqlBakEnsure !== 'function') throw new Error('mssqlBakEnsure unavailable');
+    if (type === 'firebird' && typeof api.firebirdDetect !== 'function') throw new Error('firebirdDetect unavailable');
+    if (type === 'sqlite' && (!window.FileParsers || typeof window.FileParsers.parseSQLite !== 'function')) {
+      throw new Error('parseSQLite unavailable');
+    }
+  } catch (err) {
+    migrationUpdateStatus(migrationEngineHint(type, err), 'error');
+    return false;
+  }
+  return true;
+}
+
 async function processMigrationFile(file) {
   try {
     migrationUpdateStatus(t('migration.reading'), 'info');
-    
+
+    const sel = document.getElementById('migrationForceType');
+    if (sel) sel.value = 'auto';
+    const fw = document.getElementById('migrationForceTypeWrap');
+    if (fw) fw.style.display = 'block';
+
     const buffer = await file.arrayBuffer();
     _migrationState.file = file;
     _migrationState.fileBuffer = buffer;
     _migrationState.filePath = (file && file.path) || null;
-    
+
     const detected = FileDetector.detect(file.name, buffer);
-    _migrationState.fileType = detected.type;
-    
     const ext = file.name.split('.').pop().toUpperCase();
+    const forced = migrationForcedType();
+    _migrationState.fileType = forced || detected.type;
+    // Backward-compatible fallback only: the detector already maps .bak, but
+    // keep the old behaviour if it ever returns nothing conclusive.
+    if (!forced && ext === 'BAK' && (!_migrationState.fileType || _migrationState.fileType === 'unknown')) {
+      _migrationState.fileType = 'mssql-bak';
+    }
     const sizeKB = (file.size / 1024).toFixed(1);
     document.getElementById('migrationFileName').textContent = file.name;
-    document.getElementById('migrationFileType').textContent = `${ext} • ${sizeKB} KB • ${detected.type}`;
+    document.getElementById('migrationFileType').textContent =
+      `${ext} • ${sizeKB} KB • ${detected.type}` + (forced ? ` → ${forced}` : '');
     document.getElementById('migrationFileInfo').style.display = 'block';
     document.getElementById('migrationDropZone').style.display = 'none';
-    
+
     migrationUpdateStatus('', '');
     document.getElementById('migrationNextBtn').disabled = false;
-    
+
   } catch (err) {
-    migrationUpdateStatus(t('migration.readError') + ': ' + err.message, 'error');
+    // Keep the file visible so the user can inspect its type / use the manual
+    // override instead of seeing a bare, unexplained "read error".
+    const info = document.getElementById('migrationFileInfo');
+    if (info) info.style.display = 'block';
+    const typeEl = document.getElementById('migrationFileType');
+    if (typeEl && !typeEl.textContent) {
+      typeEl.textContent = `${String(file && file.name || '')} • ${((file && file.size || 0) / 1024).toFixed(1)} KB`;
+    }
+    migrationUpdateStatus(t('migration.readError') + ': ' +
+      ((err && err.message) ? err.message : String(err)), 'error');
   }
 }
 
@@ -477,6 +547,14 @@ async function migrationAutoParse() {
       return await migrationParseFirebird();
     }
     
+    if (type === 'mssql-bak') {
+      return await migrationParseMssqlBak();
+    }
+
+    if (type === 'gssp') {
+      return await migrationParseGssp();
+    }
+
     const text = new TextDecoder('utf-8', { fatal: false }).decode(buffer);
     if (text.length > 0) {
       const result = await FileParsers.parseCSV(buffer);
@@ -490,7 +568,7 @@ async function migrationAutoParse() {
     return false;
     
   } catch (err) {
-    migrationUpdateStatus(t('migration.parseError') + ': ' + err.message, 'error');
+    migrationUpdateStatus(t('migration.parseError') + ': ' + migrationEngineHint(type, err), 'error');
     return false;
   }
 }
@@ -500,7 +578,7 @@ function renderMigrationTableSelect(tables) {
   document.getElementById('migrationTableSelect').style.display = 'block';
   document.getElementById('migrationPreview').style.display = 'none';
   
-  const handler = _migrationState.firebird ? 'selectFirebirdTable' : 'selectMigrationTable';
+  const handler = _migrationState.firebird ? 'selectFirebirdTable' : (_migrationState.mssqlBak ? 'selectMssqlBakTable' : 'selectMigrationTable');
   el.innerHTML = tables.map(t_name => `
     <div style="padding:12px 16px;margin-bottom:8px;background:var(--silver-100);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;border:2px solid transparent;transition:all 0.2s"
          onclick="${handler}('${t_name}')"
@@ -570,7 +648,51 @@ async function migrationParseFirebird() {
     }
     return true;
   } catch (err) {
-    migrationUpdateStatus(t('migration.firebirdOpenError') + ': ' + err.message, 'error');
+    migrationUpdateStatus(t('migration.firebirdOpenError') + ': ' + migrationEngineHint('firebird', err), 'error');
+    return false;
+  }
+}
+
+async function migrationParseMssqlBak() {
+  try {
+    const dbPath = _migrationState.filePath;
+    if (!dbPath) {
+      migrationUpdateStatus(t('migration.mssqlNoPath') || 'تعذر الوصول إلى مسار ملف النسخة الاحتياطية', 'error');
+      return false;
+    }
+    migrationUpdateStatus(t('migration.preparingEngine') || 'جاري تجهيز محرّك SQL Server...', 'info');
+    const ensure = await window.electronAPI.mssqlBakEnsure();
+    if (!ensure || !ensure.success || !ensure.data || !ensure.data.ok) {
+      throw new Error((ensure && ensure.error) || (ensure && ensure.data && ensure.data.error) || 'engine not ready');
+    }
+    migrationUpdateStatus(t('migration.restoringBackup') || 'جاري استعادة النسخة الاحتياطية...', 'info');
+    const det = await window.electronAPI.mssqlBakDetect(dbPath);
+    if (!det.success) throw new Error(det.error);
+    const tables = det.data.tables || [];
+    if (!tables.length) {
+      migrationUpdateStatus(t('migration.mssqlNoTables') || 'لا توجد جداول قابلة للقراءة في نسخة SQL Server', 'warning');
+      return false;
+    }
+    _migrationState.mssqlBak = { bakPath: dbPath };
+    _migrationState.firebird = null;
+    const isGestionStock = true; // .bak = Gestion Stock SQL Server variant
+    _migrationState.gestionStock = isGestionStock;
+    document.getElementById('migrationFileType').textContent =
+      (document.getElementById('migrationFileType').textContent || '') + ' • SQL Server .bak';
+    if (isGestionStock) {
+      renderGestionStockFullImportPanel();
+    } else {
+      // Pre-export all tables so the browse/preview path can read them from cache.
+      migrationUpdateStatus(t('migration.restoringBackup') || 'جاري استخراج الجداول...', 'info');
+      const exp = await window.electronAPI.mssqlBakExport(dbPath);
+      if (!exp || !exp.success) throw new Error((exp && exp.error) || 'export failed');
+      _migrationState.mssqlBak.exported = exp.data || {};
+      _migrationState.mssqlBak.tableNames = Object.keys(_migrationState.mssqlBak.exported);
+      renderMigrationTableSelect(_migrationState.mssqlBak.tableNames);
+    }
+    return true;
+  } catch (err) {
+    migrationUpdateStatus((t('migration.mssqlOpenError') || 'تعذر فتح نسخة SQL Server (.bak)') + ': ' + migrationEngineHint('mssql-bak', err), 'error');
     return false;
   }
 }
@@ -606,6 +728,28 @@ async function selectFirebirdTable(tableName) {
     showMigrationRoleChoice();
   } catch (err) {
     migrationUpdateStatus(t('migration.firebirdTableError') + ': ' + err.message, 'error');
+  }
+}
+
+async function selectMssqlBakTable(tableName) {
+  _migrationState.selectedTable = tableName;
+  _migrationState.tableRole = 'products';
+  _migrationState.brandConfirmed = false;
+  const rolePopup = document.getElementById('migrationRolePopup');
+  if (rolePopup) rolePopup.style.display = 'none';
+  document.querySelectorAll('.migration-table-item').forEach(el => {
+    el.style.borderColor = el.dataset.table === tableName ? 'var(--primary)' : 'transparent';
+    el.style.background = el.dataset.table === tableName ? '#e3f2fd' : 'var(--silver-100)';
+  });
+  try {
+    const rows = (_migrationState.mssqlBak.exported || {})[tableName] || [];
+    const cols = rows.length ? Object.keys(rows[0]) : [];
+    _migrationState.headers = cols;
+    _migrationState.totalRows = rows.length;
+    _migrationState.rows = rows.slice();
+    showMigrationRoleChoice();
+  } catch (err) {
+    migrationUpdateStatus((t('migration.firebirdTableError') || 'تعذر قراءة الجدول') + ': ' + err.message, 'error');
   }
 }
 
@@ -1156,7 +1300,7 @@ async function importInvoices(role) {
   }
   let productsCreated = 0;
   if (newProducts.size) {
-    const created = await DB.addProductsBatch([...newProducts.values()]);
+    const created = await DB.addProductsBatch([...newProducts.values()], null, { source: 'import-invoices' });
     productsCreated = created.length;
     for (const p of created) newProducts.set(p.barcode, p);
   }
@@ -1422,7 +1566,7 @@ async function migrationDoImport() {
 
     for (let start = 0; start < allProds.length; start += CHUNK) {
       const chunk = allProds.slice(start, start + CHUNK);
-      const created = await DB.addProductsBatch(chunk);
+      const created = await DB.addProductsBatch(chunk, null, { source: 'import-invoices' });
       for (const p of created) productById[p.barcode] = p.id;
       prodsImported += chunk.length;
       setImportStatus(`المنتجات: ${prodsImported}/${allProds.length}`);
@@ -1646,11 +1790,16 @@ function migrationUpdateStatus(msg, type) {
 // ===========================================================================
 
 function detectGestionStockSchema(tableNames) {
-  const up = new Set((tableNames || []).map(n => String(n).toUpperCase()));
+  const up = new Set((tableNames || []).map(n => String(n).toUpperCase().split('.').pop()));
   return ['FACTURE_CLIENT', 'DETAIL_FACTURE_CLIENT', 'CLIENT', 'FOURNISSEUR', 'ARTICLES'].every(t => up.has(t));
 }
 
-function renderGestionStockFullImportPanel() {
+function detectGestionStockSqlSchema(tableNames) {
+  const up = new Set((tableNames || []).map(n => String(n).toUpperCase().split('.').pop()));
+  return ['STOCK', 'CLIENTBIS', 'FOURNISSEURBIS', 'FACT1', 'FACT2'].every(t => up.has(t));
+}
+
+function renderGestionStockFullImportPanel(variant) {
   const panel = document.getElementById('migrationFullImportPanel');
   if (!panel) return;
   panel.style.display = 'block';
@@ -1660,10 +1809,33 @@ function renderGestionStockFullImportPanel() {
   if (preview) preview.style.display = 'none';
   const rolePopup = document.getElementById('migrationRolePopup');
   if (rolePopup) rolePopup.style.display = 'none';
+  // A Sable Stock backup (.gssp / .zgssp) carries every table already, so the
+  // two Firebird-only "sync from STOCK.FDB" buttons are meaningless here and are
+  // hidden. The panel description is switched to the GSSP wording (and its
+  // data-i18n attribute is re-pointed so a later language switch stays correct).
+  const isGssp = variant === 'gssp';
+  const balBtn = document.getElementById('migrationBalanceSyncBtn');
+  const stkBtn = document.getElementById('migrationStockSyncBtn');
+  if (balBtn) balBtn.style.display = isGssp ? 'none' : '';
+  if (stkBtn) stkBtn.style.display = isGssp ? 'none' : '';
+  const desc = document.getElementById('migrationFullImportDesc');
+  if (desc) {
+    const key = isGssp ? 'migration.gsspPanelDesc' : 'migration.fullImportPanelDesc';
+    desc.setAttribute('data-i18n', key);
+    desc.textContent = t(key) || desc.textContent;
+  }
 }
 
 async function startGestionStockFullImport() {
-  if (!_migrationState.firebird) return;
+  const isGssp = !!_migrationState.gssp;
+  const isSql = !isGssp && !!_migrationState.mssqlBak && !_migrationState.firebird;
+  if (isGssp) {
+    if (!_migrationState.gssp) return;
+  } else if (isSql) {
+    if (!_migrationState.mssqlBak) return;
+  } else {
+    if (!_migrationState.firebird) return;
+  }
   const popup = document.getElementById('migrationFullBrandPopup');
   if (popup) popup.style.display = 'none';
   const btn = document.getElementById('migrationFullImportBtn');
@@ -1672,7 +1844,9 @@ async function startGestionStockFullImport() {
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span data-i18n="migration.importing">جاري الاستيراد...</span>';
     }
-    await importGestionStockFull(null);
+    if (isGssp) await importSableStockFull();
+    else if (isSql) await importGestionStockSqlFull(null);
+    else await importGestionStockFull(null);
   } catch (err) {
     console.error('[Migration] Full import error:', err);
     migrationUpdateStatus((t('migration.importError') || 'خطأ أثناء الاستيراد') + ': ' + (err && err.message || err), 'error');
@@ -2159,7 +2333,7 @@ async function importGestionStockFull(selectedBrands) {
   let productsCreated = [];
   for (let i = 0; i < productsToAdd.length; i += 200) {
     const chunk = productsToAdd.slice(i, i + 200);
-    const created = await DB.addProductsBatch(chunk);
+    const created = await DB.addProductsBatch(chunk, null, { source: 'import-firebird' });
     productsCreated.push(...created);
     results.products += chunk.length;
     migrationUpdateStatus((t('migration.roleProducts') || 'المنتجات') + ': ' + results.products + '/' + productsToAdd.length, 'info');
@@ -2229,7 +2403,7 @@ async function importGestionStockFull(selectedBrands) {
       quantity: 0,
       supplierId: '',
       notes: fallbackMarque ? 'Sable: ' + fallbackMarque : 'Sable',
-    }]);
+    }], null, { source: 'import-firebird' });
     const p = created[0];
     if (p) { prodByBar[bc] = p; if (ref) prodByRef[ref] = p; }
     return p || null;
@@ -2322,6 +2496,733 @@ async function importGestionStockFull(selectedBrands) {
       `${results.products} ${t('migration.roleProducts') || 'منتج'} • ${results.customers} ${t('migration.roleCustomers') || 'عميل'} • ` +
       `${results.suppliers} ${t('migration.roleSuppliers') || 'مورد'} • ${results.saleInvoices} ${t('migration.roleSalesInvoices') || 'فاتورة بيع'} • ` +
       `${results.buyInvoices} ${t('migration.rolePurchaseInvoices') || 'فاتورة شراء'} • ${results.returns} ${t('migration.returnsCount') || 'مرتجع'}`, 'success');
+  }
+}
+
+// ===========================================================================
+// FULL GESTION STOCK IMPORT (SQL Server .bak) — Gestion Stock variant
+// ===========================================================================
+async function importGestionStockSqlFull(selectedBrands) {
+  if (!_migrationState.mssqlBak) return;
+  const { bakPath } = _migrationState.mssqlBak;
+  if (DB && DB.suppressAutoBackup) DB.suppressAutoBackup(true);
+
+  migrationUpdateStatus(t('migration.creatingBackup') || 'جاري إنشاء نسخة احتياطية قبل الاستيراد...', 'info');
+  const backupPath = await createPreImportBackup();
+  if (backupPath) console.log('[Migration] Pre-import backup saved:', backupPath);
+
+  const num = (v) => { const n = parseFloat(String(v === undefined || v === null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; };
+  const txt = (v) => String(v === undefined || v === null ? '' : v).trim();
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const parseDate = (v) => {
+    const s = txt(v);
+    if (!s) return Date.now();
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) { const d = new Date(+m[1], +m[2] - 1, +m[3]); return isNaN(d.getTime()) ? Date.now() : d.getTime(); }
+    m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (m) { const d = new Date(+m[3], +m[2] - 1, +m[1]); return isNaN(d.getTime()) ? Date.now() : d.getTime(); }
+    const d = new Date(s); return isNaN(d.getTime()) ? Date.now() : d.getTime();
+  };
+
+  migrationUpdateStatus(t('migration.restoringBackup') || 'جاري استخراج البيانات من النسخة الاحتياطية...', 'info');
+  const exp = await window.electronAPI.mssqlBakExport(bakPath);
+  if (!exp || !exp.success) throw new Error((exp && exp.error) || 'export failed');
+  const D = exp.data || {};
+  const load = (tbl) => Array.isArray(D[tbl]) ? D[tbl] : [];
+
+  const results = { customers: 0, suppliers: 0, products: 0, buyInvoices: 0, saleInvoices: 0, returns: 0 };
+  const custByName = new Map();
+  const supByName = new Map();
+  const prodById = new Map();
+  const prodByBar = new Map();
+
+  const lastSalePrice = new Map();
+  for (const r of load('Fact2')) {
+    const pid = num(r['id_designation']);
+    const price = num(r['Prix Unitaire'] !== undefined ? r['Prix Unitaire'] : r['PU Vente']);
+    if (!pid || price <= 0) continue;
+    const d = parseDate(r['dateop']);
+    if (!lastSalePrice.has(pid) || d > lastSalePrice.get(pid).date) lastSalePrice.set(pid, { price, date: d });
+  }
+  const lastBuy = new Map();
+  for (const r of load('Fact2Four')) {
+    const pid = num(r['id_designation']);
+    if (!pid) continue;
+    const buy = num(r['PU Achat']);
+    const whole = num(r['PU Vente']);
+    const d = parseDate(r['dateop']);
+    const cur = lastBuy.get(pid) || { buy: 0, whole: 0, date: -1 };
+    if (d >= cur.date) lastBuy.set(pid, { buy: buy > 0 ? buy : cur.buy, whole: whole > 0 ? whole : cur.whole, date: d });
+  }
+
+  // ===== 1) CUSTOMERS (Clientbis) =====
+  migrationUpdateStatus((t('migration.roleCustomers') || 'العملاء') + '...', 'info');
+  const clientRows = load('Clientbis');
+  const existingCust = new Set(DB.getCustomers().map(c => norm(c.name)));
+  for (const r of clientRows) {
+    const name = txt(r['Client']);
+    if (!name || /comptoir/i.test(name)) continue;
+    const key = norm(name);
+    if (existingCust.has(key)) {
+      const ex = DB.getCustomers().find(c => norm(c.name) === key);
+      if (ex) custByName.set(key, ex);
+      continue;
+    }
+    const c = DB.addCustomer({ name: name, phone: txt(r['Tel']), address: txt(r['Adresse']), email: txt(r['email']), discount: 0 });
+    c.balance = num(r['Solde']);
+    DB.saveCustomers(DB.getCustomers());
+    custByName.set(key, c);
+    results.customers++;
+  }
+  migrationUpdateStatus((t('migration.roleCustomers') || 'العملاء') + ': ' + results.customers, 'info');
+  await new Promise(r => setTimeout(r, 0));
+
+  // ===== 2) SUPPLIERS (Fournisseurbis) =====
+  migrationUpdateStatus((t('migration.roleSuppliers') || 'الموردون') + '...', 'info');
+  const supRows = load('Fournisseurbis');
+  const existingSup = new Set(DB.getSuppliers().map(s => norm(s.name)));
+  for (const r of supRows) {
+    const name = txt(r['Client']);
+    if (!name) continue;
+    const key = norm(name);
+    if (existingSup.has(key)) {
+      const ex = DB.getSuppliers().find(s => norm(s.name) === key);
+      if (ex) supByName.set(key, ex);
+      continue;
+    }
+    const s = { id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5), name: name, phone: txt(r['Tel']), address: txt(r['Adresse']), email: txt(r['email']), balance: num(r['Solde']) };
+    const all = DB.getSuppliers();
+    all.push(s);
+    DB.saveSuppliers(all);
+    supByName.set(key, s);
+    results.suppliers++;
+  }
+  migrationUpdateStatus((t('migration.roleSuppliers') || 'الموردون') + ': ' + results.suppliers, 'info');
+  await new Promise(r => setTimeout(r, 0));
+
+  // ===== 3) PRODUCTS (Stock) =====
+  migrationUpdateStatus((t('migration.roleProducts') || 'المنتجات') + '...', 'info');
+  const stockRows = load('Stock');
+  const productsToAdd = [];
+  for (const r of stockRows) {
+    const rawDes = txt(r['designation']);
+    const idx = rawDes.lastIndexOf('...');
+    let name = idx >= 0 ? rawDes.slice(0, idx).trim() : rawDes.trim();
+    name = name.replace(/^[*#\s]+/, '').trim();
+    if (!name) name = 'منتج ' + r['id_stock'];
+    let ref = idx >= 0 ? rawDes.slice(idx + 3).trim() : '';
+    const idStock = num(r['id_stock']);
+    const barcode = ref || ('STK-' + idStock);
+    const pv = num(r['P Vente']);
+    const pv2 = num(r['P Vente2']);
+    const pv3 = num(r['p vente3']);
+    const pu = num(r['Prix Unitaire']);
+    const pm = num(r['Prix Moyen']);
+    const lb = lastBuy.get(idStock) || { buy: 0, whole: 0 };
+    const buyPrice = (pu > 0 ? pu : (lb.buy > 0 ? lb.buy : pm));
+    let sellPrice = (pv > 0 ? pv : (lastSalePrice.get(idStock) ? lastSalePrice.get(idStock).price : 0));
+    if (pv3 > 0 && sellPrice === 0) sellPrice = pv3;
+    let wholesalePrice = (pv2 > 0 ? pv2 : (lb.whole > 0 ? lb.whole : (pv > 0 ? pv : 0)));
+    if (wholesalePrice > 0 && sellPrice > 0 && wholesalePrice > sellPrice) wholesalePrice = sellPrice * 0.95;
+    productsToAdd.push({ name, barcode, reference: ref, mark: txt(r['marque']), category: txt(r['famille']), unit: txt(r['unite']), buyPrice: Math.round(buyPrice*100)/100, realBuyPrice: Math.round(buyPrice*100)/100, purchaseDiscountPct: 0, sellPrice: Math.round(sellPrice*100)/100, wholesalePrice: Math.round(wholesalePrice*100)/100, extraPrices: {}, minPrice: 0, quantity: num(r['Stock']), minStock: num(r['stock min']), supplierId: null, notes: txt(r['obs']), _idStock: idStock });
+  }
+  const seenBar = new Set(DB.getProducts().map(p => p.barcode));
+  const unique = [];
+  for (const p of productsToAdd) {
+    let bc = p.barcode;
+    if (seenBar.has(bc)) bc = bc + '-' + Math.random().toString(36).slice(2, 6);
+    p.barcode = bc;
+    seenBar.add(bc);
+    unique.push(p);
+  }
+  for (let i = 0; i < unique.length; i += 200) {
+    const chunk = unique.slice(i, i + 200);
+    const created = await DB.addProductsBatch(chunk, null, { source: 'import-sql' });
+    if (Array.isArray(created)) {
+      for (let j = 0; j < created.length; j++) {
+        const p = created[j];
+        if (p && chunk[j] && chunk[j]._idStock != null) { prodById.set(chunk[j]._idStock, p); }
+        if (p) { delete p._idStock; if (p.barcode) prodByBar.set(p.barcode, p); }
+        if (chunk[j]) delete chunk[j]._idStock;
+      }
+    }
+    results.products += chunk.length;
+    migrationUpdateStatus((t('migration.roleProducts') || 'المنتجات') + ': ' + results.products + '/' + unique.length, 'info');
+    await new Promise(r => setTimeout(r, 0));
+  }
+  for (const r of stockRows) {
+    const rawDes = txt(r['designation']);
+    const idx = rawDes.lastIndexOf('...');
+    let ref = idx >= 0 ? rawDes.slice(idx + 3).trim() : '';
+    const idStock = num(r['id_stock']);
+    const barcode = ref || ('STK-' + idStock);
+    const p = DB.getProductByBarcode(barcode);
+    if (p) prodById.set(idStock, p);
+    if (p && p.barcode) prodByBar.set(p.barcode, p);
+  }
+  migrationUpdateStatus((t('migration.roleProducts') || 'المنتجات') + ': ' + results.products, 'info');
+  await new Promise(r => setTimeout(r, 0));
+
+  // ===== 4) SALES INVOICES (Fact1 + Fact2) =====
+  migrationUpdateStatus((t('migration.roleSalesInvoices') || 'فواتير البيع') + '...', 'info');
+  const fact1Rows = load('Fact1');
+  const fact1ByNum = new Map();
+  for (const r of fact1Rows) fact1ByNum.set(txt(r['Numero']), r);
+  const itemsByInv = new Map();
+  for (const r of load('Fact2')) {
+    const n = txt(r['Numero']);
+    if (!n) continue;
+    if (!itemsByInv.has(n)) itemsByInv.set(n, []);
+    itemsByInv.get(n).push(r);
+  }
+  for (const [num_, rows] of itemsByInv) {
+    const h = fact1ByNum.get(num_);
+    if (!h) continue;
+    const items = [];
+    for (const r of rows) {
+      const p = prodById.get(num(r['id_designation']));
+      const qty = num(r['Quantite']);
+      const price = num(r['Prix Unitaire']);
+      let total = num(r['Montant']);
+      if (!total) total = qty * price;
+      items.push({ productId: p ? p.id : '', barcode: p ? p.barcode : '', name: p ? p.name : txt(r['designation']), qty: Math.round(qty*100)/100, price: Math.round(price*100)/100, total: Math.round(total*100)/100, costPrice: p ? p.buyPrice : 0 });
+    }
+    if (!items.length) continue;
+    const totalAmount = num(h['Total TTC']) || items.reduce((s, i) => s + i.total, 0);
+    const cust = custByName.get(norm(h['client']));
+    // Keep the REAL historical date in createdAt too: reports and the invoice
+    // list read createdAt, so without keepCreatedAt every imported sale would
+    // be shown on the import day instead of its true DateAchat.
+    const invDate = parseDate(h['DateAchat']);
+    const invYear = new Date(invDate).getFullYear();
+    const invData = { type: 'customer', invoiceNumber: num_, date: invDate, items: items, totalAmount: Math.round(totalAmount*100)/100, extraDiscount: num(h['Remise']), timbreFiscal: num(h['Timbre']), note: 'فاتورة مستوردة من البرنامج القديم — ' + num_, profit: num(h['Benefice']), createdAt: invDate };
+    if (cust) invData.customerId = cust.id;
+    else { invData.walkinName = txt(h['client']); invData.walkinPhone = ''; invData.walkinAddress = ''; }
+    const inv = DB.addInvoice(invData, { keepCreatedAt: true, numberYear: invYear });
+    results.saleInvoices++;
+    const avance = num(h['Avance']);
+    if (avance > 0) {
+      const pmt = { amount: Math.round(avance*100)/100, invoiceId: inv.id, date: parseDate(h['DateAchat']), note: 'دفعة مستوردة — فاتورة ' + num_, method: 'cash' };
+      if (cust) pmt.customerId = cust.id;
+      DB.addPayment(pmt);
+    }
+  }
+  migrationUpdateStatus((t('migration.roleSalesInvoices') || 'فواتير البيع') + ': ' + results.saleInvoices, 'info');
+  await new Promise(r => setTimeout(r, 0));
+
+  // ===== 5) PURCHASE INVOICES (Fact1four + Fact2Four) =====
+  migrationUpdateStatus((t('migration.rolePurchaseInvoices') || 'فواتير الشراء') + '...', 'info');
+  const fact1fRows = load('Fact1four');
+  const fact1fByNum = new Map();
+  for (const r of fact1fRows) fact1fByNum.set(txt(r['Numero']), r);
+  const items4ByInv = new Map();
+  for (const r of load('Fact2Four')) {
+    const n = txt(r['Numero']);
+    if (!n) continue;
+    if (!items4ByInv.has(n)) items4ByInv.set(n, []);
+    items4ByInv.get(n).push(r);
+  }
+  for (const [num_, rows] of items4ByInv) {
+    const h = fact1fByNum.get(num_);
+    if (!h) continue;
+    const items = [];
+    for (const r of rows) {
+      const p = prodById.get(num(r['id_designation']));
+      const qty = num(r['Quantite']);
+      const price = num(r['PU Achat']);
+      let total = num(r['Montant']);
+      if (!total) total = qty * price;
+      items.push({ productId: p ? p.id : '', barcode: p ? p.barcode : '', name: p ? p.name : txt(r['designation']), qty: Math.round(qty*100)/100, price: Math.round(price*100)/100, total: Math.round(total*100)/100, costPrice: p ? p.buyPrice : 0 });
+    }
+    if (!items.length) continue;
+    const totalAmount = num(h['Total TTC']) || items.reduce((s, i) => s + i.total, 0);
+    const sup = supByName.get(norm(h['client']));
+    // Same rule as sales: the historical DateAchat is the invoice's date,
+    // not the day the migration was run.
+    const invDate = parseDate(h['DateAchat']);
+    const invYear = new Date(invDate).getFullYear();
+    const invData = { type: 'purchase', invoiceNumber: num_, date: invDate, items: items, totalAmount: Math.round(totalAmount*100)/100, extraDiscount: num(h['Remise']), timbreFiscal: num(h['Timbre']), supplierId: sup ? sup.id : '', note: 'فاتورة شراء مستوردة — ' + num_, createdAt: invDate };
+    const inv = DB.addInvoice(invData, { keepCreatedAt: true, numberYear: invYear });
+    results.buyInvoices++;
+    const avance = num(h['Avance']);
+    if (avance > 0) {
+      const pmt = { amount: Math.round(avance*100)/100, invoiceId: inv.id, date: parseDate(h['DateAchat']), note: 'دفعة مستوردة — فاتورة شراء ' + num_, method: 'cash' };
+      if (sup) pmt.supplierId = sup.id;
+      DB.addPayment(pmt);
+    }
+  }
+  migrationUpdateStatus((t('migration.rolePurchaseInvoices') || 'فواتير الشراء') + ': ' + results.buyInvoices, 'info');
+  await new Promise(r => setTimeout(r, 0));
+
+  // ===== 6) STANDALONE PAYMENTS =====
+  migrationUpdateStatus((t('migration.rolePayments') || 'الدفعات') + '...', 'info');
+  for (const r of load('Client')) {
+    if (txt(r['Numero']) !== 'Versement' && txt(r['Numero']) !== 'Versment') continue;
+    const amt = num(r['Avance']);
+    if (!(amt > 0)) continue;
+    const cust = custByName.get(norm(r['Client']));
+    if (!cust) continue;
+    DB.addPayment({ amount: Math.round(amt*100)/100, customerId: cust.id, date: parseDate(r['Date Operation']), note: 'سند قبض مستورد', method: 'cash' });
+  }
+  for (const r of load('Fournisseur')) {
+    if (txt(r['Numero']) !== 'Versement' && txt(r['Numero']) !== 'Versment') continue;
+    const amt = num(r['Avance']);
+    if (!(amt > 0)) continue;
+    const sup = supByName.get(norm(r['client']));
+    if (!sup) continue;
+    DB.addPayment({ amount: Math.round(amt*100)/100, supplierId: sup.id, date: parseDate(r['Date Operation']), note: 'سند دفع مستورد', method: 'cash' });
+  }
+
+  // ===== 7) FORCE AUTHORITATIVE BALANCES =====
+  const custs = DB.getCustomers();
+  for (const c of custs) {
+    const master = clientRows.find(r => norm(r['Client']) === norm(c.name));
+    if (master) c.balance = num(master['Solde']);
+  }
+  DB.saveCustomers(custs);
+  const sups = DB.getSuppliers();
+  for (const s of sups) {
+    const master = supRows.find(r => norm(r['Client']) === norm(s.name));
+    if (master) s.balance = num(master['Solde']);
+  }
+  DB.saveSuppliers(sups);
+
+  // ===== 8) CLEANUP =====
+  try { await window.electronAPI.mssqlBakDispose(bakPath); } catch (e) {}
+
+  if (DB && DB.suppressAutoBackup) DB.suppressAutoBackup(false);
+  migrationUpdateStatus('', '');
+  migrationUpdateStatus(`✓ ${t('migration.fullImportDone') || 'اكتمل الاستيراد الشامل'}: ` +
+    `${results.products} ${t('migration.roleProducts') || 'منتج'} • ${results.customers} ${t('migration.roleCustomers') || 'عميل'} • ` +
+    `${results.suppliers} ${t('migration.roleSuppliers') || 'مورد'} • ${results.saleInvoices} ${t('migration.roleSalesInvoices') || 'فاتورة بيع'} • ` +
+    `${results.buyInvoices} ${t('migration.rolePurchaseInvoices') || 'فاتورة شراء'}`, 'success');
+}
+
+// ===========================================================================
+// FULL SABLE STOCK IMPORT (GSSP / ss2021)
+// ---------------------------------------------------------------------------
+// A Sable Stock backup is a plain MySQL dump (inside a ZipCrypto ZIP when the
+// extension is .zgssp). It carries EVERYTHING in one file, so — unlike the
+// Firebird path — there is no table browsing or brand picking: we read the dump
+// once and rebuild the shop in ZMT PIECE.
+//
+// Historical fidelity rules (identical to the Firebird/SQL importers):
+//   • invoices & payments keep their REAL date (date + createdAt);
+//   • the invoice number prefix follows the real invoice year;
+//   • product stock comes from articlesliste.QTE and is NEVER replayed from
+//     invoices (the legacy QTE is already a running balance);
+//   • customer/supplier balances come from personnez.solde and are set ONCE,
+//     on creation — never overwritten and never mutated by the invoice import.
+// ===========================================================================
+
+async function migrationParseGssp() {
+  const buffer = _migrationState.fileBuffer;
+  if (!buffer || typeof GsspReader === 'undefined') {
+    migrationUpdateStatus(t('migration.cannotRead') || 'لا يمكن قراءة الملف', 'error');
+    return false;
+  }
+  try {
+    migrationUpdateStatus(t('migration.gsspReading') || 'جاري فتح نسخة Sable Stock...', 'info');
+    const res = GsspReader.read(buffer);
+    const wanted = ['personnez', 'articlesliste', 'categoris', 'unites', 'depots', 'codbar',
+      'bonsliv', 'journsortie', 'boncont', 'factures', 'factpro',
+      'product_type', 'classification'];
+    const parsed = GsspReader.parseDump(res.text, wanted);
+    const tables = parsed.tables || {};
+    if (!tables.personnez || !tables.articlesliste || !tables.bonsliv) {
+      migrationUpdateStatus(t('migration.gsspNotSable') || 'هذا الملف ليس نسخة Sable Stock صالحة', 'warning');
+      return false;
+    }
+    _migrationState.gssp = {
+      tables: tables,
+      counts: parsed.counts || {},
+      entryName: res.entryName || '',
+      encrypted: !!res.encrypted,
+      wasZip: !!res.wasZip,
+    };
+    _migrationState.gestionStock = true;
+    const ftEl = document.getElementById('migrationFileType');
+    if (ftEl) ftEl.textContent = (ftEl.textContent || '') + ' • Sable Stock (GSSP)';
+    renderGestionStockFullImportPanel('gssp');
+    return true;
+  } catch (err) {
+    if (err && err.message === 'GSSP_PASSWORD') {
+      migrationUpdateStatus(t('migration.gsspBadPassword') || 'تعذر فتح نسخة Sable Stock — كلمة مرور النسخة غير معروفة لهذا الإصدار', 'error');
+    } else {
+      migrationUpdateStatus((t('migration.parseError') || 'خطأ في تحليل الملف') + ': ' + (err && err.message || err), 'error');
+    }
+    return false;
+  }
+}
+
+async function importSableStockFull() {
+  const gssp = _migrationState.gssp;
+  if (!gssp || !gssp.tables) return;
+  const T = gssp.tables;
+  if (DB && DB.suppressAutoBackup) DB.suppressAutoBackup(true);
+
+  const num = (v) => {
+    if (v === null || v === undefined || v === '') return 0;
+    if (typeof v === 'number') return isFinite(v) ? v : 0;
+    const n = parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
+    return isNaN(n) ? 0 : n;
+  };
+  const txt = (v) => String(v === undefined || v === null ? '' : v).trim();
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const parseDate = (v) => {
+    const s = txt(v);
+    if (!s) return Date.now();
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+    if (m) {
+      const d = new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0));
+      return isNaN(d.getTime()) ? Date.now() : d.getTime();
+    }
+    m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (m) { const d = new Date(+m[3], +m[2] - 1, +m[1]); return isNaN(d.getTime()) ? Date.now() : d.getTime(); }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? Date.now() : d.getTime();
+  };
+  const yearOf = (v) => { const m = txt(v).match(/^(\d{4})/); return m ? +m[1] : 0; };
+
+  const idxOf = (tbl, name) => (tbl && tbl.columns) ? tbl.columns.indexOf(name) : -1;
+
+  const results = { customers: 0, suppliers: 0, products: 0, saleInvoices: 0, cashInvoices: 0, payments: 0, skipped: 0 };
+
+  try {
+    migrationUpdateStatus(t('migration.creatingBackup') || 'جاري إنشاء نسخة احتياطية قبل الاستيراد...', 'info');
+    const backupPath = await createPreImportBackup();
+    if (backupPath) console.log('[Migration] Pre-import backup saved:', backupPath);
+
+    // De-dup keys of everything already present, so re-running the import — or
+    // merging the OLDER backup afterwards — never creates a second copy.
+    const existingInvKeys = new Set();
+    for (const inv of DB.getInvoices()) { if (inv && inv.migKey) existingInvKeys.add(inv.migKey); }
+    const existingPayKeys = new Set();
+    for (const p of DB.getPayments()) { if (p && p.migKey) existingPayKeys.add(p.migKey); }
+
+    // ---------------------------------------------------------- lookups ----
+    const catById = {};
+    if (T.categoris) {
+      const iId = idxOf(T.categoris, 'idCategori'), iNom = idxOf(T.categoris, 'NomCat');
+      for (const r of T.categoris.rows) { const id = num(r[iId]); const nom = txt(r[iNom]); if (id && nom) catById[id] = nom; }
+    }
+    const mapUnit = (u) => {
+      const s = txt(u).toUpperCase();
+      if (s === 'KG') return 'kg';
+      if (s === 'L' || s === 'LITRE' || s === 'LT' || s === 'LTR') return 'L';
+      return 'piece';
+    };
+    const barcodeByRef = {};
+    if (T.codbar) {
+      const iRef = idxOf(T.codbar, 'RefArt'), iBar = idxOf(T.codbar, 'idcodBar');
+      for (const r of T.codbar.rows) { const ref = txt(r[iRef]), bar = txt(r[iBar]); if (ref && bar && !barcodeByRef[ref]) barcodeByRef[ref] = bar; }
+    }
+
+    // ===== 1) CUSTOMERS (personnez idType = 1) =====
+    migrationUpdateStatus((t('migration.roleCustomers') || 'العملاء') + '...', 'info');
+    const pers = T.personnez;
+    const iPersId = idxOf(pers, 'idPers'), iName = idxOf(pers, 'raiSocial'), iType = idxOf(pers, 'idType'),
+      iSolde = idxOf(pers, 'solde'), iTel = idxOf(pers, 'tel'), iMobile = idxOf(pers, 'mobile'),
+      iAdr = idxOf(pers, 'adrese'), iMax = idxOf(pers, 'maxCredit');
+    const custByPersId = {};
+    const custByName = new Map();
+    for (const c of DB.getCustomers()) { const k = norm(c.name); if (k && !custByName.has(k)) custByName.set(k, c); }
+    let custChanged = false;
+    for (const r of pers.rows) {
+      if (num(r[iType]) !== 1) continue;
+      const name = txt(r[iName]);
+      if (!name) continue;
+      const pid = txt(r[iPersId]);
+      const key = norm(name);
+      const existing = custByName.get(key);
+      if (existing) { if (pid) custByPersId[pid] = existing.id; continue; }
+      const c = DB.addCustomer({
+        name: name,
+        phone: txt(r[iTel]) || txt(r[iMobile]),
+        address: txt(r[iAdr]),
+        discount: 0,
+        creditLimit: num(r[iMax]),
+      });
+      // Balance is the legacy master figure (personnez.solde), set ONCE here on
+      // creation. Existing customers are never touched, so merging the older
+      // backup or re-running the import keeps the true balance.
+      c.balance = num(r[iSolde]);
+      custByName.set(key, c);
+      if (pid) custByPersId[pid] = c.id;
+      custChanged = true;
+      results.customers++;
+    }
+    if (custChanged) DB.saveCustomers(DB.getCustomers());
+    migrationUpdateStatus((t('migration.roleCustomers') || 'العملاء') + ': ' + results.customers, 'info');
+    await new Promise(r => setTimeout(r, 0));
+
+    // ===== 2) SUPPLIERS (personnez idType = 2) =====
+    migrationUpdateStatus((t('migration.roleSuppliers') || 'الموردون') + '...', 'info');
+    const supByPersId = {};
+    const supByName = new Map();
+    for (const s of DB.getSuppliers()) { const k = norm(s.name); if (k && !supByName.has(k)) supByName.set(k, s); }
+    const newSuppliers = [];
+    for (const r of pers.rows) {
+      if (num(r[iType]) !== 2) continue;
+      const name = txt(r[iName]);
+      if (!name) continue;
+      const pid = txt(r[iPersId]);
+      const key = norm(name);
+      const existing = supByName.get(key);
+      if (existing) { if (pid) supByPersId[pid] = existing.id; continue; }
+      const s = {
+        id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+        name: name,
+        phone: txt(r[iTel]) || txt(r[iMobile]),
+        address: txt(r[iAdr]),
+        balance: num(r[iSolde]),
+        createdAt: Date.now(),
+      };
+      newSuppliers.push(s);
+      supByName.set(key, s);
+      if (pid) supByPersId[pid] = s.id;
+      results.suppliers++;
+    }
+    if (newSuppliers.length) { const all = DB.getSuppliers(); for (const s of newSuppliers) all.push(s); DB.saveSuppliers(all); }
+    migrationUpdateStatus((t('migration.roleSuppliers') || 'الموردون') + ': ' + results.suppliers, 'info');
+    await new Promise(r => setTimeout(r, 0));
+
+    // ===== 3) PRODUCTS (articlesliste) =====
+    migrationUpdateStatus((t('migration.roleProducts') || 'المنتجات') + '...', 'info');
+    const art = T.articlesliste;
+    const iRefA = idxOf(art, 'RefArt'), iNomA = idxOf(art, 'NomArt'), iNomAR = idxOf(art, 'NomArtAR'),
+      iQ = idxOf(art, 'QTE'), iVD = idxOf(art, 'PrixVD'), iVG = idxOf(art, 'PrixVG'),
+      iPA = idxOf(art, 'PrixAchat'), iCat = idxOf(art, 'idCat'), iUnit = idxOf(art, 'idunite'),
+      iAlarm = idxOf(art, 'AlarmQte'), iMinP = idxOf(art, 'PrixVenteMin'), iEmp = idxOf(art, 'EmplacementHV');
+    const productsToAdd = [];
+    const seenBarcode = new Set();
+    for (const r of art.rows) {
+      const ref = txt(r[iRefA]);
+      if (!ref) continue;
+      const bar = barcodeByRef[ref] || ref;
+      const barKey = norm(bar);
+      if (seenBarcode.has(barKey)) continue;
+      seenBarcode.add(barKey);
+      if (DB.getProductByBarcode(bar)) continue; // already imported — keep as is
+      productsToAdd.push({
+        name: txt(r[iNomA]) || txt(r[iNomAR]) || ref,
+        barcode: bar,
+        reference: ref,
+        buyPrice: num(r[iPA]),
+        sellPrice: num(r[iVD]),
+        wholesalePrice: num(r[iVG]),
+        quantity: num(r[iQ]),
+        minStock: num(r[iAlarm]),
+        minPrice: num(r[iMinP]),
+        family: catById[num(r[iCat])] || '',
+        category: '',
+        unit: mapUnit(r[iUnit]),
+        storageLocation: txt(r[iEmp]),
+        supplierId: '',
+        extraPrices: {},
+        notes: 'Sable Stock',
+      });
+    }
+    for (let i = 0; i < productsToAdd.length; i += 200) {
+      const chunk = productsToAdd.slice(i, i + 200);
+      await DB.addProductsBatch(chunk, null, { source: 'import-sable' });
+      results.products += chunk.length;
+      migrationUpdateStatus((t('migration.roleProducts') || 'المنتجات') + ': ' + results.products + '/' + productsToAdd.length, 'info');
+      await new Promise(r => setTimeout(r, 0));
+    }
+    // RefArt → product, so invoice lines link to the real product.
+    const refToProd = {};
+    for (const r of art.rows) {
+      const ref = txt(r[iRefA]);
+      if (!ref || refToProd[ref]) continue;
+      const bar = barcodeByRef[ref] || ref;
+      const p = DB.getProductByBarcode(bar);
+      if (p) refToProd[ref] = p;
+    }
+
+    // ===== 4) SALES INVOICES (bonsliv + journsortie) =====
+    migrationUpdateStatus((t('migration.roleSalesInvoices') || 'فواتير البيع') + '...', 'info');
+    const js = T.journsortie;
+    const jBL = idxOf(js, 'idBL'), jBC = idxOf(js, 'idbonCont'), jDoss = idxOf(js, 'idDoss'),
+      jYear = idxOf(js, 'idyears'), jRef = idxOf(js, 'RefArt'), jQ = idxOf(js, 'Qte'),
+      jP = idxOf(js, 'Prix'), jDesign = idxOf(js, 'design'), jNomAR = idxOf(js, 'nomArtAR');
+    const linesByBL = new Map();
+    const linesByBC = new Map();
+    for (const r of js.rows) {
+      const bl = txt(r[jBL]);
+      if (bl) {
+        const k = txt(r[jDoss]) + '|' + txt(r[jYear]) + '|' + bl;
+        let arr = linesByBL.get(k); if (!arr) { arr = []; linesByBL.set(k, arr); }
+        arr.push(r);
+        continue;
+      }
+      const bc = txt(r[jBC]);
+      if (bc) {
+        const k = txt(r[jDoss]) + '|' + bc;
+        let arr = linesByBC.get(k); if (!arr) { arr = []; linesByBC.set(k, arr); }
+        arr.push(r);
+      }
+    }
+    const buildItems = (rows) => {
+      const items = [];
+      let profit = 0;
+      for (const lr of rows) {
+        const ref = txt(lr[jRef]);
+        const p = ref ? refToProd[ref] : null;
+        const qty = num(lr[jQ]);
+        const price = num(lr[jP]);
+        const total = qty * price;
+        items.push({
+          productId: p ? p.id : '',
+          barcode: p ? p.barcode : (ref || ''),
+          name: (p && p.name) || txt(lr[jNomAR]) || txt(lr[jDesign]) || ref || '',
+          qty: qty,
+          price: price,
+          total: total,
+          unit: p ? p.unit : undefined,
+        });
+        profit += total - qty * (p ? (parseFloat(p.buyPrice) || 0) : 0);
+      }
+      return { items: items, profit: Math.round(profit * 100) / 100 };
+    };
+
+    const bl = T.bonsliv;
+    const bBL = idxOf(bl, 'idBonLiv'), bDoss = idxOf(bl, 'idDoss'), bYear = idxOf(bl, 'idyears'),
+      bDate = idxOf(bl, 'DateBL'), bTotal = idxOf(bl, 'Total'), bClient = idxOf(bl, 'Client'),
+      bRegl = idxOf(bl, 'MontRegl'), bRem = idxOf(bl, 'MRemise'), bMode = idxOf(bl, 'modepai'),
+      bObs = idxOf(bl, 'Observ'), bNomC = idxOf(bl, 'nomCstmer'), bTelC = idxOf(bl, 'telCstmer'),
+      bAdrC = idxOf(bl, 'adreseCstmer');
+    let processed = 0;
+    for (const r of bl.rows) {
+      const blId = txt(r[bBL]);
+      const doss = txt(r[bDoss]), year = txt(r[bYear]);
+      const migKey = 'gssp|BL|' + doss + '|' + year + '|' + blId;
+      if (existingInvKeys.has(migKey)) { results.skipped++; continue; }
+      const dateMs = parseDate(r[bDate]);
+      const realYear = yearOf(r[bDate]) || (parseInt(year, 10) || new Date().getFullYear());
+      const built = buildItems(linesByBL.get(doss + '|' + year + '|' + blId) || []);
+      const items = built.items;
+      const legacyTotal = num(r[bTotal]);
+      const discount = num(r[bRem]);
+      let totalAmount = legacyTotal;
+      if (!items.length) {
+        // Header-only waybill (no detail rows): keep the document with a single
+        // synthetic line so its historical total is preserved verbatim.
+        const label = txt(r[bNomC]) || txt(r[bObs]) || (t('migration.gsspSaleLine') || 'بيع');
+        items.push({ productId: '', barcode: '', name: label, qty: 1, price: legacyTotal, total: legacyTotal });
+        totalAmount = legacyTotal;
+      } else if (!(legacyTotal > 0)) {
+        totalAmount = items.reduce((s, it) => s + it.total, 0);
+      }
+      const customerId = custByPersId[txt(r[bClient])] || '';
+      const invData = {
+        type: 'customer',
+        date: dateMs,
+        createdAt: dateMs,
+        items: items,
+        totalAmount: totalAmount,
+        extraDiscount: discount,
+        profit: built.profit,
+        migKey: migKey,
+        note: (t('migration.gsspInvoiceNote') || 'فاتورة Sable Stock') + ' — ' + blId,
+      };
+      if (customerId) invData.customerId = customerId;
+      else {
+        invData.walkinName = txt(r[bNomC]) || (t('migration.walkin') || 'عميل عابر');
+        invData.walkinPhone = txt(r[bTelC]);
+        invData.walkinAddress = txt(r[bAdrC]);
+      }
+      const inv = DB.addInvoice(invData, { keepCreatedAt: true, numberYear: realYear });
+      existingInvKeys.add(migKey);
+      results.saleInvoices++;
+      const paid = num(r[bRegl]);
+      if (paid > 0) {
+        const payKey = 'gssp|PAYBL|' + doss + '|' + year + '|' + blId;
+        if (!existingPayKeys.has(payKey)) {
+          DB.addPayment({
+            amount: Math.round(paid * 100) / 100,
+            invoiceId: inv.id,
+            customerId: customerId || undefined,
+            date: dateMs,
+            createdAt: dateMs,
+            method: txt(r[bMode]) || 'cash',
+            migKey: payKey,
+            note: (t('migration.gsspPaymentNote') || 'دفعة Sable Stock') + ' — ' + blId,
+          });
+          existingPayKeys.add(payKey);
+          results.payments++;
+        }
+      }
+      processed++;
+      if (processed % 50 === 0) {
+        migrationUpdateStatus((t('migration.roleSalesInvoices') || 'فواتير البيع') + ': ' + results.saleInvoices, 'info');
+        await new Promise(r2 => setTimeout(r2, 0));
+      }
+    }
+
+    // ===== 5) CASH SALES (boncont + journsortie) =====
+    const bcT = T.boncont;
+    if (bcT) {
+      const cBC = idxOf(bcT, 'idbonCont'), cDoss = idxOf(bcT, 'idDoss'), cDate = idxOf(bcT, 'dat'),
+        cTotal = idxOf(bcT, 'Total'), cPay = idxOf(bcT, 'Mpayer'), cRem = idxOf(bcT, 'MRemise'),
+        cNom = idxOf(bcT, 'NomCli'), cTel = idxOf(bcT, 'Tel'), cAdr = idxOf(bcT, 'Adrese'),
+        cDel = idxOf(bcT, 'deleted');
+      for (const r of bcT.rows) {
+        if (cDel >= 0 && num(r[cDel]) === 1) continue; // deleted ticket
+        const total = num(r[cTotal]);
+        if (!(total > 0)) continue; // empty / aborted ticket
+        const bcId = txt(r[cBC]); const doss = txt(r[cDoss]);
+        const migKey = 'gssp|BC|' + doss + '|' + bcId;
+        if (existingInvKeys.has(migKey)) { results.skipped++; continue; }
+        const dateMs = parseDate(r[cDate]);
+        const realYear = yearOf(r[cDate]) || new Date().getFullYear();
+        const built = buildItems(linesByBC.get(doss + '|' + bcId) || []);
+        const items = built.items;
+        if (!items.length) items.push({ productId: '', barcode: '', name: (t('migration.gsspCashLine') || 'بيع نقدي'), qty: 1, price: total, total: total });
+        const invData = {
+          type: 'customer',
+          date: dateMs,
+          createdAt: dateMs,
+          items: items,
+          totalAmount: total,
+          extraDiscount: num(r[cRem]),
+          profit: built.profit,
+          migKey: migKey,
+          note: (t('migration.gsspCashNote') || 'فاتورة نقدية Sable Stock') + ' — ' + bcId,
+        };
+        invData.walkinName = txt(r[cNom]) || (t('migration.walkin') || 'عميل عابر');
+        invData.walkinPhone = txt(r[cTel]);
+        invData.walkinAddress = txt(r[cAdr]);
+        const inv = DB.addInvoice(invData, { keepCreatedAt: true, numberYear: realYear });
+        existingInvKeys.add(migKey);
+        results.cashInvoices++;
+        const paid = num(r[cPay]);
+        if (paid > 0) {
+          const payKey = 'gssp|PAYBC|' + doss + '|' + bcId;
+          if (!existingPayKeys.has(payKey)) {
+            DB.addPayment({
+              amount: Math.round(paid * 100) / 100,
+              invoiceId: inv.id,
+              date: dateMs,
+              createdAt: dateMs,
+              migKey: payKey,
+              note: (t('migration.gsspPaymentNote') || 'دفعة Sable Stock') + ' — ' + bcId,
+            });
+            existingPayKeys.add(payKey);
+            results.payments++;
+          }
+        }
+      }
+    }
+
+    migrationUpdateStatus('', '');
+    migrationUpdateStatus(`✓ ${t('migration.fullImportDone') || 'اكتمل الاستيراد الشامل'}: ` +
+      `${results.products} ${t('migration.roleProducts') || 'منتج'} • ${results.customers} ${t('migration.roleCustomers') || 'عميل'} • ` +
+      `${results.suppliers} ${t('migration.roleSuppliers') || 'مورد'} • ${results.saleInvoices} ${t('migration.roleSalesInvoices') || 'فاتورة بيع'} • ` +
+      `${results.cashInvoices} ${t('migration.gsspCashLabel') || 'فاتورة نقدية'} • ${results.payments} ${t('migration.rolePayments') || 'الدفعات'}` +
+      (results.skipped ? ` • ${results.skipped} ${t('migration.gsspSkipped') || 'موجود مسبقاً'}` : ''), 'success');
+  } finally {
+    if (DB && DB.suppressAutoBackup) DB.suppressAutoBackup(false);
   }
 }
 

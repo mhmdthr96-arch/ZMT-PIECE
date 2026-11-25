@@ -131,12 +131,57 @@ function editExpiryProduct(id) {
   if (!(typeof Auth !== 'undefined') || !Auth.isManager()) { if (typeof t === 'function') alert(t('common.noPermission')); else alert('لا صلاحية'); return; }
   const p = DB.getProduct(id);
   if (!p) return;
-  const newDate = prompt((typeof t === 'function' ? t('expiry.editPrompt') : 'تاريخ انتهاء الصلاحية الجديد (YYYY-MM-DD):'), p.expiryDate || '');
-  if (newDate === null) return;
-  const v = newDate.trim();
-  if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) { alert((typeof t === 'function' ? t('expiry.invalidDate') : 'صيغة التاريخ غير صحيحة')); return; }
-  DB.updateProduct(id, { expiryDate: v });
-  renderExpiry();
+  expiryPromptDate(
+    (typeof t === 'function' ? t('expiry.editPrompt') : 'تاريخ انتهاء الصلاحية الجديد (YYYY-MM-DD):'),
+    p.expiryDate || '',
+    function (newDate) {
+      if (newDate === null) return;
+      const v = String(newDate).trim();
+      if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) { alert((typeof t === 'function' ? t('expiry.invalidDate') : 'صيغة التاريخ غير صحيحة')); return false; }
+      DB.updateProduct(id, { expiryDate: v });
+      renderExpiry();
+    }
+  );
+}
+
+// Electron's renderer does not implement window.prompt(), so the date is
+// collected in an overlay built from the app's existing modal styles.
+// done(value) on confirm — returning false keeps the overlay open so the
+// manager can correct the value — done(null) on cancel.
+function expiryPromptDate(message, initial, done) {
+  const overlay = document.createElement('div');
+  overlay.className = 'eula-modal-overlay';
+  overlay.style.display = 'flex';
+  overlay.innerHTML =
+    '<div class="eula-modal" style="width:420px">' +
+      '<div class="eula-modal-header"><span class="eula-modal-title">' + escHtml(message) + '</span></div>' +
+      '<div class="eula-modal-body">' +
+        '<input type="date" class="form-input" id="expiryPromptInput" dir="ltr" value="' + escHtml(initial || '') + '" style="width:100%">' +
+      '</div>' +
+      '<div class="eula-modal-footer" style="display:flex;gap:10px;justify-content:center">' +
+        '<button class="btn" type="button" id="expiryPromptCancel">' + escHtml((typeof t === 'function' ? t('common.cancel') : 'إلغاء')) + '</button>' +
+        '<button class="btn btn-primary" type="button" id="expiryPromptOk">' + escHtml((typeof t === 'function' ? t('common.confirm') : 'تأكيد')) + '</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+
+  const input = overlay.querySelector('#expiryPromptInput');
+  const close = function () {
+    if (document.body.contains(overlay)) document.body.removeChild(overlay);
+    document.removeEventListener('keydown', onKey, true);
+  };
+  const submit = function () {
+    if (done(input ? input.value : '') === false) return;
+    close();
+  };
+  const cancel = function () { close(); done(null); };
+  const onKey = function (e) { if (e.key === 'Escape') cancel(); };
+  overlay.querySelector('#expiryPromptOk').onclick = submit;
+  overlay.querySelector('#expiryPromptCancel').onclick = cancel;
+  if (input) input.onkeydown = function (e) { if (e.key === 'Enter') submit(); };
+  overlay.onclick = function (e) { if (e.target === overlay) cancel(); };
+  document.addEventListener('keydown', onKey, true);
+  if (input) setTimeout(function () { try { input.focus(); } catch (e) {} }, 60);
 }
 
 function setupExpirySearch() {

@@ -145,8 +145,15 @@ ok(!/localStorage\.setItem\([^)]*drawer/i.test(connJs), 'safe: no drawer setting
 const mainDrawerStart = mainJs.indexOf("CASH DRAWER («درج النقود»)");
 const mainDrawerBlock = mainDrawerStart === -1 ? '' : mainJs.slice(mainDrawerStart, mainDrawerStart + 2600);
 ok(mainDrawerBlock.length > 0, 'safe: the drawer block is present in main.js');
+// The window must still reach the last channel, otherwise the two fences below
+// would be vacuously true while the drawer code grew past them.
+ok(mainDrawerBlock.includes("cashDrawerHandle('cash-drawer-open'"), 'safe: the drawer block window covers every cash-drawer channel');
 hasNot(mainDrawerBlock, 'Stock.', 'safe: the drawer store never touches stock');
-ok(!/cash-drawer[\s\S]{0,400}LAN\./.test(mainJs), 'safe: the drawer store never touches the LAN sync');
+// Scope the LAN fence to the drawer code, not to the whole file: a text search
+// over all of main.js is tripped by any distant comment that happens to list
+// "cash-drawer" next to unrelated code, while still missing a real LAN call
+// written further down this very block.
+hasNot(mainDrawerBlock, 'LAN.', 'safe: the drawer store never touches the LAN sync');
 
 // ===========================================================================
 // 7) i18n — every drawer.* key in all four languages

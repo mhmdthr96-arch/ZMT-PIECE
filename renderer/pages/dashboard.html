@@ -10,6 +10,39 @@
     <!-- Low Stock Alert -->
     <div id="lowStockAlert" style="display:none;margin-bottom:16px;background:#e65100;color:white;border-radius:var(--radius);overflow:hidden"></div>
 
+    <!-- Low Stock Products Modal (عرض المنتجات تحت حد المخزون) -->
+    <div class="modal-overlay low-stock-modal-overlay" id="lowStockModal" style="display:none">
+      <div class="modal" style="max-width:820px">
+        <div class="modal-header">
+          <h3><i class="fas fa-exclamation-triangle"></i> <span data-i18n="dash.lowStockModalTitle">المنتجات تحت حد المخزون</span></h3>
+          <button class="modal-close" onclick="closeLowStockModal()" aria-label="إغلاق">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="low-stock-modal-summary" id="lowStockModalSummary"></div>
+          <div class="low-stock-modal-table-wrap">
+            <table class="table low-stock-modal-table">
+              <thead>
+                <tr>
+                  <th data-i18n="dash.colProduct">المنتج</th>
+                  <th data-i18n="dash.colCode">الباركود / المارك</th>
+                  <th data-i18n="common.qty">الكمية</th>
+                  <th data-i18n="dash.colThreshold">الحد</th>
+                  <th data-i18n="common.actions">إجراءات</th>
+                </tr>
+              </thead>
+              <tbody id="lowStockModalBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" onclick="printLowStockReport()">
+            <i class="fas fa-print"></i> <span data-i18n="dash.printBw">طباعة أبيض وأسود</span>
+          </button>
+          <button class="btn" onclick="closeLowStockModal()"><span data-i18n="common.close">إغلاق</span></button>
+        </div>
+      </div>
+    </div>
+
     <!-- Stats -->
     <div class="stats-grid">
       <div class="stat-card">

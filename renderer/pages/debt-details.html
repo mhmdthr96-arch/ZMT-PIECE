@@ -1,0 +1,413 @@
+<div class="page" id="page-debt-details">
+  <div class="page-header">
+    <div class="page-header-content">
+      <h1>
+        <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-4px">
+          <path d="M12 3v18"/><path d="M7 21h10"/><path d="M5 7h14"/>
+          <path d="M5 7l-3 6a3 3 0 0 0 6 0z"/><path d="M19 7l-3 6a3 3 0 0 0 6 0z"/>
+        </svg>
+        <span data-i18n="debtDetails.title">تفاصيل الديون</span>
+      </h1>
+      <p data-i18n="debtDetails.sub">نظرة شاملة على الذمم: ما لنا وما علينا مع العملاء والموردين</p>
+    </div>
+  </div>
+
+  <div class="page-body">
+    <!-- ===== Four totals ===== -->
+    <div class="dd-cards">
+      <div class="dd-card dd-card-green">
+        <div class="dd-card-ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+        </div>
+        <div class="dd-card-body">
+          <span class="dd-card-label" data-i18n="debtDetails.onCustomers">مجموع الديون التي على العملاء</span>
+          <span class="dd-card-value" id="ddOnCustomers">DA0</span>
+          <span class="dd-card-hint" data-i18n="debtDetails.onCustomersHint">مبالغ يدين بها العملاء لنا</span>
+        </div>
+      </div>
+
+      <div class="dd-card dd-card-orange">
+        <div class="dd-card-ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M1 4h12.5v11.5H1z"/><path d="M13.5 8H18l3 3v4.5h-7.5z"/>
+            <circle cx="5.5" cy="18.5" r="2"/><circle cx="17.5" cy="18.5" r="2"/>
+          </svg>
+        </div>
+        <div class="dd-card-body">
+          <span class="dd-card-label" data-i18n="debtDetails.toSuppliers">مجموع الديون التي علينا للموردين</span>
+          <span class="dd-card-value" id="ddToSuppliers">DA0</span>
+          <span class="dd-card-hint" data-i18n="debtDetails.toSuppliersHint">مبالغ ندين بها للموردين</span>
+        </div>
+      </div>
+
+      <div class="dd-card dd-card-blue">
+        <div class="dd-card-ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 21h18"/><path d="M12 3v13"/><path d="M8 8l4-5 4 5"/><path d="M6 21v-4"/><path d="M18 21v-4"/>
+          </svg>
+        </div>
+        <div class="dd-card-body">
+          <span class="dd-card-label" data-i18n="debtDetails.toCustomers">مجموع الديون التي علينا إلى العملاء</span>
+          <span class="dd-card-value" id="ddToCustomers">DA0</span>
+          <span class="dd-card-hint" data-i18n="debtDetails.toCustomersHint">أرصدة دائنة للعملاء (دفعوا أكثر مما اشتروا)</span>
+        </div>
+      </div>
+
+      <div class="dd-card dd-card-purple">
+        <div class="dd-card-ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 21h18"/><path d="M12 16V3"/><path d="M8 11l4 5 4-5"/><path d="M6 21v-4"/><path d="M18 21v-4"/>
+          </svg>
+        </div>
+        <div class="dd-card-body">
+          <span class="dd-card-label" data-i18n="debtDetails.fromSuppliers">مجموع الديون التي لنا على الموردين</span>
+          <span class="dd-card-value" id="ddFromSuppliers">DA0</span>
+          <span class="dd-card-hint" data-i18n="debtDetails.fromSuppliersHint">مبالغ يدين بها الموردون لنا</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Export / view toolbar ===== -->
+    <div class="dd-toolbar">
+      <div class="dd-dropdown">
+        <button type="button" class="dd-export-btn dd-eb-cust" onclick="ddToggleMenu('ddCustMenu', event)">
+          <span class="dd-eb-ic">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </span>
+          <span data-i18n="debtDetails.exportCustomers">تصدير قائمة العملاء</span>
+          <i class="fas fa-chevron-down dd-eb-caret"></i>
+        </button>
+        <div class="dd-menu" id="ddCustMenu">
+          <div class="dd-menu-group">
+            <div class="dd-menu-label"><span class="dd-dot dd-dot-all"></span><span data-i18n="debtDetails.groupAll">كل الأطراف</span></div>
+            <div class="dd-menu-actions">
+              <button type="button" class="dd-menu-btn dd-act-excel" onclick="ddExport('customer','all')"><i class="fas fa-file-excel"></i><span data-i18n="debtDetails.exportExcel">تصدير Excel</span></button>
+              <button type="button" class="dd-menu-btn dd-act-view" onclick="ddView('customer','all')"><i class="fas fa-eye"></i><span data-i18n="debtDetails.view">عرض</span></button>
+            </div>
+          </div>
+          <div class="dd-menu-group">
+            <div class="dd-menu-label"><span class="dd-dot dd-dot-owing"></span><span data-i18n="debtDetails.groupOwing">الذين عليهم دين (يدينون لنا)</span></div>
+            <div class="dd-menu-actions">
+              <button type="button" class="dd-menu-btn dd-act-excel" onclick="ddExport('customer','owing')"><i class="fas fa-file-excel"></i><span data-i18n="debtDetails.exportExcel">تصدير Excel</span></button>
+              <button type="button" class="dd-menu-btn dd-act-view" onclick="ddView('customer','owing')"><i class="fas fa-eye"></i><span data-i18n="debtDetails.view">عرض</span></button>
+            </div>
+          </div>
+          <div class="dd-menu-group">
+            <div class="dd-menu-label"><span class="dd-dot dd-dot-owed"></span><span data-i18n="debtDetails.groupOwed">الذين ندين لهم</span></div>
+            <div class="dd-menu-actions">
+              <button type="button" class="dd-menu-btn dd-act-excel" onclick="ddExport('customer','owed')"><i class="fas fa-file-excel"></i><span data-i18n="debtDetails.exportExcel">تصدير Excel</span></button>
+              <button type="button" class="dd-menu-btn dd-act-view" onclick="ddView('customer','owed')"><i class="fas fa-eye"></i><span data-i18n="debtDetails.view">عرض</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dd-dropdown">
+        <button type="button" class="dd-export-btn dd-eb-sup" onclick="ddToggleMenu('ddSupMenu', event)">
+          <span class="dd-eb-ic">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M1 4h12.5v11.5H1z"/><path d="M13.5 8H18l3 3v4.5h-7.5z"/>
+              <circle cx="5.5" cy="18.5" r="2"/><circle cx="17.5" cy="18.5" r="2"/>
+            </svg>
+          </span>
+          <span data-i18n="debtDetails.exportSuppliers">تصدير قائمة الموردين</span>
+          <i class="fas fa-chevron-down dd-eb-caret"></i>
+        </button>
+        <div class="dd-menu" id="ddSupMenu">
+          <div class="dd-menu-group">
+            <div class="dd-menu-label"><span class="dd-dot dd-dot-all"></span><span data-i18n="debtDetails.groupAll">كل الأطراف</span></div>
+            <div class="dd-menu-actions">
+              <button type="button" class="dd-menu-btn dd-act-excel" onclick="ddExport('supplier','all')"><i class="fas fa-file-excel"></i><span data-i18n="debtDetails.exportExcel">تصدير Excel</span></button>
+              <button type="button" class="dd-menu-btn dd-act-view" onclick="ddView('supplier','all')"><i class="fas fa-eye"></i><span data-i18n="debtDetails.view">عرض</span></button>
+            </div>
+          </div>
+          <div class="dd-menu-group">
+            <div class="dd-menu-label"><span class="dd-dot dd-dot-owing"></span><span data-i18n="debtDetails.groupOwing">الذين عليهم دين (يدينون لنا)</span></div>
+            <div class="dd-menu-actions">
+              <button type="button" class="dd-menu-btn dd-act-excel" onclick="ddExport('supplier','owing')"><i class="fas fa-file-excel"></i><span data-i18n="debtDetails.exportExcel">تصدير Excel</span></button>
+              <button type="button" class="dd-menu-btn dd-act-view" onclick="ddView('supplier','owing')"><i class="fas fa-eye"></i><span data-i18n="debtDetails.view">عرض</span></button>
+            </div>
+          </div>
+          <div class="dd-menu-group">
+            <div class="dd-menu-label"><span class="dd-dot dd-dot-owed"></span><span data-i18n="debtDetails.groupOwed">الذين ندين لهم</span></div>
+            <div class="dd-menu-actions">
+              <button type="button" class="dd-menu-btn dd-act-excel" onclick="ddExport('supplier','owed')"><i class="fas fa-file-excel"></i><span data-i18n="debtDetails.exportExcel">تصدير Excel</span></button>
+              <button type="button" class="dd-menu-btn dd-act-view" onclick="ddView('supplier','owed')"><i class="fas fa-eye"></i><span data-i18n="debtDetails.view">عرض</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Debt alerts (manager) ===== -->
+      <button type="button" class="dd-export-btn dd-eb-alert" id="ddAlertsBtn" onclick="ddOpenAlerts()">
+        <span class="dd-eb-ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.7 21a2 2 0 0 1-3.4 0"/>
+          </svg>
+        </span>
+        <span data-i18n="debtDetails.alertsBtn">تنبيهات الديون</span>
+        <span class="dd-alert-chip" id="ddAlertsChip" style="display:none">0</span>
+      </button>
+    </div>
+
+    <!-- ===== Always-visible print colour switch ===== -->
+    <div class="dd-print-modes pmp-print-modes" role="group" aria-label="Print mode">
+      <span class="pmp-print-modes-label"><i class="fas fa-print"></i> <span data-i18n="invoices.printModeLabel">نوع الطباعة</span></span>
+      <button type="button" class="pm-print-mode active" data-mode="color" onclick="ddPrintColor()">
+        <i class="fas fa-palette"></i> <span data-i18n="invoices.printColor">طباعة ملوّنة</span>
+      </button>
+      <button type="button" class="pm-print-mode" data-mode="bw" onclick="ddPrintBw()">
+        <i class="fas fa-adjust"></i> <span data-i18n="invoices.printBw">طباعة أبيض وأسود</span>
+      </button>
+    </div>
+
+    <!-- ===== Search (customers + suppliers by name / phone) ===== -->
+    <div class="dd-search-bar">
+      <div class="dd-search-box">
+        <i class="fas fa-magnifying-glass dd-search-ic" aria-hidden="true"></i>
+        <input type="text" id="ddSearchInput" class="dd-search-field" autocomplete="off" spellcheck="false"
+               data-i18n-placeholder="debtDetails.searchPh"
+               placeholder="ابحث باسم العميل أو المورّد أو رقم الهاتف..."
+               oninput="ddSearchInput(this.value)" onkeydown="ddSearchKey(event)">
+        <button type="button" class="dd-search-clear" id="ddSearchClear" onclick="ddClearSearch()"
+                data-i18n-title="debtDetails.clear" title="مسح" style="display:none">
+          <i class="fas fa-times" aria-hidden="true"></i>
+        </button>
+      </div>
+      <span class="dd-search-hint" data-i18n="debtDetails.searchHint">اكتب حرفين على الأقل للبحث في العملاء والموردين معاً</span>
+    </div>
+
+    <!-- ===== Results ===== -->
+    <div class="dd-results-panel">
+      <div class="dd-results-title"><i class="fas fa-table-list"></i> <span data-i18n="debtDetails.resultsTitle">النتائج</span></div>
+      <div class="dd-results" id="ddResults">
+        <div class="placeholder-box"><i class="fas fa-hand-pointer"></i><p>اختر خيار عرض من الأزرار أعلاه لعرض القائمة</p></div>
+      </div>
+    </div>
+
+    <!-- ===== Critical debts (قائمة الديون الحرجة) ===== -->
+    <div class="dd-critical-panel" id="ddCriticalPanel" style="display:none">
+      <div class="dd-results-title">
+        <i class="fas fa-triangle-exclamation"></i>
+        <span data-i18n="debtDetails.criticalTitle">قائمة الديون الحرجة</span>
+        <span class="dd-crit-count" id="ddCritCount"></span>
+      </div>
+      <div class="dd-results">
+        <div class="dd-crit-toolbar">
+          <div class="dd-search-box">
+            <i class="fas fa-magnifying-glass dd-search-ic" aria-hidden="true"></i>
+            <input type="text" id="ddCritSearch" class="dd-search-field" autocomplete="off" spellcheck="false"
+                   data-i18n-placeholder="debtDetails.critSearchPh"
+                   placeholder="ابحث بالاسم في الديون الحرجة..."
+                   oninput="ddCritSearchInput(this.value)" onkeydown="ddCritKey(event)">
+            <button type="button" class="dd-search-clear" id="ddCritClear" onclick="ddCritClear()"
+                    data-i18n-title="debtDetails.clear" title="مسح" style="display:none">
+              <i class="fas fa-times" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div class="dd-crit-actions">
+            <button type="button" class="dd-menu-btn dd-act-excel" onclick="ddCritExport()"><i class="fas fa-file-excel"></i> <span data-i18n="debtDetails.exportExcel">تصدير Excel</span></button>
+            <button type="button" class="dd-menu-btn dd-act-view" onclick="ddCritPrint()"><i class="fas fa-print"></i> <span data-i18n="debtDetails.print">طباعة</span></button>
+          </div>
+        </div>
+        <div id="ddCriticalBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Debt-alerts settings modal (manager only) ===== -->
+  <div class="modal-overlay dd-alert-modal" id="ddAlertsModal" style="display:none" onclick="if(event.target===this)ddCloseAlerts()">
+    <div class="modal dd-alert-dialog">
+      <div class="modal-header">
+        <h3><i class="fas fa-bell"></i> <span data-i18n="debtDetails.alertsTitle">تنبيهات الديون</span></h3>
+        <button class="modal-close" onclick="ddCloseAlerts()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="dd-alert-sub" data-i18n="debtDetails.alertsSub">حدّد النطاق والمدة، وسيُدرج كل من عليه دين لنا تجاوز هذه المدة في قائمة الديون الحرجة.</p>
+
+        <div class="dd-field">
+          <label class="dd-field-label" data-i18n="debtDetails.scopeLabel">النطاق</label>
+          <div class="dd-seg" id="ddAlertScope">
+            <button type="button" data-scope="customers" onclick="ddSetAlertScope('customers')" data-i18n="debtDetails.scopeCustomers">عملاء</button>
+            <button type="button" data-scope="suppliers" onclick="ddSetAlertScope('suppliers')" data-i18n="debtDetails.scopeSuppliers">موردون</button>
+            <button type="button" data-scope="both" onclick="ddSetAlertScope('both')" data-i18n="debtDetails.scopeBoth">الاثنان معاً</button>
+          </div>
+        </div>
+
+        <div class="dd-field">
+          <label class="dd-field-label" data-i18n="debtDetails.stateLabel">الحالة</label>
+          <div class="dd-seg" id="ddAlertEnable">
+            <button type="button" data-en="1" onclick="ddSetAlertEnabled(true)" data-i18n="debtDetails.enable">تفعيل</button>
+            <button type="button" data-en="0" onclick="ddSetAlertEnabled(false)" data-i18n="debtDetails.disable">عدم التفعيل</button>
+          </div>
+        </div>
+
+        <div class="dd-field" id="ddAlertDurationField">
+          <label class="dd-field-label" data-i18n="debtDetails.durationLabel">المدة</label>
+          <div class="dd-seg dd-seg-4" id="ddAlertDuration">
+            <button type="button" data-days="7" onclick="ddSetAlertDuration(7)" data-i18n="debtDetails.durWeek">أسبوع</button>
+            <button type="button" data-days="14" onclick="ddSetAlertDuration(14)" data-i18n="debtDetails.durTwoWeeks">أسبوعان</button>
+            <button type="button" data-days="30" onclick="ddSetAlertDuration(30)" data-i18n="debtDetails.durMonth">شهر</button>
+            <button type="button" data-days="60" onclick="ddSetAlertDuration(60)" data-i18n="debtDetails.durTwoMonths">شهران</button>
+          </div>
+        </div>
+      </div>
+      <div class="dd-alert-foot">
+        <button type="button" class="btn" onclick="ddCloseAlerts()" data-i18n="debtDetails.alertsCancel">إلغاء</button>
+        <button type="button" class="btn btn-primary" onclick="ddSaveAlerts()"><i class="fas fa-save"></i> <span data-i18n="debtDetails.alertsSave">حفظ</span></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+/* ===== Debt Details page ===== */
+.dd-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}
+.dd-card{position:relative;display:flex;align-items:center;gap:12px;background:#fff;border-radius:14px;padding:16px;overflow:hidden;box-shadow:0 2px 10px rgba(15,23,42,.07);border:1px solid var(--silver-200,#e5e7eb)}
+.dd-card::before{content:"";position:absolute;inset-inline-start:0;top:0;bottom:0;width:5px}
+.dd-card-green::before{background:linear-gradient(180deg,#22c55e,#16a34a)}
+.dd-card-orange::before{background:linear-gradient(180deg,#fb923c,#ea580c)}
+.dd-card-blue::before{background:linear-gradient(180deg,#60a5fa,#2563eb)}
+.dd-card-purple::before{background:linear-gradient(180deg,#a78bfa,#7c3aed)}
+.dd-card-ic{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.dd-card-ic svg{width:24px;height:24px}
+.dd-card-green .dd-card-ic{background:rgba(34,197,94,.12);color:#16a34a}
+.dd-card-orange .dd-card-ic{background:rgba(234,88,12,.12);color:#ea580c}
+.dd-card-blue .dd-card-ic{background:rgba(37,99,235,.12);color:#2563eb}
+.dd-card-purple .dd-card-ic{background:rgba(124,58,237,.12);color:#7c3aed}
+.dd-card-body{display:flex;flex-direction:column;min-width:0;flex:1}
+.dd-card-label{font-size:11.5px;font-weight:700;color:var(--silver-600,#4b5563);line-height:1.35;margin-bottom:3px}
+.dd-card-value{font-size:20px;font-weight:900;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dd-card-green .dd-card-value{color:#16a34a}
+.dd-card-orange .dd-card-value{color:#ea580c}
+.dd-card-blue .dd-card-value{color:#2563eb}
+.dd-card-purple .dd-card-value{color:#7c3aed}
+.dd-card-hint{font-size:10px;color:var(--silver-400,#9ca3af);margin-top:3px;line-height:1.3}
+
+.dd-toolbar{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.dd-dropdown{position:relative}
+.dd-export-btn{display:inline-flex;align-items:center;gap:9px;height:44px;padding:0 16px;border:none;border-radius:11px;cursor:pointer;color:#fff;font-size:13.5px;font-weight:800;white-space:nowrap;box-shadow:0 3px 10px rgba(15,23,42,.18);transition:transform .12s ease,filter .15s ease,box-shadow .15s ease}
+.dd-export-btn:hover{transform:translateY(-1px);filter:brightness(1.06);box-shadow:0 6px 16px rgba(15,23,42,.26)}
+.dd-export-btn:active{transform:translateY(0)}
+.dd-eb-cust{background:linear-gradient(135deg,#0d9488,#0f766e)}
+.dd-eb-sup{background:linear-gradient(135deg,#ea580c,#c2410c)}
+.dd-eb-ic svg{display:block;width:18px;height:18px}
+.dd-eb-caret{font-size:10px;opacity:.85;transition:transform .15s ease}
+.dd-dropdown.open .dd-eb-caret{transform:rotate(180deg)}
+.dd-menu{position:absolute;top:calc(100% + 8px);inset-inline-start:0;z-index:60;width:330px;background:#fff;border:1px solid var(--silver-200,#e5e7eb);border-radius:14px;box-shadow:0 14px 40px rgba(15,23,42,.18);padding:8px;display:none}
+.dd-menu.open{display:block}
+.dd-menu-group{padding:6px 6px 8px}
+.dd-menu-group + .dd-menu-group{border-top:1px dashed var(--silver-200,#e5e7eb)}
+.dd-menu-label{display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:800;color:var(--silver-700,#374151);margin-bottom:7px}
+.dd-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dd-dot-all{background:#64748b}
+.dd-dot-owing{background:#16a34a}
+.dd-dot-owed{background:#ea580c}
+.dd-menu-actions{display:flex;gap:8px}
+.dd-menu-btn{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 10px;border:1px solid var(--silver-200,#e5e7eb);border-radius:9px;background:var(--silver-50,#f8fafc);cursor:pointer;font-size:12px;font-weight:700;color:var(--silver-700,#374151);transition:all .12s ease}
+.dd-menu-btn:hover{transform:translateY(-1px)}
+.dd-act-excel:hover{background:#16a34a;border-color:#16a34a;color:#fff}
+.dd-act-view:hover{background:var(--bmw-blue-1,#2563eb);border-color:var(--bmw-blue-1,#2563eb);color:#fff}
+
+.dd-search-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.dd-search-box{position:relative;display:flex;align-items:center;flex:1;min-width:260px;max-width:520px}
+.dd-search-ic{position:absolute;inset-inline-start:14px;font-size:14px;color:var(--silver-400,#9ca3af);pointer-events:none}
+.dd-search-field{width:100%;height:44px;padding:0 40px;border:1.5px solid var(--silver-200,#e5e7eb);border-radius:11px;background:#fff;font-size:13.5px;font-family:inherit;color:var(--silver-800,#1f2937);outline:none;transition:border-color .15s ease,box-shadow .15s ease}
+.dd-search-field:focus{border-color:var(--bmw-blue-1,#2563eb);box-shadow:0 0 0 3px rgba(37,99,235,.14)}
+.dd-search-field::placeholder{color:var(--silver-400,#9ca3af)}
+.dd-search-clear{position:absolute;inset-inline-end:8px;width:28px;height:28px;border:none;border-radius:8px;background:var(--silver-100,#f1f5f9);color:var(--silver-500,#64748b);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;transition:all .12s ease}
+.dd-search-clear:hover{background:#ef4444;color:#fff}
+.dd-search-hint{font-size:11.5px;color:var(--silver-400,#9ca3af)}
+.dd-type{display:inline-block;padding:2px 10px;border-radius:10px;font-size:10.5px;font-weight:800;white-space:nowrap}
+.dd-type-cust{background:rgba(13,148,136,.12);color:#0f766e}
+.dd-type-sup{background:rgba(234,88,12,.12);color:#c2410c}
+.dd-c-type{width:74px}
+
+.dd-results-panel{background:#fff;border:1px solid var(--silver-200,#e5e7eb);border-radius:14px;box-shadow:0 2px 10px rgba(15,23,42,.06);overflow:hidden}
+.dd-results-title{display:flex;align-items:center;gap:8px;padding:13px 16px;font-size:13px;font-weight:800;color:var(--silver-700,#374151);background:var(--silver-50,#f8fafc);border-bottom:1px solid var(--silver-200,#e5e7eb)}
+.dd-results{padding:14px 16px}
+.dd-res-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.dd-res-title{font-size:14px;font-weight:800;color:var(--bmw-blue-1,#2563eb)}
+.dd-res-meta{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--silver-600,#4b5563)}
+.dd-res-count strong,.dd-res-total strong{font-weight:900}
+.dd-table-wrap{overflow:auto;border:1px solid var(--silver-200,#e5e7eb);border-radius:10px}
+.dd-table{width:100%;border-collapse:collapse;font-size:12.5px}
+.dd-table th{background:#2F5496;color:#fff;padding:10px 8px;font-weight:700;text-align:center;white-space:nowrap}
+.dd-table td{padding:9px 8px;border-bottom:1px solid var(--silver-100,#f1f5f9);text-align:center}
+.dd-table tbody tr:nth-child(even){background:var(--silver-50,#f8fafc)}
+.dd-table tbody tr:hover{background:rgba(var(--accent-rgb,37,99,235),.06)}
+.dd-c-name,.dd-c-addr{text-align:start;font-weight:600;color:var(--silver-800,#1f2937)}
+.dd-c-addr{font-weight:400;color:var(--silver-600,#4b5563)}
+.dd-c-idx{width:46px;color:var(--silver-400,#9ca3af)}
+.dd-c-bal{font-weight:800;white-space:nowrap}
+.dd-bal-pos{color:#16a34a}
+.dd-bal-neg{color:#ea580c}
+.dd-bal-zero{color:var(--silver-400,#9ca3af)}
+.dd-chip{display:inline-block;padding:2px 10px;border-radius:10px;font-size:10.5px;font-weight:800}
+.dd-st-owing{background:rgba(22,163,74,.12);color:#16a34a}
+.dd-st-owe{background:rgba(234,88,12,.12);color:#ea580c}
+.dd-st-zero{background:var(--silver-100,#f1f5f9);color:var(--silver-500,#64748b)}
+.dd-table tfoot td{padding:10px 8px;font-weight:900;background:#eaf1fb;border-top:2px solid #c9d6e8}
+.dd-foot-label{text-align:end;color:#1F3864}
+
+/* ===== Debt alerts ===== */
+.dd-eb-alert{background:linear-gradient(135deg,#ef4444,#b91c1c)}
+.dd-alert-chip{min-width:22px;height:22px;padding:0 7px;border-radius:11px;background:#fff;color:#b91c1c;font-size:11.5px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;margin-inline-start:2px}
+.dd-alert-chip.is-zero{background:rgba(255,255,255,.35);color:#fff}
+.dd-critical-panel{background:#fff;border:1px solid #fecaca;border-radius:14px;box-shadow:0 2px 10px rgba(220,38,38,.08);overflow:hidden;margin-top:18px}
+.dd-critical-panel .dd-results-title{background:#fef2f2;color:#b91c1c;border-bottom-color:#fecaca}
+.dd-crit-count{font-weight:800;color:#dc2626;margin-inline-start:4px}
+.dd-crit-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.dd-crit-toolbar .dd-search-box{max-width:420px}
+.dd-crit-actions{display:flex;gap:8px;margin-inline-start:auto}
+.dd-crit-actions .dd-menu-btn{padding:9px 14px}
+.dd-c-age{width:110px}
+.dd-age-chip{display:inline-block;padding:2px 10px;border-radius:10px;font-size:10.5px;font-weight:800;white-space:nowrap}
+.dd-age-amber{background:rgba(245,158,11,.15);color:#b45309}
+.dd-age-orange{background:rgba(234,88,12,.15);color:#c2410c}
+.dd-age-red{background:rgba(220,38,38,.15);color:#b91c1c}
+
+/* ===== Alerts modal ===== */
+.dd-alert-dialog{max-width:560px;width:100%}
+.dd-alert-sub{font-size:12.5px;color:var(--silver-500,#64748b);line-height:1.6;margin:0 0 16px}
+.dd-field{margin-bottom:16px}
+.dd-field-label{display:block;font-size:12.5px;font-weight:800;color:var(--silver-700,#374151);margin-bottom:8px}
+.dd-seg{display:flex;gap:8px;flex-wrap:wrap}
+.dd-seg button{flex:1;min-width:88px;padding:10px 12px;border:1.5px solid var(--silver-200,#e5e7eb);border-radius:10px;background:var(--silver-50,#f8fafc);cursor:pointer;font-size:12.5px;font-weight:700;color:var(--silver-700,#374151);font-family:inherit;transition:all .12s ease}
+.dd-seg button:hover{border-color:#cbd5e1;transform:translateY(-1px)}
+.dd-seg button.active{background:var(--bmw-blue-1,#2563eb);border-color:var(--bmw-blue-1,#2563eb);color:#fff;box-shadow:0 3px 10px rgba(37,99,235,.28)}
+.dd-alert-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 18px;border-top:1px solid var(--silver-200,#e5e7eb)}
+
+/* The start-up reminder lives in css/debt-alerts.css (loaded globally) because
+   it is shown before this page has ever been injected. */
+
+@media (max-width:1180px){.dd-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:640px){.dd-cards{grid-template-columns:1fr}.dd-menu{width:min(330px,86vw)}}
+html[data-theme="dark"] .dd-card,html[data-theme="dark"] .dd-results-panel{background:#1e2530;border-color:#2b3542}
+html[data-theme="dark"] .dd-results-title{background:#232c39;border-color:#2b3542;color:#cbd5e1}
+html[data-theme="dark"] .dd-menu{background:#1e2530;border-color:#2b3542}
+html[data-theme="dark"] .dd-menu-btn{background:#232c39;border-color:#2b3542;color:#cbd5e1}
+html[data-theme="dark"] .dd-table td{border-color:#2b3542;color:#cbd5e1}
+html[data-theme="dark"] .dd-table tbody tr:nth-child(even){background:#232c39}
+html[data-theme="dark"] .dd-table tfoot td{background:#26313f;border-top-color:#3b4a5c;color:#dbe4f0}
+html[data-theme="dark"] .dd-foot-label{color:#dbe4f0}
+html[data-theme="dark"] .dd-search-field{background:#1e2530;border-color:#2b3542;color:#e2e8f0}
+html[data-theme="dark"] .dd-search-clear{background:#2b3542;color:#94a3b8}
+html[data-theme="dark"] .dd-type-cust{background:rgba(13,148,136,.22);color:#5eead4}
+html[data-theme="dark"] .dd-type-sup{background:rgba(234,88,12,.22);color:#fdba74}
+html[data-theme="dark"] .dd-card-label,html[data-theme="dark"] .dd-c-name{color:#e2e8f0}
+html[data-theme="dark"] .dd-critical-panel{background:#1e2530;border-color:#5b2226}
+html[data-theme="dark"] .dd-critical-panel .dd-results-title{background:#2a1f22;color:#fca5a5;border-color:#5b2226}
+html[data-theme="dark"] .dd-crit-count{color:#fca5a5}
+html[data-theme="dark"] .dd-alert-dialog{background:#1e2530}
+html[data-theme="dark"] .dd-field-label{color:#cbd5e1}
+html[data-theme="dark"] .dd-seg button{background:#232c39;border-color:#2b3542;color:#cbd5e1}
+html[data-theme="dark"] .dd-alert-foot{border-color:#2b3542}
+</style>

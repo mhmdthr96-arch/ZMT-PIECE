@@ -61,7 +61,7 @@
             <label data-i18n="login.usernameLabel">اسم المستخدم</label>
             <div style="display:flex;gap:0;align-items:center;">
               <input type="text" id="loginUserUsername" placeholder="اسم المستخدم أو اختر من القائمة" data-i18n-placeholder="login.usernamePlaceholder" style="flex:1;border-radius:0 0 0 var(--radius);">
-              <button type="button" class="btn btn-sm" id="loginEmployeeToggle" onclick="loginToggleEmployeeList()" title="اختر موظف" aria-label="اختر موظف" style="border-radius:0 var(--radius) var(--radius) 0;border-left:1px solid var(--silver-300);">
+              <button type="button" class="btn btn-sm" id="loginEmployeeToggle" onclick="loginToggleEmployeeList()" title="اختر موظف" aria-label="اختر موظف" style="border-radius:0 var(--radius) var(--radius) 0;border-left:1px solid var(--silver-300);" data-i18n-title="auth.selectEmployee" data-i18n-aria-label="auth.selectEmployee">
                 <i class="fas fa-caret-down"></i>
               </button>
             </div>
@@ -96,7 +96,7 @@
             <i class="fas fa-magic"></i> <span data-i18n="login.createAccount">إنشاء حساب</span>
           </button>
           <div style="text-align:center;margin-top:10px;">
-            <span style="color:#999;font-size:12px;">أدخل كلمة المرور حتى تتمكن من تفعيل البرنامج بمفتاح المزوّد فور منحه</span>
+            <span style="color:#999;font-size:12px;" data-i18n="auth.needPasswordFirst">أدخل كلمة المرور حتى تتمكن من تفعيل البرنامج بمفتاح المزوّد فور منحه</span>
           </div>
         </div>
 

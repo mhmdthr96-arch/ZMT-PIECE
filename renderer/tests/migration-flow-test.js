@@ -64,7 +64,7 @@ const ALL_FIELD_IDS = ALL_FIELDS.map(f => f.id);
 
 // Keywords from keyword-matcher.js
 const FIELD_KEYWORDS = {
-  barcode: ['barcode', 'bar_code', 'bar-code', 'code', 'reference', 'ref', 'coded', 'cod', 'code_barre', 'code-barre', 'رقم', 'باركود', 'كود', 'مرجع', 'reference_produit', 'art_code', 'artcode'],
+  barcode: ['barcode', 'bar_code', 'bar-code', 'code', 'coded', 'cod', 'code_barre', 'code-barre', 'رقم', 'باركود', 'كود', 'art_code', 'artcode'],
   name: ['name', 'nom', 'description', 'desc', 'designation', 'libelle', 'libellé', 'article', 'piece', 'part', 'nom_produit', 'nomproduit', 'product_name', 'اسم', 'اسم_المنتج', 'قطعة', 'سمية'],
   buyPrice: ['buy_price', 'buyprice', 'prix_achat', 'prix_achat_ht', 'purchase_price', 'cost', 'cost_price', 'cout', 'coût', 'prix_de_revient', 'premier_prix', 'harga_beli', 'سعر_الشراء', 'ثمن_الشراء', 'cost_price', 'buy'],
   sellPrice: ['sell_price', 'sellprice', 'prix', 'prix_vente', 'prix_vente_ht', 'price', 'sale_price', 'tarif', 'tarif_prix', 'tarifht', '售价', 'سعر', 'ثمن', 'prix_vente_ttc', 'prix_vente2', 'pvp', 'sell'],
@@ -84,7 +84,8 @@ const FIELD_KEYWORDS = {
 // Header matching from SmartDetector.matchHeader
 function matchHeader(header) {
   if (!header || header === '') return [];
-  const h = String(header).toLowerCase().trim().replace(/[_\-\s]+/g, '');
+  const stripAccents = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const h = stripAccents(String(header).toLowerCase().trim().replace(/[_\-\s]+/g, ''));
   const map = {
     barcode: ['barcode', 'barcode', 'bar_code', 'code', 'cod', 'باركود', 'كود', 'باركود'],
     name: ['name', 'nom', 'description', 'designation', 'libelle', 'article', 'product', 'اسم', 'منتج', 'قطعة'],
@@ -101,17 +102,21 @@ function matchHeader(header) {
     invoiceRef: ['ref', 'reference', 'invoice_no', 'رقم_الفاتورة'],
     notes: ['notes', 'note', 'comment', 'remark', 'ملاحظات'],
   };
-  const results = [];
+  // Prefer the single best (longest) keyword match so a generic word such as
+  // "سعر" does not beat the more specific "سعر_الشراء", and a tie keeps the
+  // field that appears first in the map (barcode before name, buyPrice before sellPrice).
+  let bestField = null;
+  let bestLen = 0;
   for (const [field, keywords] of Object.entries(map)) {
     for (const kw of keywords) {
-      const k = kw.toLowerCase().replace(/[_\-\s]+/g, '');
+      const k = stripAccents(kw.toLowerCase().replace(/[_\-\s]+/g, ''));
       if (h === k || h.includes(k) || k.includes(h)) {
-        results.push({ field, boost: 25 });
-        break;
+        if (k.length > bestLen) { bestLen = k.length; bestField = field; }
       }
     }
   }
-  return results;
+  if (!bestField) return [];
+  return [{ field: bestField, boost: 90 }];
 }
 
 // Keyword matching (from SmartDetector.matchColumns + KeywordMatcher.matchColumns)
@@ -123,7 +128,8 @@ function keywordMatchColumns(headers) {
     let bestScore = 0;
     for (let i = 0; i < headers.length; i++) {
       if (used.has(i)) continue;
-      const h = headers[i].toLowerCase().trim().replace(/[\s-]+/g, '_');
+      const stripAccents = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const h = stripAccents(headers[i].toLowerCase().trim().replace(/[\s-]+/g, '_'));
       for (const kw of keywords) {
         if (h === kw || h.includes(kw) || kw.includes(h)) {
           const score = kw.length;
@@ -145,7 +151,9 @@ function analyzeColumn(values, header) {
   const candidates = [];
   const numVals = valid.map(v => parseFloat(v.replace(/[^0-9.\-]/g, '')));
   const numericCount = numVals.filter(v => !isNaN(v)).length;
-  const isNumeric = numericCount === valid.length;
+  // A value must be purely numeric to count as numeric — alphanumeric codes such as
+  // "BRK001" must not be parsed as 1 and misclassified as quantities/prices.
+  const isNumeric = numericCount === valid.length && valid.every(v => /^[0-9.\-]+$/.test(v));
 
   if (isNumeric) {
     analyzeNumeric(valid, numVals, candidates);
@@ -159,7 +167,7 @@ function analyzeColumn(values, header) {
     if (existing) {
       existing.score = Math.min(99, existing.score + hint.boost);
     } else {
-      candidates.unshift({ field: hint.field, score: Math.min(99, hint.boost), detail: `مطابقة عنوان: ${header}` });
+      candidates.push({ field: hint.field, score: Math.min(99, hint.boost), detail: `مطابقة عنوان: ${header}` });
     }
   }
 

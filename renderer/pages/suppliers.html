@@ -47,6 +47,22 @@
         <label><span data-i18n="suppliers.formEmail">البريد الإلكتروني (اختياري)</span></label>
         <input type="email" class="form-input" id="supEmail" placeholder="example@domain.com" dir="ltr">
       </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.rc">RC (اختياري)</label>
+        <input type="text" class="form-input" id="supRc" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.nif">NIF (اختياري)</label>
+        <input type="text" class="form-input" id="supNif" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.nis">NIS (اختياري)</label>
+        <input type="text" class="form-input" id="supNis" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.article">N° article (اختياري)</label>
+        <input type="text" class="form-input" id="supArticle" dir="ltr">
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="closeAddSupplier()"><span data-i18n="suppliers.cancel">إلغاء</span></button>
@@ -79,6 +95,22 @@
         <label><span data-i18n="suppliers.formEmail">البريد الإلكتروني (اختياري)</span></label>
         <input type="email" class="form-input" id="editSupEmail" dir="ltr">
       </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.rc">RC (اختياري)</label>
+        <input type="text" class="form-input" id="editSupRc" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.nif">NIF (اختياري)</label>
+        <input type="text" class="form-input" id="editSupNif" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.nis">NIS (اختياري)</label>
+        <input type="text" class="form-input" id="editSupNis" dir="ltr">
+      </div>
+      <div class="form-group">
+        <label data-i18n="partyLegal.article">N° article (اختياري)</label>
+        <input type="text" class="form-input" id="editSupArticle" dir="ltr">
+      </div>
       <input type="hidden" id="editSupId">
     </div>
     <div class="modal-footer">
@@ -92,12 +124,12 @@
 <div class="modal-overlay" id="supRecordsModal">
   <div class="modal" style="max-width:780px">
     <div class="modal-header">
-      <h3><i class="fas fa-clipboard-list"></i> سجلات المورد — <span id="supRecordsName" style="color:var(--bmw-blue-1)"></span></h3>
+      <h3><i class="fas fa-clipboard-list"></i><span data-i18n="suppliers.supplierHistory"> سجلات المورد — </span><span id="supRecordsName" style="color:var(--bmw-blue-1)"></span></h3>
       <button class="modal-close" onclick="closeSupRecords()">&times;</button>
     </div>
     <div class="modal-body">
       <div class="rec-stats" id="supRecStats"></div>
-      <div class="rec-section-title"><i class="fas fa-box-open" style="color:#e65100"></i> السلع الفاسدة المرجعة للمورد</div>
+      <div class="rec-section-title"><i class="fas fa-box-open" style="color:#e65100"></i><span data-i18n="suppliers.returnedGoods"> السلع الفاسدة المرجعة للمورد</span></div>
       <div id="supRecList"></div>
     </div>
   </div>

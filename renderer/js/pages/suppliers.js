@@ -89,10 +89,38 @@ function setupSupSearch() {
   newInput.addEventListener('input', (typeof debounce === 'function') ? debounce(applySupFilter, 180) : applySupFilter);
 }
 
+// The legal identity block (NIS / NIF / RC / ARTICLE) is optional and printed
+// under the supplier name on a purchase invoice. Same four ids in the add and
+// the edit modal, so one read/one write helper covers both forms.
+function _supLegalRead(prefix) {
+  if (typeof window !== 'undefined' && window.ZmtPartyLegal && typeof window.ZmtPartyLegal.read === 'function') {
+    return window.ZmtPartyLegal.read(prefix);
+  }
+  const out = {};
+  [['Nis', 'nis'], ['Nif', 'nif'], ['Rc', 'rc'], ['Article', 'article']].forEach(function (m) {
+    const el = document.getElementById(prefix + m[0]);
+    out[m[1]] = el ? el.value.trim() : '';
+  });
+  return out;
+}
+
+function _supLegalWrite(prefix, sup) {
+  if (typeof window !== 'undefined' && window.ZmtPartyLegal && typeof window.ZmtPartyLegal.fill === 'function') {
+    window.ZmtPartyLegal.fill(prefix, sup);
+    return;
+  }
+  [['Nis', 'nis'], ['Nif', 'nif'], ['Rc', 'rc'], ['Article', 'article']].forEach(function (m) {
+    const el = document.getElementById(prefix + m[0]);
+    if (el) el.value = sup[m[1]] || '';
+  });
+}
+
 function showAddSupplierForm() {
   document.getElementById('supName').value = '';
   document.getElementById('supPhone').value = '';
   document.getElementById('supAddress').value = '';
+  document.getElementById('supEmail').value = '';
+  _supLegalWrite('sup', {});
   document.getElementById('addSupplierModal').style.display = 'flex';
 }
 
@@ -104,14 +132,14 @@ function confirmAddSupplier() {
   const name = document.getElementById('supName').value.trim();
   if (!name) { alert('الرجاء إدخال اسم المورد'); return; }
   const suppliers = DB.getSuppliers();
-  suppliers.push({
+  suppliers.push(Object.assign({
     id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
     name,
     phone: document.getElementById('supPhone').value.trim(),
     address: document.getElementById('supAddress').value.trim(),
     email: document.getElementById('supEmail').value.trim(),
     balance: 0,
-  });
+  }, _supLegalRead('sup')));
   DB.saveSuppliers(suppliers);
   const added = suppliers[suppliers.length - 1];
   DB.logAudit({ action: 'add', entity: 'supplier', entityId: added.id, detail: name });
@@ -132,6 +160,7 @@ function showEditSupplierForm(id) {
   document.getElementById('editSupPhone').value = s.phone || '';
   document.getElementById('editSupAddress').value = s.address || '';
   document.getElementById('editSupEmail').value = s.email || '';
+  _supLegalWrite('editSup', s);
   document.getElementById('editSupplierModal').style.display = 'flex';
 }
 
@@ -150,6 +179,7 @@ function confirmEditSupplier() {
   suppliers[idx].phone = document.getElementById('editSupPhone').value.trim();
   suppliers[idx].address = document.getElementById('editSupAddress').value.trim();
   suppliers[idx].email = document.getElementById('editSupEmail').value.trim();
+  Object.assign(suppliers[idx], _supLegalRead('editSup'));
   DB.saveSuppliers(suppliers);
   DB.logAudit({ action: 'update', entity: 'supplier', entityId: id, detail: name });
   closeEditSupplier();

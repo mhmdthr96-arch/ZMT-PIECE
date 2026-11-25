@@ -3,6 +3,14 @@
 // ============================================================
 
 const CloudService = (() => {
+  // An isolated company process owns only its local IndexedDB profile. The
+  // shared main instance is the single writer to the cloud/LAN, otherwise two
+  // processes would upload different companies into the same store path and
+  // silently overwrite each other.
+  function _isIsolatedCompany() {
+    return typeof window !== 'undefined' && !!window.__zmtCompanyIsolated;
+  }
+
   let client = null;
   const BUCKET = 'zmt-backups';
   let _syncTimer = null;
@@ -10,6 +18,17 @@ const CloudService = (() => {
   let _lastSyncHash = '';
   let _tokenFailReason = '';
   const COMMAND_POLL_MS = 12000;
+  // A store that has never received a website command has no commands.json, and
+  // asking for it every 12 s spams the console with HTTP 400s ("Failed to load
+  // resource") for no benefit. Back off progressively instead: real errors use
+  // 12s → 30s → 1m → 2m → 5m, a confirmed missing file uses 1m → 2m → 5m.
+  const COMMAND_RETRY_STEPS = [12000, 30000, 60000, 120000, 300000];
+  const COMMAND_MISSING_STEPS = [60000, 120000, 300000];
+  let _commandFailStreak = 0;
+  let _commandMissingStreak = 0;
+  let _commandNextAt = 0;
+  let _commandPath = '';
+  let _lastCommandsFetch = ''; // '' | 'ok' | 'missing' | 'error'
   // Full cloud-backup reconciliation (download + merge website orders) runs on
   // every tick where local data changed, and otherwise only every N-th tick.
   // At the default 120s auto-sync interval that is a safety-net pass every 20 min
@@ -464,6 +483,8 @@ const CloudService = (() => {
       'zmt_invoice_prefix', 'zmt_next_invoice', 'zmt_low_stock_threshold',
       'zmt_expiry_enabled', 'zmt_expiry_required', 'zmt_expiry_warn_days',
       'zmt_pharmacy_mode',
+      'zmt_debt_alerts',
+      'zmt_product_qr_enabled',
     ];
     for (const k of settingsKeys) {
       const v = localStorage.getItem(k);
@@ -571,6 +592,7 @@ const CloudService = (() => {
   // clear it and retry exactly once. No UI, no prompts — this is what keeps
   // manual AND scheduled backups working without asking for the password.
   async function uploadBackup(data) {
+    if (_isIsolatedCompany()) return { success: true, skipped: true, reason: 'company_profile' };
     try {
       return await _uploadBackupOnce(data);
     } catch (e) {
@@ -713,6 +735,7 @@ const CloudService = (() => {
   // actually changed local data. Commands are idempotent, so re-scanning the
   // whole file on every poll is safe.
   async function applyRemoteCommands() {
+    if (_isIsolatedCompany()) return 0;
     const supabase = getClient();
     if (!supabase) return 0;
     const code = getStoreCode();
@@ -721,9 +744,11 @@ const CloudService = (() => {
     let file;
     try {
       const data = await _downloadFresh(getCommandsPath());
-      if (!data) return 0;
+      if (!data) { _lastCommandsFetch = 'missing'; return 0; }
       file = JSON.parse(await data.text());
+      _lastCommandsFetch = 'ok';
     } catch (e) {
+      _lastCommandsFetch = 'error';
       return 0;
     }
 
@@ -756,14 +781,41 @@ const CloudService = (() => {
 
   // Poll the website's command file every ~12s so orders created/updated/deleted
   // on the website reach the desktop quickly, independent of the full sync.
-  async function pollCommands() {
+  // Requests are throttled internally: a missing file (normal for a store that
+  // has no website commands yet) is retried after 1/2/5 minutes, and real
+  // failures back off 12s → 30s → 1m → 2m → 5m. This keeps the console quiet
+  // without delaying the first command after the website starts writing them.
+  async function pollCommands(force) {
     if (!isCloudConnected()) return;
+    const now = Date.now();
+    if (!force && now < _commandNextAt) return;
+    const path = getCommandsPath();
+    if (path !== _commandPath) {
+      // Store switched (login/logout/branch): forget the old backoff.
+      _commandPath = path;
+      _commandFailStreak = 0;
+      _commandMissingStreak = 0;
+      _commandNextAt = 0;
+    }
     // Online license/clock verification (throttled, never blocks). Runs for every
     // cloud-connected client — including download-only ones — so revocation and
     // clock-tamper enforcement don't depend on a successful upload.
     checkCloudLicenseAndClock();
     try {
       const applied = await applyRemoteCommands();
+      if (_lastCommandsFetch === 'missing') {
+        _commandFailStreak = 0;
+        _commandMissingStreak = Math.min(_commandMissingStreak + 1, COMMAND_MISSING_STEPS.length);
+        _commandNextAt = now + COMMAND_MISSING_STEPS[_commandMissingStreak - 1];
+      } else if (_lastCommandsFetch === 'error') {
+        _commandMissingStreak = 0;
+        _commandFailStreak = Math.min(_commandFailStreak + 1, COMMAND_RETRY_STEPS.length - 1);
+        _commandNextAt = now + COMMAND_RETRY_STEPS[_commandFailStreak];
+      } else {
+        _commandFailStreak = 0;
+        _commandMissingStreak = 0;
+        _commandNextAt = now + COMMAND_POLL_MS;
+      }
       if (applied > 0) {
         console.log('[Cloud] Applied website commands:', applied);
         if (typeof window.refreshCurrentPageApp === 'function') {
@@ -771,7 +823,9 @@ const CloudService = (() => {
         }
       }
     } catch (e) {
-      // Offline or transient: retry on the next tick.
+      _commandMissingStreak = 0;
+      _commandFailStreak = Math.min(_commandFailStreak + 1, COMMAND_RETRY_STEPS.length - 1);
+      _commandNextAt = Date.now() + COMMAND_RETRY_STEPS[_commandFailStreak];
     }
   }
 
@@ -826,6 +880,7 @@ const CloudService = (() => {
   // LAN sub devices never write to the cloud directly — only the location's LAN
   // main server does (their changes arrive via the full backup after LAN sync).
   function pushLocalChange(kind, op, record) {
+    if (_isIsolatedCompany()) return;
     if (typeof kind !== 'string' || typeof op !== 'string') return;
     if (!isCloudConnected()) return;
     if (isLanSubDevice()) return;
@@ -912,6 +967,7 @@ const CloudService = (() => {
   }
 
   async function downloadBackup(storeCode) {
+    if (_isIsolatedCompany()) return { success: false, skipped: true, reason: 'company_profile', data: null };
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
 
@@ -944,6 +1000,7 @@ const CloudService = (() => {
   // bound it to (then filtered by getCompaniesForStore), mirroring the website's
   // behavior in me.ts/data.ts without granting access to any parent data.
   async function pullCompaniesFromMain() {
+    if (_isIsolatedCompany()) return { companies: 0, error: null, skipped: true };
     const parent = getParentCode();
     if (!parent) return { companies: 0, error: null };
     if (getStoreType() !== 'branch') return { companies: 0, error: null };
@@ -1234,6 +1291,7 @@ const CloudService = (() => {
   }
 
   function startAutoSync(intervalMs) {
+    if (_isIsolatedCompany()) return;
     const ms = intervalMs || 120000;
     if (_syncTimer) { clearInterval(_syncTimer); _syncTimer = null; }
     _syncTimer = setInterval(async () => {
@@ -1253,11 +1311,17 @@ const CloudService = (() => {
   // website's order commands must reach the desktop every 12s even when
   // zmt_cloud_autosync is off. Started at boot and kept running across toggles.
   function startCommandPolling() {
+    if (_isIsolatedCompany()) return;
     if (_commandTimer) return;
     if (!isCloudConnected()) return;
+    // Fresh session/store: clear any backoff inherited from a previous login.
+    _commandPath = getCommandsPath();
+    _commandFailStreak = 0;
+    _commandMissingStreak = 0;
+    _commandNextAt = 0;
     _commandTimer = setInterval(pollCommands, COMMAND_POLL_MS);
     // First poll immediately so a long-open session picks up website changes fast.
-    pollCommands();
+    pollCommands(true);
   }
 
   function stopCommandPolling() {
@@ -1273,6 +1337,7 @@ const CloudService = (() => {
   }
 
   function triggerSync() {
+    if (_isIsolatedCompany()) return;
     if (_syncTimer) return;
     if (!isCloudConnected() || !hasData()) return;
     clearTimeout(window._zmt_syncDebounce);
@@ -1467,6 +1532,7 @@ const CloudService = (() => {
   }
 
   async function uploadBackupForStore(targetCode, targetStoreType, targetParentCode) {
+    if (_isIsolatedCompany()) return { success: true, skipped: true, reason: 'company_profile' };
     await requireCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');

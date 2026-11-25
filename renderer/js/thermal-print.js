@@ -146,6 +146,12 @@
       if (store.phone) head += '<div class="tp-meta">Tél: ' + esc(store.phone) + '</div>';
     }
     if (s.showDateTime) head += '<div class="tp-meta">' + esc(dateStr) + ' — ' + esc(timeStr) + '</div>';
+    // Customer tree: the sub-customer is printed from the invoice's own
+    // historical snapshot, so renaming/removing the label never rewrites it.
+    if (inv && (inv.subCustomerName || inv.subCustomerId)) {
+      head += '<div class="tp-meta" style="font-weight:700">Client secondaire: ' + esc(inv.subCustomerName || '') + '</div>';
+      if (inv.note) head += '<div class="tp-meta">' + esc(inv.note) + '</div>';
+    }
 
     return '<!DOCTYPE html><html dir="' + dir + '"><head><meta charset="utf-8"><title>Ticket</title><style>' +
       '@page{ size:' + paper + 'mm auto; margin:' + mT + 'mm ' + mR + 'mm ' + mB + 'mm ' + mL + 'mm; }' +

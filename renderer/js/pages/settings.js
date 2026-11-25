@@ -90,7 +90,8 @@ function init_settings() {
 
   // Name + profile/legal fields come from the active (or default) company so the
   // settings page reflects the company currently in scope, not a shared global.
-  settingsPopulateCompanyFields();
+  // Populated once near the end of init by settingsUpdateActiveCompanyBar(),
+  // which is also the refresh hook used on company switch.
   document.getElementById('settingsTimbreEnabled').checked = localStorage.getItem('zmt_timbre_enabled') === '1';
   document.getElementById('settingsTimbreRate').value = localStorage.getItem('zmt_timbre_rate') || '1';
   document.getElementById('settingsTvaRate').value = localStorage.getItem('zmt_tva_rate') || '0';
@@ -113,6 +114,35 @@ function init_settings() {
   const introSnd = document.getElementById('settingsIntroSound');
   if (introSnd) introSnd.checked = localStorage.getItem('zmt_sound_intro') !== '0';
 
+  // Customer tree: default OFF. Persist on every change so the last chosen
+  // state survives even when the user leaves without pressing «حفظ».
+  const cTreeEl = document.getElementById('settingsCustomerTree');
+  if (cTreeEl) {
+    cTreeEl.checked = localStorage.getItem('zmt_customer_tree') === '1';
+    if (!cTreeEl._zmtCustomerTreeBound) {
+      cTreeEl._zmtCustomerTreeBound = true;
+      cTreeEl.addEventListener('change', function () {
+        localStorage.setItem('zmt_customer_tree', cTreeEl.checked ? '1' : '0');
+      });
+    }
+  }
+
+  // Product QR codes: OFF unless explicitly enabled, remembered immediately.
+  const productQrEl = document.getElementById('settingsProductQR');
+  if (productQrEl) {
+    productQrEl.checked = (typeof ProductQR !== 'undefined')
+      ? ProductQR.enabled()
+      : localStorage.getItem('zmt_product_qr_enabled') === '1';
+    if (!productQrEl._zmtProductQrBound) {
+      productQrEl._zmtProductQrBound = true;
+      productQrEl.addEventListener('change', function () {
+        if (typeof ProductQR !== 'undefined') ProductQR.set(productQrEl.checked);
+        else localStorage.setItem('zmt_product_qr_enabled', productQrEl.checked ? '1' : '0');
+        if (typeof ProductQR !== 'undefined') ProductQR.refreshCards();
+      });
+    }
+  }
+
   const bcLayoutEl = document.getElementById('settingsBarcodeLayout');
   if (bcLayoutEl) bcLayoutEl.value = localStorage.getItem('zmt_barcode_input_layout') || 'auto';
   const bcCaseEl = document.getElementById('settingsBarcodeCase');
@@ -121,6 +151,12 @@ function init_settings() {
   document.getElementById('settingsLegalCustomer').checked = localStorage.getItem('zmt_inv_legal_customer') === '1';
   document.getElementById('settingsLegalSupplier').checked = localStorage.getItem('zmt_inv_legal_supplier') === '1';
   document.getElementById('settingsLegalEmployee').checked = localStorage.getItem('zmt_inv_legal_employee') === '1';
+
+  // Party legal lines default to ON: anything but an explicit '0' is enabled.
+  const _plc = document.getElementById('settingsPartyLegalCustomer');
+  const _pls = document.getElementById('settingsPartyLegalSupplier');
+  if (_plc) _plc.checked = localStorage.getItem('zmt_inv_party_legal_customer') !== '0';
+  if (_pls) _pls.checked = localStorage.getItem('zmt_inv_party_legal_supplier') !== '0';
 
   // Show the real installed app version (matches the installer).
   if (window.electronAPI && window.electronAPI.appVersion) {
@@ -146,9 +182,10 @@ function init_settings() {
   settingsUpdateKeyStatus();
   settingsLoadProvider();
   settingsLoadLicense();
-  loadAuditLog();
+  _scheduleAuditLogLoad();
   prtInit();
   if (typeof settingsInitInvoiceLogo === 'function') settingsInitInvoiceLogo();
+  if (typeof settingsInitDeleteProducts === 'function') settingsInitDeleteProducts();
 }
 
 const PROVIDER_INFO = {
@@ -355,6 +392,10 @@ function saveSettings() {
   localStorage.setItem('zmt_inv_legal_customer', document.getElementById('settingsLegalCustomer').checked ? '1' : '0');
   localStorage.setItem('zmt_inv_legal_supplier', document.getElementById('settingsLegalSupplier').checked ? '1' : '0');
   localStorage.setItem('zmt_inv_legal_employee', document.getElementById('settingsLegalEmployee').checked ? '1' : '0');
+  const _plcSave = document.getElementById('settingsPartyLegalCustomer');
+  const _plsSave = document.getElementById('settingsPartyLegalSupplier');
+  if (_plcSave) localStorage.setItem('zmt_inv_party_legal_customer', _plcSave.checked ? '1' : '0');
+  if (_plsSave) localStorage.setItem('zmt_inv_party_legal_supplier', _plsSave.checked ? '1' : '0');
 
   localStorage.setItem('zmt_expiry_enabled', document.getElementById('settingsExpiryShow').checked ? '1' : '0');
   localStorage.setItem('zmt_expiry_required', document.getElementById('settingsExpiryRequired').checked ? '1' : '0');
@@ -377,20 +418,16 @@ function saveSettings() {
   const introSndEl = document.getElementById('settingsIntroSound');
   localStorage.setItem('zmt_sound_buttons', btnSndEl && btnSndEl.checked ? '1' : '0');
   localStorage.setItem('zmt_sound_intro', introSndEl && introSndEl.checked ? '1' : '0');
+  const cTreeSaveEl = document.getElementById('settingsCustomerTree');
+  localStorage.setItem('zmt_customer_tree', cTreeSaveEl && cTreeSaveEl.checked ? '1' : '0');
   if (window.ZmtSound && typeof window.ZmtSound.setEnabled === 'function') {
     window.ZmtSound.setEnabled('buttons', !!(btnSndEl && btnSndEl.checked));
     window.ZmtSound.setEnabled('intro', !!(introSndEl && introSndEl.checked));
   }
 
   const lang = document.getElementById('settingsLang').value;
-  if (lang && window.__lang && window.__lang !== lang && typeof window.switchLanguage === 'function') {
-    const LANG_ORDER = ['ar', 'en', 'fr', 'zh'];
-    const currentIdx = LANG_ORDER.indexOf(window.__lang);
-    const targetIdx = LANG_ORDER.indexOf(lang);
-    if (targetIdx !== -1) {
-      const diff = (targetIdx - currentIdx + 4) % 4;
-      for (let i = 0; i < diff; i++) window.switchLanguage();
-    }
+  if (lang && window.__lang !== lang && typeof window.setLanguage === 'function') {
+    window.setLanguage(lang);
   }
 
   alert(t('settings.settingsSaved'));
@@ -681,6 +718,8 @@ function settingsUpdateActiveCompanyBar() {
 // Only the main store may create/edit/delete companies. Branch stores can only
 // assign employees to the companies that authorize them (via storeCodes).
 function settingsCompaniesManageable() {
+  // A company process is a single-company appliance: no create/switch/delete.
+  if (typeof window !== 'undefined' && window.CompanyProfile && window.CompanyProfile.isolated) return false;
   return (typeof Auth !== 'undefined' && Auth.getStoreType)
     ? Auth.getStoreType() === 'main'
     : true;
@@ -841,17 +880,126 @@ function settingsLoadCompanies() {
   const activeId = (typeof Auth !== 'undefined' && Auth.getCompanyId) ? Auth.getCompanyId() : '';
   list.innerHTML = companies.map(c => {
     const isActive = c.id === activeId;
+    const safeName = String(c.name || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     return `<div class="settings-user-card">
       <div class="settings-user-info">
         <div class="settings-user-name"><i class="fas fa-building"></i> ${c.name}${c.storeName ? `<div style="font-size:11px;opacity:.7;margin-top:2px">${escHtml(c.storeName)}</div>` : ''}</div>
         <div class="settings-user-perms">${isActive ? '<span style="color:#28a745;font-weight:700">✓ ' + t('settings.companyIsActive') + '</span>' : ''}</div>
       </div>
       ${isActive ? '' : `<button class="btn btn-sm btn-primary" onclick="settingsEnterCompany('${c.id}')" title="${t('settings.enterCompany')}"><i class="fas fa-sign-in-alt"></i></button>`}
+      <button class="btn btn-sm btn-primary settings-company-action" onclick="settingsOpenIsolated('${c.id}', '${safeName}')" title="${t('settings.openIsolated')}"><i class="fas fa-external-link-alt"></i> <span data-i18n="settings.openIsolated">فتح نافذة مستقلة</span></button>
+      <button class="btn btn-sm settings-company-action" onclick="settingsCreateCompanyShortcut('${c.id}', '${safeName}')" title="${t('settings.createShortcut')}"><i class="fas fa-desktop"></i> <span data-i18n="settings.createShortcut">اختصار سطح المكتب</span></button>
       <button class="btn btn-sm" onclick="settingsEditCompany('${c.id}')" title="${t('settings.colEdit')}"><i class="fas fa-edit"></i></button>
-      <button class="btn btn-sm" onclick="settingsResetCompanyData('${c.id}', '${c.name.replace(/'/g, "\\'")}')" title="${t('settings.resetCompanyData')}"><i class="fas fa-broom"></i></button>
-      <button class="btn btn-sm btn-danger" onclick="settingsDeleteCompany('${c.id}', '${c.name.replace(/'/g, "\\'")}')" title="${t('settings.colDelete')}"><i class="fas fa-trash"></i></button>
+      <button class="btn btn-sm" onclick="settingsResetCompanyData('${c.id}', '${safeName}')" title="${t('settings.resetCompanyData')}"><i class="fas fa-broom"></i></button>
+      <button class="btn btn-sm btn-danger" onclick="settingsDeleteCompany('${c.id}', '${safeName}')" title="${t('settings.colDelete')}"><i class="fas fa-trash"></i></button>
     </div>`;
   }).join('');
+}
+
+// An installed build can be older than the renderer (main.js is read once at
+// startup). Ask the main process before invoking: a missing channel now yields
+// a clear localised message instead of Electron's raw English IPC error.
+async function settingsCompanyIpcReady() {
+  const api = (typeof window !== 'undefined') ? window.electronAPI : null;
+  if (api && typeof api.companyIpcStatus === 'function') {
+    try {
+      const status = await api.companyIpcStatus();
+      if (status && status.ok) return;
+    } catch (e) { /* fall through to the stale-build message */ }
+  }
+  throw new Error(t('settings.staleBuild'));
+}
+
+// Prepare a company-scoped snapshot for its own Electron process / userData.
+// The main process writes migration.json (keeping a .bak) first; the isolated
+// process imports it once on boot and then never reads the shared DB again.
+async function settingsPrepareCompanySnapshot(companyId, companyName) {
+  const api = (typeof window !== 'undefined') ? window.electronAPI : null;
+  if (!api || typeof api.prepareCompanySnapshot !== 'function') {
+    throw new Error(t('settings.snapshotError') + ' Electron API');
+  }
+  await settingsCompanyIpcReady();
+  const db = (typeof DB !== 'undefined' && DB.exportAll) ? DB.exportAll() : null;
+  if (!db) throw new Error(t('settings.snapshotError') + ' DB');
+
+  let defaultId = '';
+  try { defaultId = (DB.getDefaultCompany && DB.getDefaultCompany() || {}).id || ''; } catch (e) {}
+  const isDefault = !defaultId || defaultId === companyId;
+  const stores = [
+    'products', 'invoices', 'payments', 'customers', 'suppliers',
+    'discounts', 'returns', 'transfers', 'supplierReturns', 'routeDocs',
+    'orders', 'employees', 'attendance', 'auditLogs',
+  ];
+  const scopedDb = {
+    meta: Object.assign({}, db.meta || {}, { defaultCompanyId: companyId }),
+    companies: [Object.assign({}, DB.getCompany(companyId) || {}, { id: companyId, name: companyName || (DB.getCompany(companyId) || {}).name || companyId })],
+  };
+  stores.forEach(key => {
+    const rows = Array.isArray(db[key]) ? db[key] : null;
+    if (!rows) return;
+    scopedDb[key] = rows.filter(row => {
+      if (!row || typeof row !== 'object') return false;
+      if (row.companyId === companyId) return true;
+      return isDefault && !row.companyId;
+    });
+  });
+
+  const localStorageMirror = {};
+  const exclude = ['zmt_auth_user', 'zmt_active_company', 'zmt_remembered_company', 'zmt_scope_log', 'zmt_last_scope'];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith('zmt_')) continue;
+    if (exclude.indexOf(key) !== -1) continue;
+    // LAN/phone/cloud ownership remains with the shared main instance.
+    if (/^zmt_(lan|cloud|phs|psale)_/.test(key)) continue;
+    localStorageMirror[key] = localStorage.getItem(key);
+  }
+
+  const payload = {
+    version: 1,
+    companyId,
+    companyName: companyName || '',
+    createdAt: Date.now(),
+    db: scopedDb,
+    localStorage: localStorageMirror,
+  };
+  const result = await api.prepareCompanySnapshot(companyId, payload);
+  if (!result || !result.success) {
+    throw new Error((result && result.error) || 'UNKNOWN');
+  }
+  return result;
+}
+
+async function settingsOpenIsolated(companyId, companyName) {
+  if (window.CompanyProfile && window.CompanyProfile.isolated) {
+    alert(t('settings.isolatedOnly'));
+    return;
+  }
+  try {
+    await settingsPrepareCompanySnapshot(companyId, companyName);
+    const api = window.electronAPI || {};
+    const res = await api.openCompanyWindow(companyId);
+    if (!res || !res.success) throw new Error((res && res.error) || 'UNKNOWN');
+    alert(t('settings.openDone'));
+  } catch (e) {
+    alert(t('settings.openError') + ' ' + (e && e.message ? e.message : String(e)));
+  }
+}
+
+async function settingsCreateCompanyShortcut(companyId, companyName) {
+  if (window.CompanyProfile && window.CompanyProfile.isolated) {
+    alert(t('settings.isolatedOnly'));
+    return;
+  }
+  try {
+    await settingsPrepareCompanySnapshot(companyId, companyName);
+    const api = window.electronAPI || {};
+    const res = await api.createCompanyShortcut(companyId, companyName);
+    if (!res || !res.success) throw new Error((res && res.error) || 'UNKNOWN');
+    alert(t('settings.shortcutDone'));
+  } catch (e) {
+    alert(t('settings.shortcutError') + ' ' + (e && e.message ? e.message : String(e)));
+  }
 }
 
 async function settingsEditCompany(companyId) {
@@ -907,6 +1055,7 @@ async function settingsEnterCompany(companyId) {
     settingsLoadCompanies();
     settingsUpdateActiveCompanyBar();
     if (typeof applyTranslation === 'function') applyTranslation();
+    try { if (typeof renderSidebarCompany === 'function') renderSidebarCompany(); } catch (e) {}
     alert(t('settings.enteredCompany'));
   } catch (e) {
     alert(t('settings.errorPrefix') + ' ' + e.message);
@@ -939,6 +1088,7 @@ function settingsExitCompany() {
   settingsLoadCompanies();
   settingsUpdateActiveCompanyBar();
   if (typeof applyTranslation === 'function') applyTranslation();
+  try { if (typeof renderSidebarCompany === 'function') renderSidebarCompany(); } catch (e) {}
 }
 
 function getStoreInfo() {
@@ -981,6 +1131,12 @@ function getTvaRate() {
 function getPharmacyMode() {
   return localStorage.getItem('zmt_pharmacy_mode') === '1';
 }
+
+// Customer tree flag. Default OFF; the last explicit choice is persisted.
+function getCustomerTreeEnabled() {
+  return localStorage.getItem('zmt_customer_tree') === '1';
+}
+if (typeof window !== 'undefined') window.getCustomerTreeEnabled = getCustomerTreeEnabled;
 
 // ===== LAN SYNC SETTINGS =====
 function settingsLoadLan() {
@@ -1134,10 +1290,23 @@ async function settingsEnsureFirewall() {
   }
 }
 
+// True only while the settings page is the active page. The module is loaded
+// once and its window listeners live for the whole session — without this
+// guard they would keep rebuilding settings lists on unrelated LAN events.
+function _settingsPageVisible() {
+  return (window._currentPageId === 'settings') && !!document.getElementById('page-settings');
+}
+
 // If a sub device can't reach the main within a few seconds, prompt the user
 // to allow the firewall (the block is almost always on the MAIN machine).
+// Keep the timer handle so leaving Settings cancels the prompt instead of
+// popping a modal on top of another page eight seconds later.
+let _settingsLanWatchTimer = null;
 function settingsWatchSubConnect() {
-  setTimeout(async () => {
+  clearTimeout(_settingsLanWatchTimer);
+  _settingsLanWatchTimer = setTimeout(async () => {
+    _settingsLanWatchTimer = null;
+    if (!_settingsPageVisible()) return;
     try {
       const st = (typeof LANSync !== 'undefined') ? LANSync.getStatus() : null;
       if (!st || !st.connected) {
@@ -1146,6 +1315,13 @@ function settingsWatchSubConnect() {
     } catch (e) { /* ignore */ }
   }, 8000);
 }
+
+window.addEventListener('zmt:navigate', function (ev) {
+  if (!ev || !ev.detail || ev.detail.pageId !== 'settings') {
+    clearTimeout(_settingsLanWatchTimer);
+    _settingsLanWatchTimer = null;
+  }
+});
 
 function settingsShowFirewallModal(msg) {
   const m = document.getElementById('lanFirewallModal');
@@ -1242,12 +1418,13 @@ async function settingsDeactivateLicense() {
 // Listen for status changes while settings page is open
 if (typeof window.addEventListener === 'function') {
   window.addEventListener('zmt-lan-status', () => {
-    settingsUpdateLanStatus();
+    if (_settingsPageVisible()) settingsUpdateLanStatus();
   });
 }
 
 // Reload the users list when the other LAN device adds/edits/deletes a user.
 window.addEventListener('zmt-users-synced', () => {
+  if (!_settingsPageVisible()) return;
   const list = document.getElementById('settingsUsersList');
   if (list && typeof settingsLoadUsers === 'function') settingsLoadUsers();
 });
@@ -1256,6 +1433,21 @@ window.addEventListener('zmt-users-synced', () => {
 function _auditEsc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Building the audit table used to run synchronously inside init_settings():
+// sort up to 2000 rows + 500 Intl date formats before the page was even shown.
+// Defer it to idle time, then reuse the rendered rows until the data or a
+// filter changes (audit rows are immutable and appended at the front).
+let _auditRenderCache = { key: '', html: '', total: 0 };
+
+function _scheduleAuditLogLoad() {
+  const run = () => { if (_settingsPageVisible()) loadAuditLog(); };
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(run, { timeout: 1500 });
+  } else {
+    setTimeout(run, 0);
+  }
 }
 
 function loadAuditLog() {
@@ -1283,24 +1475,37 @@ function renderAuditLog() {
   if (to) { const t = new Date(to).getTime() + 86400000; logs = logs.filter(l => l.ts < t); }
 
   if (!logs.length) {
+    _auditRenderCache = { key: '', html: '', total: 0 };
     container.innerHTML = '<div class="placeholder-box" style="padding:20px"><i class="fas fa-inbox"></i><p>لا توجد عمليات مسجلة</p></div>';
     return;
   }
-  const actionLabel = { add: 'إضافة', update: 'تعديل', delete: 'حذف', unknown: '—' };
-  const entityLabel = { product: 'منتج', invoice: 'فاتورة', payment: 'دفعة', supplier: 'مورد', customer: 'عميل', branch: 'فرع', user: 'مستخدم' };
-  let html = '<table class="data-table"><thead><tr><th>التاريخ</th><th>المدير</th><th>العملية</th><th>الكيان</th><th>التفاصيل</th></tr></thead><tbody>';
-  for (const l of logs.slice(0, 500)) {
-    const dateStr = new Date(l.ts).toLocaleString('ar-EG-u-nu-latn');
-    const act = actionLabel[l.action] || l.action;
-    const actColor = l.action === 'delete' ? '#dc3545' : (l.action === 'add' ? '#28a745' : '#e69500');
-    const ent = entityLabel[l.entity] || l.entity;
-    html += `<tr><td>${dateStr}</td><td>${_auditEsc(l.manager)}</td>` +
-      `<td><span style="color:${actColor};font-weight:600">${act}</span></td>` +
-      `<td>${_auditEsc(ent)}</td><td>${_auditEsc(l.detail)}</td></tr>`;
+  const newest = logs[0]; // DB.getAuditLogs() is sorted newest-first
+  const signature = [
+    (typeof DB !== 'undefined' && DB.dataVersion) ? DB.dataVersion() : 0,
+    logs.length, newest && newest.id, newest && newest.ts, mgr, action, from, to
+  ].join('|');
+
+  if (signature !== _auditRenderCache.key) {
+    const actionLabel = { add: 'إضافة', update: 'تعديل', delete: 'حذف', merge: 'دمج', split: 'فصل', product_conflict: 'تعارض باركود', unknown: '—' };
+    const entityLabel = { product: 'منتج', invoice: 'فاتورة', payment: 'دفعة', supplier: 'مورد', customer: 'عميل', branch: 'فرع', user: 'مستخدم' };
+    let rows = '';
+    for (const l of logs.slice(0, 500)) {
+      const dateStr = new Date(l.ts).toLocaleString('ar-EG-u-nu-latn');
+      const act = actionLabel[l.action] || l.action;
+      const actColor = l.action === 'delete' ? '#dc3545' : (l.action === 'add' ? '#28a745' : '#e69500');
+      const ent = entityLabel[l.entity] || l.entity;
+      rows += `<tr><td>${dateStr}</td><td>${_auditEsc(l.manager)}</td>` +
+        `<td><span style="color:${actColor};font-weight:600">${act}</span></td>` +
+        `<td>${_auditEsc(ent)}</td><td>${_auditEsc(l.detail)}</td></tr>`;
+    }
+    _auditRenderCache = { key: signature, html: rows, total: logs.length };
   }
-  html += '</tbody></table>';
-  if (logs.length > 500) html += `<div style="font-size:12px;color:var(--silver-500);padding:8px">عرض أول 500 من ${logs.length} عملية</div>`;
-  container.innerHTML = html;
+
+  container.innerHTML = '<table class="data-table"><thead><tr><th>التاريخ</th><th>المدير</th><th>العملية</th><th>الكيان</th><th>التفاصيل</th></tr></thead><tbody>' +
+    _auditRenderCache.html + '</tbody></table>' +
+    (_auditRenderCache.total > 500
+      ? `<div style="font-size:12px;color:var(--silver-500);padding:8px">عرض أول 500 من ${_auditRenderCache.total} عملية</div>`
+      : '');
 }
 
 function exportAuditLogCSV() {
@@ -1652,6 +1857,20 @@ function settingsLogoToast(msg, type) {
   try { console.log('[logo]', msg); } catch (e) {}
 }
 
+// Slider `input` fires on every pixel. Coalesce the writes into one save so
+// dragging the logo size/opacity does not re-read and rewrite the image file
+// dozens of times. The label still updates immediately.
+let _settingsLogoSaveTimer = null;
+function settingsSaveLogoLayoutSoon() {
+  clearTimeout(_settingsLogoSaveTimer);
+  _settingsLogoSaveTimer = setTimeout(function () {
+    _settingsLogoSaveTimer = null;
+    // The page may have been left while the timer was pending.
+    if (!document.getElementById('settingsLogoSize') && !document.getElementById('settingsLogoOpacity')) return;
+    settingsSaveLogoLayout();
+  }, 200);
+}
+
 function settingsInitInvoiceLogo() {
   const L = window.InvoiceLogo;
   if (!L) return;
@@ -1698,31 +1917,36 @@ function settingsInitInvoiceLogo() {
     }).catch(function () {});
   }
 
-  // Bind the controls once. This function is re-entered after an upload or a
-  // removal to refresh the thumbnails, and stacking duplicate listeners would
-  // fire each save as many times as the section was refreshed.
-  if (!settingsInitInvoiceLogo._bound) {
-    settingsInitInvoiceLogo._bound = true;
-
-  if (sizeEl) sizeEl.addEventListener('input', function () {
-    if (sizeVal) sizeVal.textContent = sizeEl.value + 'px';
-    settingsSaveLogoLayout();
-  });
-  if (opEl) opEl.addEventListener('input', function () {
-    if (opVal) opVal.textContent = opEl.value + '%';
-    settingsSaveLogoLayout();
-  });
+  // Bind once PER ELEMENT, not per function: settings.html is rebuilt from the
+  // page cache on every navigation, so the old function-level `_bound` flag
+  // left the new sliders unbound after the first visit. Marking the elements
+  // keeps a single listener on each DOM instance.
+  if (sizeEl && !sizeEl._zmtLogoSizeBound) {
+    sizeEl._zmtLogoSizeBound = true;
+    sizeEl.addEventListener('input', function () {
+      if (sizeVal) sizeVal.textContent = sizeEl.value + 'px';
+      settingsSaveLogoLayoutSoon();
+    });
+  }
+  if (opEl && !opEl._zmtLogoOpacityBound) {
+    opEl._zmtLogoOpacityBound = true;
+    opEl.addEventListener('input', function () {
+      if (opVal) opVal.textContent = opEl.value + '%';
+      settingsSaveLogoLayoutSoon();
+    });
+  }
   const grid = document.getElementById('settingsLogoPosGrid');
-  if (grid) grid.addEventListener('click', function (ev) {
-    const btn = ev.target.closest ? ev.target.closest('[data-logo-pos]') : null;
-    if (!btn) return;
-    const c = L.load();
-    c.position = btn.getAttribute('data-logo-pos');
-    L.save(c);
-    settingsMarkLogoPosition(c.position);
-  });
-
-  } // end one-time binding
+  if (grid && !grid._zmtLogoPosBound) {
+    grid._zmtLogoPosBound = true;
+    grid.addEventListener('click', function (ev) {
+      const btn = ev.target.closest ? ev.target.closest('[data-logo-pos]') : null;
+      if (!btn) return;
+      const c = L.load();
+      c.position = btn.getAttribute('data-logo-pos');
+      L.save(c);
+      settingsMarkLogoPosition(c.position);
+    });
+  }
 }
 
 function settingsLogoFileLabel(p) {
@@ -1841,6 +2065,98 @@ function settingsRenderLogoPreview() {
   stage.style.background = '#fff';
   const img = stage.querySelector('img.zmt-doc-logo');
   if (img && mono) img.style.filter = 'grayscale(100%)';
+}
+
+// ===== DELETE PRODUCTS ONLY — PASSWORD-CONFIRMED DANGER ACTION =====
+// DESIGN INVARIANT: this block calls ONLY DB.getProducts() + DB.deleteProduct().
+// Invoice rows (including their item name snapshots), customers, suppliers,
+// balances, payments, vouchers, returns and settings are never touched. An
+// invoice keeps the product name inside `inv.items` after the catalogue row is
+// gone, so historical documents remain exactly as they were printed.
+function settingsInitDeleteProducts() {
+  const pass = document.getElementById('settingsDeleteProductsPass');
+  if (pass) pass.value = '';
+  const result = document.getElementById('settingsDeleteProductsResult');
+  if (result) { result.style.display = 'none'; result.textContent = ''; }
+}
+
+function settingsOpenDeleteProductsModal() {
+  const m = document.getElementById('settingsDeleteProductsModal');
+  if (!m) return;
+  if (!m._host) m._host = m.parentNode;
+  if (m.parentNode !== document.body) document.body.appendChild(m);
+  settingsInitDeleteProducts();
+  m.style.display = 'flex';
+  const pass = document.getElementById('settingsDeleteProductsPass');
+  if (pass) setTimeout(function () { try { pass.focus(); } catch (e) {} }, 80);
+}
+
+function settingsCloseDeleteProductsModal() {
+  const m = document.getElementById('settingsDeleteProductsModal');
+  if (!m) return;
+  m.style.display = 'none';
+  if (m._host && m.parentNode === document.body) m._host.appendChild(m);
+  settingsInitDeleteProducts();
+}
+
+function settingsDeleteProductsMessage(msg, type) {
+  const el = document.getElementById('settingsDeleteProductsResult');
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent = msg;
+  el.style.color = type === 'success' ? '#28a745' : '#dc3545';
+}
+
+// Testable core: returns the number deleted, or -1 when the DB is unavailable.
+// No other collection is read or written here, by design.
+function settingsDeleteAllProductsOnly(D) {
+  if (!D || typeof D.getProducts !== 'function' || typeof D.deleteProduct !== 'function') return -1;
+  const products = D.getProducts();
+  if (!Array.isArray(products)) return -1;
+  // Capture ids FIRST: getProducts() can return the live cache when no company
+  // is configured, and deleteProduct() splices that same array. Iterating the
+  // live array would silently skip every second product.
+  const ids = products.map(function (p) { return p && p.id; });
+  let deleted = 0;
+  for (let i = 0; i < ids.length; i++) {
+    try { if (D.deleteProduct(ids[i])) deleted++; }
+    catch (e) { console.warn('[Settings] deleteProduct failed', e); }
+  }
+  return deleted;
+}
+if (typeof window !== 'undefined') window.settingsDeleteAllProductsOnly = settingsDeleteAllProductsOnly;
+
+function settingsConfirmDeleteProducts() {
+  const passEl = document.getElementById('settingsDeleteProductsPass');
+  const typed = passEl ? String(passEl.value || '') : '';
+  const existing = (typeof Auth !== 'undefined' && typeof Auth.getStorePassword === 'function')
+    ? Auth.getStorePassword() : '';
+
+  if (existing) {
+    if (typed !== existing) {
+      settingsDeleteProductsMessage(t('settings.deleteProductsWrong'), 'error');
+      return;
+    }
+  } else {
+    const manager = (typeof Auth !== 'undefined' && typeof Auth.isManager === 'function' && Auth.isManager());
+    if (!manager) {
+      settingsDeleteProductsMessage(t('settings.deleteProductsManagerOnly'), 'error');
+      return;
+    }
+  }
+
+  const count = settingsDeleteAllProductsOnly(typeof DB !== 'undefined' ? DB : null);
+  if (count < 0) { settingsDeleteProductsMessage(t('settings.deleteProductsFailed'), 'error'); return; }
+  if (count === 0) { settingsDeleteProductsMessage(t('settings.deleteProductsEmpty'), 'error'); return; }
+
+  if (passEl) passEl.value = '';
+  settingsDeleteProductsMessage(
+    String(t('settings.deleteProductsDone')).replace('{count}', count), 'success');
+  try {
+    if (typeof DB !== 'undefined' && typeof DB.logAudit === 'function') {
+      DB.logAudit({ action: 'delete', entity: 'product', detail: `${count} منتج (حذف المنتجات فقط)` });
+    }
+  } catch (e) { /* audit is best-effort, never a blocker */ }
 }
 
 

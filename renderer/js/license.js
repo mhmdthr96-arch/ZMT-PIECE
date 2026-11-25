@@ -930,3 +930,85 @@ window.addEventListener('zmt:license-clock', function (ev) {
   console.warn('[License] Clock-drift freeze:', d);
   showFreezeOverlay(msg);
 });
+// Electron's renderer does not implement window.prompt() — asking for the
+// password that way always failed with "prompt() is not supported", so the
+// password is collected in the #deviceResetModal panel from index.html.
+function openDeviceResetModal() {
+  const m = document.getElementById('deviceResetModal');
+  if (!m) { alert('هذه الميزة غير متاحة في هذا الإصدار'); return; }
+  const pwd = document.getElementById('deviceResetPwd');
+  const err = document.getElementById('deviceResetError');
+  if (pwd) pwd.value = '';
+  if (err) err.textContent = '';
+  m.style.display = 'flex';
+  if (pwd) setTimeout(function () { try { pwd.focus(); } catch (e) {} }, 60);
+}
+
+function closeDeviceResetModal() {
+  const m = document.getElementById('deviceResetModal');
+  if (m) m.style.display = 'none';
+  const pwd = document.getElementById('deviceResetPwd');
+  if (pwd) pwd.value = '';
+}
+
+function onDeviceResetKey(e) {
+  if (!e) return;
+  if (e.key === 'Enter') { e.preventDefault(); confirmDeviceHardReset(); }
+  else if (e.key === 'Escape') { e.preventDefault(); closeDeviceResetModal(); }
+}
+
+async function confirmDeviceHardReset() {
+  const pwd = document.getElementById('deviceResetPwd');
+  const err = document.getElementById('deviceResetError');
+  const val = pwd ? String(pwd.value || '').trim() : '';
+  if (val !== '1234512345') {
+    if (err) err.textContent = 'كلمة المرور غير صحيحة';
+    if (pwd) { try { pwd.focus(); pwd.select(); } catch (e) {} }
+    return;
+  }
+  if (err) err.textContent = '';
+  if (!confirm('سيتم مسح كل شيء نهائياً وإعادة الجهاز كأن البرنامج مُثبَّت لأول مرة:\n\n• مفتاح التفعيل وبصمة الجهاز وبيانات فحص الوقت\n• قاعدة البيانات المحلية: المنتجات والفواتير والعملاء والموردون والموظفون\n• الإعدادات وكلمات المرور والنسخ الاحتياطية التلقائية وصور الواجهة\n\nلا يمكن التراجع عن هذه العملية. هل أنت متأكد؟')) return;
+  closeDeviceResetModal();
+  await doDeviceHardReset();
+}
+
+async function doDeviceHardReset() {
+  try {
+    if (window.electronAPI && typeof window.electronAPI.licenseHardReset === 'function') {
+      // Stop every writer and release the IndexedDB connection BEFORE the main
+      // process deletes userData: a cloud/LAN tick that fires mid-wipe would
+      // recreate files, and Chromium keeps the database folder locked for as
+      // long as this window holds a connection.
+      try {
+        if (typeof CloudService !== 'undefined') {
+          if (typeof CloudService.stopAutoSync === 'function') CloudService.stopAutoSync();
+          if (typeof CloudService.stopCommandPolling === 'function') CloudService.stopCommandPolling();
+        }
+      } catch (e) {}
+      try {
+        if (typeof LANSync !== 'undefined' && typeof LANSync.stopReconcile === 'function') LANSync.stopReconcile();
+      } catch (e) {}
+      try {
+        if (typeof DB !== 'undefined' && typeof DB.close === 'function') await DB.close();
+      } catch (e) {}
+
+      const res = await window.electronAPI.licenseHardReset();
+      if (res && res.success) {
+        const left = (res.failed && res.failed.length) ? ('\nتعذّر حذف: ' + res.failed.join('، ')) : '';
+        alert('تم التصفير بنجاح. سيعاد تشغيل التطبيق الآن.' + left);
+        if (window.electronAPI && typeof window.electronAPI.relaunchApp === 'function') {
+          window.electronAPI.relaunchApp();
+        } else if (window.location) {
+          window.location.reload();
+        }
+        return;
+      } else {
+        alert('فشل التصفير: ' + (res && res.message ? res.message : 'خطأ غير معروف'));
+        return;
+      }
+    }
+    alert('هذه الميزة غير متاحة في هذا الإصدار');
+  } catch (e) {
+    alert('حدث خطأ: ' + (e && e.message ? e.message : String(e)));
+  }
+}

@@ -10,6 +10,33 @@
 ; raw NSIS instructions may be used here (no ${If}, no WinVer).
 ; ==========================================================================
 
+; Wait patiently for a running copy to close before replacing its files.
+; electron-builder's default waits ~1.3 s during an update, which can kill the
+; app while it is still flushing pending writes. Wait up to 30 s instead and
+; force-close only when the app really refuses to exit.
+; Raw NSIS on purpose: this file is parsed before LogicLib exists.
+!macro customCheckAppRunning
+  !insertmacro nsProcess::FindProcess "${APP_EXECUTABLE_FILENAME}" $R0
+  StrCmp $R0 "0" 0 __zmt_app_done
+
+  IfSilent __zmt_app_wait 0
+  MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "$(appRunning)" /SD IDOK IDOK __zmt_app_wait
+  Quit
+
+  __zmt_app_wait:
+    StrCpy $R1 0
+  __zmt_app_wait_loop:
+    Sleep 1000
+    IntOp $R1 $R1 + 1
+    !insertmacro nsProcess::FindProcess "${APP_EXECUTABLE_FILENAME}" $R0
+    StrCmp $R0 "0" 0 __zmt_app_done
+    IntCmp $R1 30 __zmt_app_force __zmt_app_wait_loop __zmt_app_wait_loop
+  __zmt_app_force:
+    !insertmacro nsProcess::CloseProcess "${APP_EXECUTABLE_FILENAME}" $R2
+    Sleep 1500
+  __zmt_app_done:
+!macroend
+
 ; Same as the main build: install the bundled AnyDesk silently after the
 ; installation finishes.
 Function .onInstSuccess

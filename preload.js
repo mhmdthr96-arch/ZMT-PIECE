@@ -15,6 +15,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readFileBuffer: (filePath) => ipcRenderer.invoke('read-file-buffer', filePath),
   readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
   getAppDataPath: () => ipcRenderer.invoke('get-app-data-path'),
+  // Company isolation: shared base profile + launch context + dedicated process
+  getBaseAppDataPath: () => ipcRenderer.invoke('get-base-app-data-path'),
+  getLaunchContext: () => ipcRenderer.invoke('get-launch-context'),
+  companyIpcStatus: () => ipcRenderer.invoke('company-ipc-status'),
+  openCompanyWindow: (companyId) => ipcRenderer.invoke('company-open-window', companyId),
+  prepareCompanySnapshot: (companyId, payload) => ipcRenderer.invoke('company-prepare-snapshot', companyId, payload),
+  createCompanyShortcut: (companyId, name) => ipcRenderer.invoke('company-create-shortcut', companyId, name),
   deleteFile: (filePath) => ipcRenderer.invoke('delete-file', filePath),
   openFileImport: () => ipcRenderer.invoke('open-file-import'),
   // Price display (شاشة عرض السعر): local media + kiosk + Windows auto start
@@ -35,6 +42,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   firebirdCount: (dbPath, table, options) => ipcRenderer.invoke('firebird-count', dbPath, table, options),
   firebirdQuery: (dbPath, table, columns, from, to, options) => ipcRenderer.invoke('firebird-query', dbPath, table, columns, from, to, options),
   firebirdRestore: (backupPath, options) => ipcRenderer.invoke('firebird-restore', backupPath, options),
+  // MSSQL .bak importer (Gestion Stock SQL Server backups)
+  mssqlBakEnsure: () => ipcRenderer.invoke('mssql-bak-ensure'),
+  mssqlBakDetect: (bakPath) => ipcRenderer.invoke('mssql-bak-detect', bakPath),
+  mssqlBakExport: (bakPath) => ipcRenderer.invoke('mssql-bak-export', bakPath),
+  mssqlBakReadTable: (bakPath, table) => ipcRenderer.invoke('mssql-bak-read-table', bakPath, table),
+  mssqlBakDispose: (bakPath) => ipcRenderer.invoke('mssql-bak-dispose', bakPath),
   // Splash / App Ready
   splashClose: () => ipcRenderer.send('splash-close'),
   // App version (matches the installed package.json version)
@@ -49,6 +62,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   licenseMachineId: () => ipcRenderer.invoke('license-machine-id'),
   licenseDeactivate: (payload) => ipcRenderer.invoke('license-deactivate', payload),
   licenseImport: (payload) => ipcRenderer.invoke('license-import', payload),
+  licenseHardReset: () => ipcRenderer.invoke('license-hard-reset'),
   // LAN Sync (main/sub server)
   lanConfigure: (config) => ipcRenderer.invoke('lan-configure', config),
   lanSend: (payload) => ipcRenderer.invoke('lan-send', payload),
@@ -107,6 +121,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cashDrawerTest: (cfg) => ipcRenderer.invoke('cash-drawer-test', cfg),
   cashDrawerOpen: (opts) => ipcRenderer.invoke('cash-drawer-open', opts),
   onCashDrawerHotkey: (cb) => ipcRenderer.on('cash-drawer-hotkey', () => cb()),
+  // Scale link («مزامنة الميزان»): push the article list into the scale
+  scaleSyncGet: () => ipcRenderer.invoke('scale-sync-get'),
+  scaleSyncSave: (patch) => ipcRenderer.invoke('scale-sync-save', patch),
+  scaleSyncScan: () => ipcRenderer.invoke('scale-sync-scan'),
+  scaleSyncSend: (payload) => ipcRenderer.invoke('scale-sync-send', payload),
   // Quick Entry standalone window (F1 → separate, minimizable BrowserWindow)
   openQuickEntryWindow: () => ipcRenderer.invoke('quick-entry-open'),
   onQuickEntryRefresh: (cb) => ipcRenderer.on('quick-entry-refresh', () => cb()),
@@ -125,5 +144,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updaterDownload: (payload) => ipcRenderer.invoke('update-download', payload),
   updaterInstall: (filePath) => ipcRenderer.invoke('update-install', filePath),
   updaterBeep: () => ipcRenderer.invoke('update-beep'),
+  updaterOpenLog: () => ipcRenderer.invoke('update-open-log'),
+  updaterOpenFolder: () => ipcRenderer.invoke('update-open-folder'),
   onUpdaterProgress: (cb) => ipcRenderer.on('update-progress', (_e, p) => cb(p)),
+  licenseHardReset: () => ipcRenderer.invoke('license-hard-reset'),
+  relaunchApp: () => ipcRenderer.invoke('app-relaunch'),
 });

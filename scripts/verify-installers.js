@@ -48,6 +48,20 @@ const REQUIRED_ASAR_ENTRIES = [
   'renderer/phone-sales/index.html',
   'renderer/js/license.js',
   'renderer/js/phone-sale-service.js',
+  'renderer/js/lib/gssp-reader.js',
+  'renderer/js/lib/file-detector.js',
+  'renderer/pages/data-migration.html',
+  'renderer/pages/backup.html',
+];
+// Migration engines must be physically present in resources\. Without them
+// .bak / .fdb / .db imports fail on the client with a bare "read error" while
+// the pure-JavaScript GSSP reader keeps working — a silently shipped gap.
+const REQUIRED_ENGINE_ASSETS = [
+  'firebird/gbak.exe',
+  'firebird/fbclient.dll',
+  'mssql/mssql-bak.ps1',
+  'mssql/SqlLocalDB.msi',
+  'app.asar.unpacked/node_modules/sql.js/dist/sql-wasm.wasm',
 ];
 // markers of the "paid sale" fix in the packed renderer code
 const APP_JS_MARKERS = [
@@ -162,6 +176,26 @@ async function installAndVerify(file, label) {
     if (missing.length) bad('asar missing entries: ' + missing.join(', '));
     else ok('asar contains all ' + REQUIRED_ASAR_ENTRIES.length + ' required entries');
 
+    // Every local module required by the main process must be inside the asar,
+    // otherwise the installed app dies on launch with "Cannot find module".
+    try {
+      const localRequires = new Set();
+      for (const entry of ['main.js', 'preload.js']) {
+        let code = '';
+        try { code = asar.extractFile(asarPath, inArchive(entry)).toString('utf8'); } catch (e) { continue; }
+        const re = /require\(\s*['"]\.\/([^'"]+)['"]\s*\)/g;
+        let m;
+        while ((m = re.exec(code)) !== null) localRequires.add(m[1].replace(/\.js$/, ''));
+      }
+      const unresolved = [];
+      for (const rel of localRequires) {
+        const candidates = [rel + '.js', rel + '/index.js', rel];
+        if (!candidates.some((c) => list.indexOf(c) !== -1)) unresolved.push(rel);
+      }
+      if (unresolved.length) bad('asar is missing locally required modules: ' + unresolved.join(', ') + ' (app would crash on launch)');
+      else ok('all ' + localRequires.size + ' locally required main-process modules are packed');
+    } catch (e) { bad('cannot audit local requires: ' + e); }
+
     try {
       const shipped = JSON.parse(asar.extractFile(asarPath, inArchive('package.json')).toString('utf8'));
       if (shipped.version === VER) ok('packed package.json version = ' + VER);
@@ -195,6 +229,16 @@ async function installAndVerify(file, label) {
       else ok('packed license.js trusts exactly 1 phone key (distributor phone only)');
     } catch (e) { bad('cannot read packed license.js phone-key trust: ' + e); }
   }
+
+  // Migration engines (Firebird, SQL Server LocalDB, SQLite WASM) are NOT
+  // inside app.asar — they live next to it in resources\. Check the real
+  // installed tree so a missing engine can never pass the build again.
+  const resRoot = path.join(instDir, 'resources');
+  const missingEng = REQUIRED_ENGINE_ASSETS.filter(
+    (rel) => !fs.existsSync(path.join(resRoot, rel.split('/').join(path.sep)))
+  );
+  if (missingEng.length) bad('missing migration engine assets: ' + missingEng.join(', '));
+  else ok('all ' + REQUIRED_ENGINE_ASSETS.length + ' migration engine assets present');
 
   const un = path.join(instDir, 'Uninstall ' + PRODUCT + '.exe');
   if (!fs.existsSync(un)) {
@@ -245,6 +289,27 @@ async function installAndVerify(file, label) {
   else ok('win7 build has no Windows version guard');
   if (/\.onInstSuccess/.test(mainTxt) && /\.onInstSuccess/.test(win7Txt)) ok('both builds install the bundled AnyDesk');
   else bad('both builds must keep the AnyDesk .onInstSuccess hook');
+
+  section('migration engine configuration');
+  const resFrom = (cfg) => ((cfg && cfg.extraResources) || [])
+    .filter((r) => r && typeof r === 'object' && typeof r.from === 'string')
+    .map((r) => r.from.replace(/\\/g, '/'));
+  const mainRes = resFrom(pkg.build);
+  const w7Res = resFrom(win7Cfg);
+  let resCfgOk = true;
+  for (const need of ['firebird-runtime', 'mssql-bak.ps1', 'resources/mssql']) {
+    if (mainRes.indexOf(need) === -1) { bad('package.json extraResources missing ' + need); resCfgOk = false; }
+    if (w7Res.indexOf(need) === -1) { bad('win7.builder.json extraResources missing ' + need); resCfgOk = false; }
+  }
+  if (resCfgOk) ok('both build configs include Firebird + SQL Server LocalDB migration resources');
+
+  try {
+    const mainJs = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+    const line = (mainJs.match(/name:\s*'All Supported'[^\n]*/) || [''])[0];
+    const missing = ['bak', 'gssp', 'zgssp'].filter((e) => line.indexOf("'" + e + "'") === -1);
+    if (missing.length) bad('open-file-import filter omits legacy formats: ' + missing.join(', '));
+    else ok('open-file-import filter offers .bak / .gssp / .zgssp');
+  } catch (e) { bad('cannot audit main.js import filter: ' + e); }
 
   section('installers present (version ' + VER + ')');
 

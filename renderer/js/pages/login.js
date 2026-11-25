@@ -184,6 +184,14 @@ function loginLoadCompanies(storeCode, selectId, fieldId, all) {
         ? DB.getCompaniesForStore(storeCode) : [];
     }
   } catch (e) { companies = []; }
+  // An isolated process has exactly one company. Never offer any other — even
+  // if a stale company row survived a migration snapshot, it must be inert.
+  if (window.CompanyProfile && window.CompanyProfile.isolated) {
+    companies = companies.filter(c => c && c.id === window.CompanyProfile.COMPANY_ID);
+    if (!companies.length) companies = [{ id: window.CompanyProfile.COMPANY_ID, name: window.CompanyProfile.COMPANY_ID }];
+    select.disabled = true;
+    if (field) field.style.display = '';
+  }
   const placeholder = (companies.length > 1) ? (window.t ? window.t('login.chooseCompany') : 'اختر الشركة') : '';
   select.innerHTML = '<option value="">' + placeholder + '</option>';
   companies.forEach(c => {
@@ -518,6 +526,13 @@ function loginShowDashboard() {
   // denies while pages stay visible — the user sees "I have no permissions"
   // and nothing works, even after a reboot (each boot wipes the session and
   // repeats the same path). Send the login screen back instead.
+  // Isolated company process: bind the freshly-created session to the company
+  // this process was launched for, regardless of a remembered company from the
+  // shared profile. This runs on every login path because they all end here.
+  if (window.CompanyProfile && window.CompanyProfile.isolated && typeof Auth.enforceLaunchCompany === 'function') {
+    Auth.enforceLaunchCompany();
+  }
+
   if (typeof Auth.isLoggedIn === 'function' && !Auth.isLoggedIn()) {
     const msg = '<span style="color:#dc3545;">انتهت الجلسة — الرجاء تسجيل الدخول مرة أخرى</span>';
     ['loginManagerStatus', 'loginUserStatus', 'loginBranchStatus', 'loginCreateStatus'].forEach(function (id) {
@@ -556,11 +571,14 @@ function loginShowDashboard() {
     const landing = (typeof Auth.firstViewablePage === 'function') ? Auth.firstViewablePage() : null;
     navigateTo(landing || 'dashboard');
   }
-  if (typeof LANSync !== 'undefined') {
+  // Company profiles are local-only: the main instance owns LAN/cloud so a
+  // phone scan or website command can never be routed into the wrong company.
+  const _sharedServiceOwner = !window.__standaloneQuickEntry && !(window.CompanyProfile && window.CompanyProfile.isolated);
+  if (_sharedServiceOwner && typeof LANSync !== 'undefined') {
     LANSync.hookDb();
     LANSync.start();
   }
-  if (typeof CloudService !== 'undefined' && CloudService.isCloudConnected()) {
+  if (_sharedServiceOwner && typeof CloudService !== 'undefined' && CloudService.isCloudConnected()) {
     CloudService.startAutoSync(CloudService.getAutoSyncInterval());
   }
 }

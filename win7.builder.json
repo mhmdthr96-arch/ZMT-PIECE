@@ -11,8 +11,10 @@
     "preload.js",
     "license.js",
     "firebird.js",
+    "mssql-bak.js",
     "lan-server.js",
     "printer-net.js",
+    "scale-net.js",
     "phone-scanner.js",
     "phone-cert.js",
     "renderer/**/*",
@@ -31,6 +33,20 @@
     {
       "from": "firebird-runtime",
       "to": "firebird",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "mssql-bak.ps1",
+      "to": "mssql/mssql-bak.ps1",
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "resources/mssql",
+      "to": "mssql",
       "filter": [
         "**/*"
       ]
@@ -57,6 +73,7 @@
     "signExecutable": false
   },
   "nsis": {
+    "preCompressedFileExtensions": null,
     "include": "build/installer-win7.nsh",
     "oneClick": false,
     "perMachine": false,

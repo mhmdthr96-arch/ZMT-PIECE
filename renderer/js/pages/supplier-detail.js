@@ -87,7 +87,7 @@ function renderSdInvoices(filter) {
       <div class="sd-inv-body">
         <div class="sd-inv-items">
           ${inv.type === 'payment'
-            ? `<span class="sd-inv-item"><i class="fas fa-money-bill-wave"></i> سند دين لمورد</span>`
+            ? `<span class="sd-inv-item"><i class="fas fa-money-bill-wave"></i> ${escHtml(inv.direction === 'in' && !inv.isDebtNote ? t('invoices.payFromSupplier') : t('invoices.payToSupplier'))}</span>`
             : inv.items.slice(0, 3).map(it =>
             `<span class="sd-inv-item">${escHtml(it.name)} x${Unit.fmtQty(it.qty)}</span>`
           ).join('')}
@@ -104,6 +104,24 @@ function filterSdInvoices(q) {
 }
 
 var _sdCurrentInvoiceId = null;
+
+// Portal the invoice dialog to <body> while open: inside #pageContainer a
+// `position:fixed` overlay resolves against the scrolled list and appears at
+// the top instead of in front of the row the user clicked.
+function _sdPortalModal(id, show) {
+  const m = document.getElementById(id);
+  if (!m) return;
+  if (show) {
+    if (!m._host || m._host === document.body) m._host = m.parentNode;
+    if (m.parentNode !== document.body) document.body.appendChild(m);
+    m.style.display = 'flex';
+  } else {
+    m.style.display = 'none';
+    if (m._host && m._host !== document.body && m._host.isConnected && m.parentNode === document.body) {
+      m._host.appendChild(m);
+    }
+  }
+}
 
 function showSdInvoiceDetail(id) {
   _sdCurrentInvoiceId = id;
@@ -165,7 +183,7 @@ function showSdInvoiceDetail(id) {
   // Delete button
   document.getElementById('sdDeleteInvoiceBtn').style.display = 'inline-flex';
 
-  document.getElementById('sdInvoiceModal').style.display = 'flex';
+  _sdPortalModal('sdInvoiceModal', true);
 }
 
 function payInvoiceFromDetail() {
@@ -203,7 +221,7 @@ function payInvoiceFromDetail() {
     DB.saveSuppliers(suppliers);
   }
 
-  document.getElementById('sdInvoiceModal').style.display = 'none';
+  _sdPortalModal('sdInvoiceModal', false);
   renderSdStats();
   renderSdPayments();
   renderSdInvoices();
@@ -265,10 +283,11 @@ function sdDeleteInvoiceFromDetail() {
     if (supIdx !== -1) {
       const currentBalance = parseFloat(suppliers[supIdx].balance) || 0;
       if (inv.type === 'payment') {
-        // Supplier voucher is a debt note (سند دين): it added to the balance on
-        // creation — deleting it subtracts the same amount back.
-        suppliers[supIdx].balance = currentBalance - (inv.totalAmount || 0);
-} else if (inv.type === 'dispatch') {
+        // Receipt money IN reduced what we owed: deleting it restores the amount.
+        // An explicit debt note did the opposite, so deleting it subtracts it.
+        const wasReceipt = inv.direction === 'in' && !inv.isDebtNote;
+        suppliers[supIdx].balance = currentBalance + (wasReceipt ? 1 : -1) * (inv.totalAmount || 0);
+      } else if (inv.type === 'dispatch') {
         // Dispatch: at creation we subtracted totalAmount — add it back
         suppliers[supIdx].balance = currentBalance + (inv.totalAmount || 0);
       } else if (inv.type === 'sup_sale') {
@@ -288,7 +307,7 @@ function sdDeleteInvoiceFromDetail() {
   // 4. Delete the invoice
   DB.deleteInvoice(_sdCurrentInvoiceId);
 
-  document.getElementById('sdInvoiceModal').style.display = 'none';
+  _sdPortalModal('sdInvoiceModal', false);
 
   // Refresh
   _sdInvoices = DB.getInvoicesBySupplier(_sdSupplierId);
@@ -297,8 +316,18 @@ function sdDeleteInvoiceFromDetail() {
   renderSdPayments();
 }
 
+function _sdCanManagePayments() {
+  try {
+    if (typeof window !== 'undefined' && typeof window._zmtCanEditBalance === 'function') {
+      return window._zmtCanEditBalance('suppliers');
+    }
+  } catch (e) {}
+  return true;
+}
+
 function renderSdPayments() {
   const container = document.getElementById('sdPaymentsList');
+  if (!container) return;
   const payments = DB.getSupplierPayments(_sdSupplierId);
 
   if (payments.length === 0) {
@@ -309,15 +338,16 @@ function renderSdPayments() {
     return;
   }
 
-  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+  const totalPaid = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+  const canManage = _sdCanManagePayments();
 
   container.innerHTML = `
     <div class="sd-pay-header">
       <span>إجمالي الدفعات: <strong style="color:#28a745">DA${fmtMoney(totalPaid)}</strong></span>
     </div>
     <div class="sd-pay-list">
-      ${payments.sort((a, b) => b.createdAt - a.createdAt).map(p => {
-        const d = new Date(p.createdAt);
+      ${payments.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).map(p => {
+        const d = new Date(p.createdAt || Date.now());
         const dateStr = d.toLocaleDateString('ar-EG-u-nu-latn');
         const timeStr = d.toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' });
         return `<div class="sd-pay-row">
@@ -328,10 +358,146 @@ function renderSdPayments() {
               ${p.note ? `<span class="sd-pay-note"><i class="fas fa-sticky-note"></i> ${escHtml(p.note)}</span>` : ''}
             </div>
           </div>
+          ${canManage ? `<div class="sd-pay-actions">
+            <button type="button" class="btn btn-sm btn-primary" title="${escHtml(t('common.edit') || 'تعديل')}"
+              onclick="showSdEditPayModal('${escHtml(p.id)}')">
+              <i class="fas fa-edit"></i>
+            </button>
+            <button type="button" class="btn btn-sm btn-danger" title="${escHtml(t('common.delete') || 'حذف')}"
+              onclick="deleteSdPayment('${escHtml(p.id)}')">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>` : ''}
         </div>`;
       }).join('')}
     </div>`;
 }
+
+// --- Payment edit / delete -------------------------------------------------
+var _sdEditPayId = null;
+
+// A normal supplier payment reduces what we owe (balance -= amount). Two
+// exceptions increase it, exactly as the original creation paths do:
+//   • a payment against a `sup_sale` invoice (sdPayInvoice)
+//   • a supplier payment voucher of type `payment` (confirmPaymentInvoice)
+function _sdPaymentSign(p) {
+  if (!p) return -1;
+  let inv = null;
+  if (p.invoiceId && typeof DB.getInvoice === 'function') {
+    try { inv = DB.getInvoice(p.invoiceId); } catch (e) { inv = null; }
+  }
+  if (!inv && p.invoiceId && typeof DB.getInvoices === 'function') {
+    try { inv = DB.getInvoices().find(i => i.id === p.invoiceId); } catch (e) { inv = null; }
+  }
+  if (inv && (inv.type === 'sup_sale' || (inv.type === 'payment' && inv.supplierId === _sdSupplierId))) return 1;
+  return -1;
+}
+
+// Apply only the DIFFERENCE to the supplier balance. Editing 100 -> 120 on a
+// normal payment moves the balance by -20; deleting that payment moves it +100.
+function _sdApplyPaymentDelta(p, newAmount, removing) {
+  if (!p) return false;
+  const oldAmount = parseFloat(p.amount) || 0;
+  const nextAmount = removing ? 0 : (parseFloat(newAmount) || 0);
+  const delta = _sdPaymentSign(p) * (nextAmount - oldAmount);
+  if (Math.abs(delta) < 0.000001) return false;
+  const suppliers = DB.getSuppliers();
+  const idx = suppliers.findIndex(s => s.id === _sdSupplierId);
+  if (idx === -1) return false;
+  suppliers[idx].balance = (parseFloat(suppliers[idx].balance) || 0) + delta;
+  DB.saveSuppliers(suppliers);
+  return true;
+}
+
+function _sdToDateInput(ts) {
+  const d = new Date(ts || Date.now());
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function _sdFromDateInput(value, originalTs) {
+  if (!value) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(value));
+  if (!m) return null;
+  const orig = new Date(originalTs || Date.now());
+  const ts = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], orig.getSeconds(), orig.getMilliseconds()).getTime();
+  return isFinite(ts) ? ts : null;
+}
+
+function _sdRefreshAfterPayment() {
+  renderSdStats();
+  renderSdPayments();
+  renderSdInvoices();
+}
+
+function showSdEditPayModal(id) {
+  const p = DB.getPayments().find(x => x.id === id && x.supplierId === _sdSupplierId);
+  if (!p) return;
+  const supplier = DB.getSuppliers().find(s => s.id === _sdSupplierId);
+  _sdEditPayId = p.id;
+  const amountEl = document.getElementById('sdEditPayAmount');
+  const dateEl = document.getElementById('sdEditPayDate');
+  const noteEl = document.getElementById('sdEditPayNote');
+  const balanceEl = document.getElementById('sdEditPayBalance');
+  const modal = document.getElementById('sdEditPayModal');
+  if (amountEl) amountEl.value = p.amount;
+  if (dateEl) dateEl.value = _sdToDateInput(p.createdAt);
+  if (noteEl) noteEl.value = p.note || '';
+  if (balanceEl) balanceEl.textContent = 'DA' + fmtMoney(supplier ? (parseFloat(supplier.balance) || 0) : 0);
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeSdEditPay() {
+  _sdEditPayId = null;
+  const modal = document.getElementById('sdEditPayModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function saveSdPaymentEdit() {
+  const p = DB.getPayments().find(x => x.id === _sdEditPayId && x.supplierId === _sdSupplierId);
+  if (!p) { closeSdEditPay(); return; }
+  const amountEl = document.getElementById('sdEditPayAmount');
+  const dateEl = document.getElementById('sdEditPayDate');
+  const noteEl = document.getElementById('sdEditPayNote');
+  const amount = parseFloat(amountEl ? amountEl.value : '');
+  if (!isFinite(amount) || amount <= 0) {
+    alert(t('sdPayment.invalidAmount') || 'الرجاء إدخال مبلغ صحيح');
+    return;
+  }
+  const createdAt = _sdFromDateInput(dateEl ? dateEl.value : '', p.createdAt);
+  if (createdAt === null) {
+    alert(t('sdPayment.invalidDate') || 'صيغة تاريخ الدفع غير صحيحة');
+    return;
+  }
+  const note = noteEl ? noteEl.value.trim() : '';
+  if (Math.abs(amount - (parseFloat(p.amount) || 0)) > 0.000001 ||
+      createdAt !== p.createdAt || note !== (p.note || '')) {
+    _sdApplyPaymentDelta(p, amount, false);
+    DB.updatePayment(p.id, { amount, note, createdAt, date: new Date(createdAt).toISOString().slice(0, 10) });
+  }
+  closeSdEditPay();
+  _sdRefreshAfterPayment();
+}
+
+function deleteSdPayment(id) {
+  const p = DB.getPayments().find(x => x.id === id && x.supplierId === _sdSupplierId);
+  if (!p) return;
+  if (!confirm((t('sdPayment.confirmDelete') || 'هل تريد حذف هذه الدفعة؟') + '\nDA' + fmtMoney(p.amount))) return;
+  _sdApplyPaymentDelta(p, 0, true);
+  DB.deletePayment(p.id);
+  closeSdEditPay();
+  _sdRefreshAfterPayment();
+}
+
+function deleteSdPaymentFromModal() {
+  if (_sdEditPayId) deleteSdPayment(_sdEditPayId);
+}
+
+window.showSdEditPayModal = showSdEditPayModal;
+window.closeSdEditPay = closeSdEditPay;
+window.saveSdPaymentEdit = saveSdPaymentEdit;
+window.deleteSdPayment = deleteSdPayment;
+window.deleteSdPaymentFromModal = deleteSdPaymentFromModal;
 
 function switchSdTab(tab) {
   document.querySelectorAll('#page-supplier-detail .sd-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -425,6 +591,28 @@ function renderSdRecords() {
   container.innerHTML = html;
 }
 
+// Payment amount tiers — only the «تسجيل دفعة للمورد» field is coloured.
+// 50000 starts orange and 500000 starts red (confirmed with the user), so the
+// boundaries are: empty/0 = none, (0,5000] green, (5000,50000) yellow,
+// [50000,500000) orange, [500000,∞) red.
+const SD_PAY_TIERS = ['pay-green', 'pay-yellow', 'pay-orange', 'pay-red'];
+function sdPayAmountTier(value) {
+  if (value === '' || value == null) return '';
+  const n = Number(String(value).replace(/[,\s]/g, '').trim());
+  if (!isFinite(n) || n <= 0) return '';
+  if (n <= 5000) return 'pay-green';
+  if (n < 50000) return 'pay-yellow';
+  if (n < 500000) return 'pay-orange';
+  return 'pay-red';
+}
+function updateSdPayAmountColor(input) {
+  const el = (typeof input === 'string') ? document.getElementById(input) : input;
+  if (!el || !el.classList) return;
+  for (const cls of SD_PAY_TIERS) el.classList.remove(cls);
+  const tier = sdPayAmountTier(el.value);
+  if (tier) el.classList.add(tier);
+}
+
 function showPayModal() {
   const s = DB.getSuppliers().find(x => x.id === _sdSupplierId);
   if (!s) return;
@@ -433,6 +621,7 @@ function showPayModal() {
   const balance = parseFloat(s.balance) || 0;
   document.getElementById('sdPayBalance').textContent = `DA${fmtMoney(balance)}`;
   document.getElementById('sdPayAmount').value = '';
+  updateSdPayAmountColor(document.getElementById('sdPayAmount'));
   document.getElementById('sdPayNote').value = '';
   document.getElementById('sdPayModal').style.display = 'flex';
   setTimeout(() => document.getElementById('sdPayAmount').focus(), 150);
@@ -477,8 +666,33 @@ function showSdEditForm() {
   document.getElementById('editSupPhone').value = s.phone || '';
   document.getElementById('editSupAddress').value = s.address || '';
   document.getElementById('editSupEmail').value = s.email || '';
+  _sdLegalFill(s);
   document.getElementById('editSupplierModal').style.display = 'flex';
   setTimeout(() => document.getElementById('editSupName').focus(), 100);
+}
+
+// NIS / NIF / RC / ARTICLE are optional on both supplier forms; the ids are
+// shared with the suppliers page, so the same four lines read and write them.
+function _sdLegalFill(s) {
+  if (typeof window !== 'undefined' && window.ZmtPartyLegal && typeof window.ZmtPartyLegal.fill === 'function') {
+    window.ZmtPartyLegal.fill('editSup', s);
+    return;
+  }
+  [['Nis', 'nis'], ['Nif', 'nif'], ['Rc', 'rc'], ['Article', 'article']].forEach(function (m) {
+    const el = document.getElementById('editSup' + m[0]);
+    if (el) el.value = (s && s[m[1]]) || '';
+  });
+}
+
+function _sdLegalRead(target) {
+  if (typeof window !== 'undefined' && window.ZmtPartyLegal && typeof window.ZmtPartyLegal.read === 'function') {
+    return Object.assign(target, window.ZmtPartyLegal.read('editSup'));
+  }
+  [['Nis', 'nis'], ['Nif', 'nif'], ['Rc', 'rc'], ['Article', 'article']].forEach(function (m) {
+    const el = document.getElementById('editSup' + m[0]);
+    target[m[1]] = el ? el.value.trim() : '';
+  });
+  return target;
 }
 
 function closeSdEdit() {
@@ -496,6 +710,7 @@ function confirmSdEdit() {
   suppliers[idx].phone = document.getElementById('editSupPhone').value.trim();
   suppliers[idx].address = document.getElementById('editSupAddress').value.trim();
   suppliers[idx].email = document.getElementById('editSupEmail').value.trim();
+  _sdLegalRead(suppliers[idx]);
   DB.saveSuppliers(suppliers);
   DB.logAudit({ action: 'update', entity: 'supplier', entityId: id, detail: name });
   closeSdEdit();
@@ -523,9 +738,9 @@ function confirmSdDelete() {
 }
 
 function _sdModalHandler(e) {
-  ['sdInvoiceModal', 'sdPayModal', 'editSupplierModal'].forEach(id => {
+  ['sdInvoiceModal', 'sdPayModal', 'sdEditPayModal', 'editSupplierModal'].forEach(id => {
     const el = document.getElementById(id);
-    if (e.target === el) el.style.display = 'none';
+    if (e.target === el) _sdPortalModal(id, false);
   });
 }
 document.removeEventListener('click', _sdModalHandler);

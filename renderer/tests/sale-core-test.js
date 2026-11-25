@@ -279,7 +279,6 @@ console.log('--- executeSale: دفع أكبر من الإجمالي (PAID_EXCEED
   );
   const res = SaleCore.executeSale(db, {
     lines: [{ entries: [{ productId: 'a1', name: 'BRK', barcode: '100', qty: 1, price: 150 }], lineDiscount: 0 }],
-    customerId: 'c1',
     pay: { method: 'cash', total: 500 },
   }, {});
   assertEq(res.ok, false, 'فشل');
