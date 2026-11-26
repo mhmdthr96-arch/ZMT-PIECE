@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="ZMT Scanner">
+  <defs>
+    <linearGradient id="zmtScanBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b6db5"/>
+      <stop offset="1" stop-color="#003f6d"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="110" fill="url(#zmtScanBg)"/>
+
+  <!-- QR symbol (left) -->
+  <g transform="translate(64 112)" fill="#ffffff">
+    <g>
+      <rect x="0" y="0" width="78" height="78"/>
+      <rect x="10" y="10" width="58" height="58" fill="#004a7c"/>
+      <rect x="26" y="26" width="26" height="26"/>
+    </g>
+    <g transform="translate(156 0)">
+      <rect width="78" height="78"/>
+      <rect x="10" y="10" width="58" height="58" fill="#004a7c"/>
+      <rect x="26" y="26" width="26" height="26"/>
+    </g>
+    <g transform="translate(0 156)">
+      <rect width="78" height="78"/>
+      <rect x="10" y="10" width="58" height="58" fill="#004a7c"/>
+      <rect x="26" y="26" width="26" height="26"/>
+    </g>
+    <rect x="104" y="0" width="26" height="26"/>
+    <rect x="130" y="26" width="26" height="26"/>
+    <rect x="182" y="26" width="26" height="26"/>
+    <rect x="104" y="52" width="26" height="26"/>
+    <rect x="156" y="78" width="26" height="26"/>
+    <rect x="208" y="52" width="26" height="26"/>
+    <rect x="26" y="104" width="26" height="26"/>
+    <rect x="78" y="130" width="26" height="26"/>
+    <rect x="130" y="104" width="26" height="26"/>
+    <rect x="182" y="130" width="26" height="26"/>
+    <rect x="208" y="182" width="26" height="26"/>
+    <rect x="104" y="182" width="26" height="26"/>
+    <rect x="52" y="208" width="26" height="26"/>
+    <rect x="156" y="208" width="26" height="26"/>
+  </g>
+
+  <!-- Barcode symbol (right) -->
+  <g transform="translate(318 168)" fill="#ffffff">
+    <rect x="0" y="0" width="10" height="168" rx="3"/>
+    <rect x="20" y="0" width="18" height="168" rx="3"/>
+    <rect x="48" y="0" width="8" height="168" rx="3"/>
+    <rect x="66" y="0" width="24" height="168" rx="3"/>
+    <rect x="100" y="0" width="10" height="168" rx="3"/>
+    <rect x="120" y="0" width="16" height="168" rx="3"/>
+    <rect x="146" y="0" width="8" height="168" rx="3"/>
+  </g>
+
+  <text x="256" y="470" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700" letter-spacing="3" fill="#ffffff">ZMT</text>
+</svg>

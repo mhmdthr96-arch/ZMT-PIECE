@@ -64,6 +64,8 @@
     toast: $('toast'), sellerList: $('sellerList'), sellerOverlay: $('sellerOverlay'),
     checkoutOverlay: $('checkoutOverlay'), coLines: $('coLines'), checkoutInfo: $('checkoutInfo'),
     openCheckout: $('openCheckout'), checkoutSub: $('checkoutSub'),
+    install: $('installBtn'), iosHint: $('iosHint'), insecureHint: $('insecureHint'),
+    diagBtn: $('diagBtn'), diagPanel: $('diagPanel'),
   };
 
   // ---- helpers ---------------------------------------------------------------
@@ -832,8 +834,27 @@
       video.style.top = '0'; video.style.left = '0'; video.style.width = '100vw'; video.style.height = '100vh';
       video.style.objectFit = 'cover'; video.style.zIndex = '80';
       video.setAttribute('playsinline', '');
-      toast('وجّه الكاميرا نحو الباركود');
-      var base = window.ZXing ? new ZXing.BrowserBarcodeReader(window.ZXing.BarcodeFormat) : null;
+      toast('وجّه الكاميرا نحو الباركود أو QR');
+      // BrowserBarcodeReader only decodes 1D symbols (and its first argument is
+      // the retry delay, not a format list). MultiFormatReader + explicit hints
+      // lets one camera read both printed barcodes and product QR labels.
+      var hints = null;
+      if (window.ZXing && ZXing.DecodeHintType && ZXing.BarcodeFormat && typeof Map === 'function') {
+        hints = new Map();
+        hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+          ZXing.BarcodeFormat.QR_CODE,
+          ZXing.BarcodeFormat.EAN_13,
+          ZXing.BarcodeFormat.EAN_8,
+          ZXing.BarcodeFormat.UPC_A,
+          ZXing.BarcodeFormat.UPC_E,
+          ZXing.BarcodeFormat.CODE_128,
+          ZXing.BarcodeFormat.CODE_39,
+          ZXing.BarcodeFormat.ITF,
+          ZXing.BarcodeFormat.CODABAR,
+        ]);
+      }
+      var base = window.ZXing && ZXing.BrowserMultiFormatReader
+        ? new ZXing.BrowserMultiFormatReader(hints) : null;
       var stop = function () {
         cameraActive = false;
         video.style.display = 'none';
@@ -856,14 +877,18 @@
   }
 
   function onScanned(code) {
-    req('product/barcode', { code: code }).then(function (d) {
+    var text = String(code || '').trim();
+    var isProductQr = text.indexOf('ZMT-PRODUCT|') === 0;
+    // Both branches return the same sanitized group view, so adding to the
+    // cart and the later sale path stay byte-for-byte identical.
+    req(isProductQr ? 'product/qr' : 'product/barcode', { code: text }).then(function (d) {
       if (d && d.product) {
         addToCart(d.product);
         toast('أُضيف: ' + d.product.name, 'ok');
       } else {
-        toast('المنتج غير موجود: ' + code, 'err');
+        toast('المنتج غير موجود: ' + text, 'err');
       }
-    }).catch(function (e) { toast(e.msg || 'تعذر البحث بالباركود', 'err'); });
+    }).catch(function (e) { toast(e.msg || (isProductQr ? 'تعذر قراءة رمز QR' : 'تعذر البحث بالباركود'), 'err'); });
   }
 
   // ---- public API for inline handlers --------------------------------------------
@@ -900,9 +925,132 @@
   window.openCheckoutSheet = openCheckoutSheet;
   window.closeCheckoutSheet = closeCheckoutSheet;
 
+  // ---- PWA install plumbing ---------------------------------------------------------
+  // The POS page shares the local HTTPS origin with the scanner. Chrome only
+  // offers a real install (and fires beforeinstallprompt) when a service worker
+  // with a fetch handler controls the page. Keep it best-effort so that a
+  // missing CA or an old browser never breaks selling.
+  function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return Promise.resolve(false);
+    if (!window.isSecureContext) {
+      console.warn('[ZMT PWA] insecure context — trust the local CA certificate to enable install');
+      return Promise.resolve(false);
+    }
+    return navigator.serviceWorker.register(
+      new URL('sw.js', location.href).href,
+      { scope: new URL('./', location.href).href }
+    ).then(function (reg) {
+      console.info('[ZMT PWA] phone POS service worker registered:', reg && reg.scope);
+      return true;
+    }).catch(function (e) {
+      console.warn('[ZMT PWA] phone POS service worker failed:', e && e.message);
+      return false;
+    });
+  }
+
+  function setupInstall() {
+    var ua = (navigator.userAgent || '').toLowerCase();
+    var isIos = /iphone|ipad|ipod/.test(ua) && !window.MSStream;
+    if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return;
+
+    if (isIos) {
+      if (els.install) {
+        els.install.style.display = '';
+        els.install.onclick = function () { if (els.iosHint) els.iosHint.style.display = ''; };
+      }
+      return;
+    }
+    if (!window.isSecureContext) {
+      if (els.insecureHint) els.insecureHint.style.display = '';
+      return;
+    }
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      window.__zmtInstallPrompt = e;
+      window.__zmtInstallPromptSeen = true;
+      if (els.install) {
+        els.install.style.display = '';
+        els.install.onclick = function () {
+          var p = window.__zmtInstallPrompt;
+          if (!p) return;
+          p.prompt();
+          p.userChoice.then(function () {
+            if (els.install) els.install.style.display = 'none';
+          }).catch(function () {});
+        };
+      }
+    });
+    window.addEventListener('appinstalled', function () {
+      if (els.install) els.install.style.display = 'none';
+      if (els.iosHint) els.iosHint.style.display = 'none';
+    });
+  }
+
+  // ---- on-demand install diagnostics -------------------------------------------------
+  // A tiny button reveals why Chrome refuses a real install. Purely read-only:
+  // it never changes selling, stock, accounting or pairing.
+  function probeResource(url) {
+    return fetch(url, { cache: 'no-store' }).then(function (r) {
+      return r.ok ? 'OK (' + r.status + ')' : 'HTTP ' + r.status;
+    }).catch(function (e) {
+      return 'FAIL: ' + (e && e.message ? e.message : 'unknown');
+    });
+  }
+
+  function showDiagnostics() {
+    var lines = [];
+    lines.push('ZMT Phone POS — PWA diagnostics');
+    lines.push('Time: ' + new Date().toLocaleString());
+    lines.push('URL: ' + location.href);
+    lines.push('Secure context: ' + (window.isSecureContext ? 'YES' : 'NO (CA not trusted)'));
+    lines.push('Standalone: ' + ((window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true ? 'YES' : 'NO'));
+    lines.push('ServiceWorker API: ' + ('serviceWorker' in navigator ? 'YES' : 'NO'));
+    lines.push('beforeinstallprompt: ' + (window.__zmtInstallPromptSeen ? 'FIRED' : 'not fired'));
+
+    function finish() {
+      var text = lines.join('\n');
+      if (els.diagPanel) els.diagPanel.textContent = text;
+      console.info('[ZMT PWA] diagnostics\n' + text);
+    }
+    if (!('serviceWorker' in navigator)) { finish(); return; }
+
+    navigator.serviceWorker.getRegistration().then(function (reg) {
+      lines.push('SW registration: ' + (reg ? 'YES' : 'NO'));
+      if (reg) lines.push('SW scope: ' + reg.scope + (reg.active ? ' (active)' : ' (pending)'));
+      lines.push('Page controlled: ' + (navigator.serviceWorker.controller ? 'YES' : 'NO'));
+      return Promise.all([
+        probeResource(new URL('manifest.webmanifest', location.href).href).then(function (v) { lines.push('manifest: ' + v); }),
+        probeResource(new URL('icons/icon-192.png', location.href).href).then(function (v) { lines.push('icon-192: ' + v); }),
+        probeResource(new URL('icons/icon-512.png', location.href).href).then(function (v) { lines.push('icon-512: ' + v); }),
+        probeResource(new URL('/cert-help', location.origin).href).then(function (v) { lines.push('cert-help: ' + v); }),
+      ]);
+    }).catch(function (e) {
+      lines.push('SW lookup error: ' + (e && e.message ? e.message : 'unknown'));
+    }).then(finish);
+  }
+
+  function setupDiagnostics() {
+    if (!els.diagBtn || !els.diagPanel) return;
+    els.diagBtn.onclick = function () {
+      var wasHidden = els.diagPanel.style.display === 'none' || !els.diagPanel.style.display;
+      els.diagPanel.style.display = wasHidden ? 'block' : 'none';
+      if (wasHidden) showDiagnostics();
+    };
+    // If the CA was trusted while the page stayed open, retry on return so the
+    // install prompt can appear without a manual reload.
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'visible') return;
+      if (!window.isSecureContext || !('serviceWorker' in navigator)) return;
+      registerServiceWorker();
+    });
+  }
+
   // ---- boot ------------------------------------------------------------------------
 
   function boot() {
+    registerServiceWorker();
+    setupInstall();
+    setupDiagnostics();
     setConn(false);
     $('confirmBtn').disabled = true;
     ['paidSingle', 'paidCash', 'paidCcp'].forEach(function (id) { $(id).value = '0'; });

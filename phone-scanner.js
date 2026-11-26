@@ -339,11 +339,59 @@ function handlePair(req, res) {
   });
 }
 
-function handleCert(res) {
+function handleCert(req, res) {
   const c = certFiles();
   if (!fs.existsSync(c.ca)) { res.writeHead(404); res.end('not found'); return; }
-  res.writeHead(200, { 'Content-Type': MIME['.crt'], 'Content-Disposition': 'attachment; filename="ZMT-PHONE-CA.crt"' });
-  res.end(fs.readFileSync(c.ca));
+  const buf = fs.readFileSync(c.ca);
+  const total = buf.length;
+  const base = {
+    'Content-Type': 'application/octet-stream', // plain save; do not hand off to Android's cert installer mid-download
+    'Content-Disposition': 'attachment; filename="ZMT-PHONE-CA.crt"',
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  };
+  // Android's download manager requires Content-Length and a real 206 reply on
+  // resume. Without them the progress bar waits forever and "Resume" loops.
+  const range = (req.headers && req.headers.range) || '';
+  const m = /^bytes=(\d*)-(\d*)$/.exec(range);
+  if (m) {
+    let start = m[1] === '' ? Math.max(0, total - parseInt(m[2] || '0', 10)) : parseInt(m[1], 10);
+    let end = m[2] === '' ? total - 1 : (m[1] === '' ? total - 1 : parseInt(m[2], 10));
+    if (isNaN(start) || isNaN(end) || start < 0 || end < start || start >= total) {
+      res.writeHead(416, Object.assign({}, base, { 'Content-Range': 'bytes */' + total }));
+      res.end();
+      return;
+    }
+    end = Math.min(end, total - 1);
+    const part = buf.slice(start, end + 1);
+    res.writeHead(206, Object.assign({}, base, {
+      'Content-Length': part.length,
+      'Content-Range': 'bytes ' + start + '-' + end + '/' + total,
+    }));
+    res.end(part);
+    return;
+  }
+  res.writeHead(200, Object.assign({}, base, { 'Content-Length': total }));
+  res.end(buf);
+}
+
+// Serve the CA install guide with the certificate embedded in the HTML itself.
+// Android DownloadManager does not inherit Chrome's "proceed anyway" exception,
+// so an inline copy is the reliable path — no second network request at all.
+function handleCertHelp(res) {
+  const c = certFiles();
+  const page = path.join(__dirname, 'renderer', 'phone-scanner', 'cert-help.html');
+  let html = fs.existsSync(page) ? fs.readFileSync(page, 'utf8') : '<html lang="ar"><body>صفحة الدليل غير متوفرة.</body></html>';
+  const pem = (fs.existsSync(c.ca) ? fs.readFileSync(c.ca, 'utf8') : '').trim();
+  const safe = pem.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  html = html.replace('%%ZMT_CERT_PEM%%', safe || 'الشهادة غير متوفرة حالياً — شغّل خدمة الهاتف من الكمبيوتر ثم أعد فتح هذه الصفحة.');
+  res.writeHead(200, {
+    'Content-Type': MIME['.html'],
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(html);
 }
 
 // ---- WebSocket layer --------------------------------------------------------
@@ -481,7 +529,10 @@ async function start() {
     try {
       let url = (req.url || '/').split('?')[0];
       if (url === '/api/pair') { handlePair(req, res); return; }
-      if (url === '/cert') { handleCert(res); return; }
+      if (url === '/cert') { handleCert(req, res); return; }
+      // Arabic CA guide served from the phone itself, with the certificate
+      // embedded in the HTML so no separate download request is required.
+      if (url === '/cert-help') { handleCertHelp(res); return; }
       const file = readStatic(url);
       if (!file) { res.writeHead(404); res.end('Not found'); return; }
       const ext = (path.extname(file) || '').toLowerCase();

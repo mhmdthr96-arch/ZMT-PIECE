@@ -106,6 +106,57 @@ check(at(bpPrintSrc, 'data-bp-qrmm') >= 0 && at(bpPrintSrc, 'qrMm') >= 0,
   'حجم QR قابل للاختيار ومحفوظ ضمن إعدادات الملصق');
 
 // ---------------------------------------------------------------------------
+console.log('\n=== 2ج. انحدار: ترتيب تحديث أزرار QR قبل المعاينة ===');
+// ---------------------------------------------------------------------------
+// نُنفّذ جسم مستمع النقر الحقيقي من الملف النصي مع بدائل صغيرة، لأن الخلل كان
+// ترتيبياً: renderPreview() قرأ الزر active القديم فأعاد الوضع إلى barcode.
+function listenerBody(src, marker, from) {
+  const start = src.indexOf(marker, from || 0);
+  if (start < 0) return '';
+  const open = src.indexOf('{', start);
+  if (open < 0) return '';
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') {
+      depth--;
+      if (depth === 0) return src.slice(open + 1, i);
+    }
+  }
+  return '';
+}
+const pmBlockAt = at(bpPrintSrc, "_modal.querySelectorAll('[data-bp-printmode]')");
+const clickBody = listenerBody(bpPrintSrc, "b.addEventListener('click', function () {", pmBlockAt);
+check(!!clickBody, 'تم العثور على مستمع أزرار نوع الكود المطبوع');
+
+function runPrintModeClick(modeName, cfgObj, calls) {
+  const fn = new Function('b', 'PRINT_MODES', '_cfg', 'updatePrintModeUI', 'renderPreview', clickBody);
+  fn({ getAttribute: function () { return modeName; } }, BP.PRINT_MODES, cfgObj,
+    function () { calls.push('updatePrintModeUI'); },
+    function () { calls.push('renderPreview'); });
+}
+
+const qrCalls = [];
+const qrCfg = {};
+runPrintModeClick('qr', qrCfg, qrCalls);
+eq(qrCfg.printMode, 'qr', 'النقر على «QR فقط» يثبّت الوضع الجديد');
+eq(qrCalls.join(' > '), 'updatePrintModeUI > renderPreview',
+  'واجهة الأزرار تُحدَّث قبل قراءة الإعدادات وإعادة رسم المعاينة (إصلاح الخلل)');
+
+const bothCalls = [];
+const bothCfg = {};
+runPrintModeClick('both', bothCfg, bothCalls);
+eq(bothCfg.printMode, 'both', 'النقر على «الاثنان معاً» يثبّت الوضع الجديد');
+eq(bothCalls.join(' > '), 'updatePrintModeUI > renderPreview',
+  'نفس الترتيب مطبَّق في وضع الاثنين');
+
+const ignoredCalls = [];
+const ignoredCfg = { printMode: 'barcode' };
+runPrintModeClick('unknown', ignoredCfg, ignoredCalls);
+eq(ignoredCfg.printMode, 'barcode', 'قيمة غير معروفة لا تغيّر الوضع الحالي');
+eq(ignoredCalls.length, 0, 'قيمة غير معروفة لا تُعيد رسم المعاينة');
+
+// ---------------------------------------------------------------------------
 console.log('\n=== 3. أحجام الخطوط (0 = تلقائي) ===');
 // ---------------------------------------------------------------------------
 const big = label(product, { nameFont: 19, shopFont: 7, priceFont: 24 });

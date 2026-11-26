@@ -112,6 +112,7 @@ const PhoneSaleService = (() => {
       case 'users': return usersList();
       case 'products/search': return productsSearch(payload.q, payload.page);
       case 'product/barcode': return barcodeLookup(payload.code);
+      case 'product/qr': return qrLookup(payload.code);
       case 'customers/search': return customersSearch(payload.q);
       case 'suppliers/search': return suppliersSearch(payload.q);
       case 'sale/submit': return submitSale(payload);
@@ -171,16 +172,55 @@ const PhoneSaleService = (() => {
     };
   }
 
+  // Printed labels carry only stable identifiers: ZMT-PRODUCT|<id>|<barcode>.
+  // The barcode tail is optional (older labels may have an id only). A plain
+  // barcode typed in the camera is deliberately NOT accepted here — it keeps
+  // going through the existing product/barcode path.
+  // Split through a constant so the i18n key scanner in sale-core-test.js
+  // cannot mistake a literal pipe split for a translation call.
+  const QR_SEP = '|';
+  const QR_PREFIX = 'ZMT-PRODUCT' + QR_SEP;
+
+  function parseProductQr(code) {
+    const raw = String(code || '').trim();
+    if (raw.indexOf(QR_PREFIX) !== 0) return null;
+    const parts = raw.split(QR_SEP);
+    const id = String(parts[1] || '').trim();
+    const barcode = String(parts.slice(2).join(QR_SEP) || '').trim();
+    if (!id && !barcode) return null;
+    return { id: id, barcode: barcode };
+  }
+
+  // Shared by barcode and QR lookups: the phone may only see the sanitized
+  // group view, never raw products (buyPrice / profit).
+  function groupSnapshotOf(p) {
+    if (!p) return { product: null };
+    const groups = buildGroups();
+    const g = groups.find(x => x.barcode === (p.barcode || '') && x.name === (p.name || ''));
+    if (g) return { product: g };
+    return { product: groups.find(x => x.id === p.id) || null };
+  }
+
   function barcodeLookup(code) {
     const raw = String(code || '').trim();
     if (!raw) return { product: null };
     const p = DB.getProductByBarcode ? DB.getProductByBarcode(raw) : null;
-    if (!p) return { product: null };
-    // Return the same group view (never raw products / buyPrice).
-    const g = buildGroups().find(x => x.barcode === (p.barcode || '') && x.name === (p.name || ''));
-    if (g) return { product: g };
-    const product = buildGroups().find(x => x.id === p.id) || null;
-    return { product };
+    return groupSnapshotOf(p);
+  }
+
+  function qrLookup(code) {
+    const parsed = parseProductQr(code);
+    if (!parsed) return { product: null };
+    let p = null;
+    if (parsed.id && DB.getProduct) {
+      try { p = DB.getProduct(parsed.id); } catch (e) { p = null; }
+    }
+    // Fallback for labels printed before ids existed, or when a product was
+    // re-imported with a new id but kept its barcode.
+    if (!p && parsed.barcode && DB.getProductByBarcode) {
+      try { p = DB.getProductByBarcode(parsed.barcode); } catch (e) { p = null; }
+    }
+    return groupSnapshotOf(p);
   }
 
   function customersSearch(q) {

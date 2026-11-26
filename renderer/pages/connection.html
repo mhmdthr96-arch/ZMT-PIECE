@@ -398,6 +398,27 @@
             </div>
           </div>
 
+          <!-- CA certificate install guide (real PWA install needs a trusted origin) -->
+          <div style="margin-top:22px;padding-top:18px;border-top:1px dashed var(--silver-200,#dfe4ec);">
+            <h4 style="margin-bottom:6px;"><i class="fas fa-shield-alt" style="color:#0066B1;"></i> <span data-i18n="connection.certHelpTitle">تثبيت شهادة الأمان على الهاتف (مطلوب للتطبيق المستقل)</span></h4>
+            <p class="conn-info-text" data-i18n="connection.certHelpDesc">إن ضغطت «متابعة» على تحذير الشهادة، ثبّت الشهادة مرة واحدة من الرابط التالي ثم أعد فتح الصفحة؛ وإلا سيبقى خيار التثبيت كاختصار فقط.</p>
+            <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;margin-top:14px;">
+              <div style="text-align:center;">
+                <div id="phsCertQr" style="background:#fff;padding:10px;border-radius:10px;display:inline-block;"></div>
+                <div id="phsCertUrl" dir="ltr" style="margin-top:8px;font-family:monospace;color:#888;font-size:12px;"></div>
+                <div style="margin-top:8px;">
+                  <button class="btn btn-secondary" onclick="phsCopyLink('cert', this)"><i class="fas fa-copy"></i> <span data-i18n="connection.certHelpCopy">نسخ رابط الدليل</span></button>
+                </div>
+              </div>
+              <div style="flex:1;min-width:220px;">
+                <button class="btn btn-primary" id="phsCertHelpLink" type="button" style="display:none" onclick="phsOpenCertHelp()" title="يفتح الدليل في متصفحك الافتراضي">
+                  <i class="fas fa-external-link-alt"></i> <span data-i18n="connection.certHelpOpen">فتح دليل التثبيت</span>
+                </button>
+                <div class="conn-sync-result" id="phsCertResult"></div>
+              </div>
+            </div>
+          </div>
+
           <!-- Approved devices -->
           <div class="phs-devices" style="margin-top:24px;">
             <h4 style="margin-bottom:10px;"><i class="fas fa-mobile-alt"></i> <span data-i18n="connection.scannerDevices">الأجهزة المقترنة</span></h4>

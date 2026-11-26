@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const asar = require('@electron/asar');
+const vm = require('vm');
 
 const root = path.join(__dirname, '..', '..') + path.sep;
 
@@ -111,6 +112,103 @@ function checkSource() {
   }
 }
 
+// New QR support is verified against SOURCE only: the built asars below are
+// from the previous release and must keep passing their original checks.
+function checkPhoneQrSource() {
+  console.log('\n=== phone sale: QR camera + product/qr (source) ===');
+  const app = fs.readFileSync(srcJsPath, 'utf8');
+  const svc = fs.readFileSync(path.join(root, 'renderer', 'js', 'phone-sale-service.js'), 'utf8');
+  const needles = [
+    [app, 'BrowserMultiFormatReader', 'الكاميرا تستخدم قارئاً متعدد الصيغ'],
+    [app, 'ZXing.DecodeHintType.POSSIBLE_FORMATS', 'قائمة الصيغ مُمرَّرة ك hints'],
+    [app, 'ZXing.BarcodeFormat.QR_CODE', 'QR_CODE ضمن الصيغ المقبولة'],
+    [app, 'ZXing.BarcodeFormat.CODE_128', 'باركود CODE_128 ما زال مقبولاً'],
+    [app, 'ZMT-PRODUCT|', 'التعرّف على حمولة QR الخاصة بالمنتجات'],
+    [app, "req(isProductQr ? 'product/qr' : 'product/barcode'", 'التفرّع إلى product/qr للـ QR فقط'],
+    [app, 'وجّه الكاميرا نحو الباركود أو QR', 'تلميح الكاميرا يذكر QR والباركود'],
+    [svc, "case 'product/qr': return qrLookup(payload.code);", 'الخدمة تستقبل product/qr'],
+    [svc, 'function parseProductQr(code)', 'محلّل حمولة QR موجود'],
+    [svc, 'DB.getProduct(parsed.id)', 'البحث أولاً بمعرّف المنتج'],
+    [svc, 'DB.getProductByBarcode(parsed.barcode)', 'الرجوع للباركود عند تعذّر المعرّف'],
+    [svc, 'function groupSnapshotOf(p)', 'QR والباركود يشتركان في نفس لقطة المجموعة الآمنة'],
+  ];
+  for (const [src, needle, label] of needles) {
+    src.indexOf(needle) !== -1 ? ok(label) : bad(label);
+  }
+  app.indexOf('new ZXing.BrowserBarcodeReader') === -1
+    ? ok('القارئ القديم أحادي الباركود لم يعد مستخدماً')
+    : bad('القارئ القديم ما زال مستخدماً — QR لن يُقرأ');
+}
+
+function checkPhoneQrService() {
+  console.log('\n=== phone sale: product/qr lookup ===');
+  let S;
+  try { S = require('../js/phone-sale-service.js'); }
+  catch (e) { bad('تعذّر تحميل PhoneSaleService: ' + e.message); return; }
+
+  const products = [
+    { id: 'p1', name: 'منتج س', barcode: '123', sellPrice: 10, quantity: 2 },
+    { id: 'p2', name: 'منتج ص', barcode: '999', sellPrice: 20, quantity: 1 },
+  ];
+  const hadDB = Object.prototype.hasOwnProperty.call(global, 'DB');
+  const oldDB = global.DB;
+  const hadWindow = Object.prototype.hasOwnProperty.call(global, 'window');
+  const oldWindow = global.window;
+  global.DB = {
+    getProducts: () => products,
+    getProduct: (id) => products.find((p) => p.id === String(id)) || null,
+    getProductByBarcode: (b) => products.find((p) => p.barcode === String(b)) || null,
+  };
+  global.window = { phoneSaleEnabled: true, getPharmacyMode: () => false };
+
+  const check = (c, m) => c ? ok(m) : bad(m);
+  const eq = (a, b, m) => {
+    const detail = m + ' (got ' + JSON.stringify(a) + ', want ' + JSON.stringify(b) + ')';
+    a === b ? ok(detail) : bad(detail);
+  };
+  try {
+    const byId = S.handle('product/qr', { code: 'ZMT-PRODUCT|p1|123' });
+    eq(byId.product && byId.product.id, 'p1', 'QR بمعرّف صحيح يرجع المنتج');
+    check(byId.product && byId.product.sellPrice === 10 && byId.product.available === 2,
+      'المنتج الراجع هو لقطة المجموعة المعتادة (سعر/كمية)');
+    check(byId.product && !('buyPrice' in byId.product) && !('profit' in byId.product),
+      'لقطة QR لا تكشف سعر الشراء أو الربح');
+
+    const fallback = S.handle('product/qr', { code: 'ZMT-PRODUCT|missing-id|999' });
+    eq(fallback.product && fallback.product.id, 'p2', 'معرّف قديم/مفقود → بحث احتياطي بالباركود');
+
+    const idOnly = S.handle('product/qr', { code: 'ZMT-PRODUCT|p1' });
+    eq(idOnly.product && idOnly.product.id, 'p1', 'حمولة QR قديمة بمعرّف فقط مقبولة');
+
+    eq(S.handle('product/qr', { code: '123' }).product, null,
+      'باركود عادي لا يُقبل عبر product/qr (يذهب للمسار القديم)');
+    eq(S.handle('product/qr', { code: 'ZMT-PRODUCT||' }).product, null,
+      'حمولة QR فارغة تُرفض بأمان');
+    eq(S.handle('product/qr', {}).product, null,
+      'طلب QR بدون بيانات يُرفض بأمان');
+
+    const legacy = S.handle('product/barcode', { code: '123' });
+    eq(legacy.product && legacy.product.id, 'p1', 'مسار الباركود القديم لم يتغيّر');
+
+    try {
+      const qrSrc = fs.readFileSync(path.join(root, 'renderer', 'js', 'product-qr.js'), 'utf8');
+      const ProductQR = vm.runInNewContext(qrSrc + '\n;ProductQR;', {
+        window: {},
+        localStorage: { getItem: () => null, setItem: () => {} },
+      });
+      const payload = ProductQR.payloadOf({ id: 'p2', barcode: '999' });
+      eq(payload, 'ZMT-PRODUCT|p2|999', 'حمولة الملصق المطبوع ثابتة كما هي');
+      eq(S.handle('product/qr', { code: payload }).product.id, 'p2',
+        'حمولة الملصق المطبوع تُحلّ وتُباع من الهاتف');
+    } catch (e) {
+      bad('فحص حمولة الملصق: ' + e.message);
+    }
+  } finally {
+    if (hadDB) global.DB = oldDB; else delete global.DB;
+    if (hadWindow) global.window = oldWindow; else delete global.window;
+  }
+}
+
 const inListing = (p) => '\\' + p.split('/').join('\\');
 const inArchive = (p) => p.split('/').join('\\');
 
@@ -151,6 +249,8 @@ function checkAsar(file) {
 }
 
 checkSource();
+checkPhoneQrSource();
+checkPhoneQrService();
 for (const t of asars) {
   if (!fs.existsSync(path.join(root, t))) { console.log('\n=== ' + t + ' === (not built — skipped)'); continue; }
   checkAsar(t);

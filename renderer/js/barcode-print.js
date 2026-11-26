@@ -564,6 +564,10 @@
         var mode = b.getAttribute('data-bp-printmode');
         if (PRINT_MODES.indexOf(mode) < 0) return;
         _cfg.printMode = mode;
+        // renderPreview() re-reads the mode from the ACTIVE button, so the
+        // button state must be synced first — otherwise the previous mode
+        // (usually "barcode") silently wins and QR never reaches the preview.
+        updatePrintModeUI();
         renderPreview();
       });
     });

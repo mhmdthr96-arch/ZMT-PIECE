@@ -10,8 +10,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="ZMT بيع">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180.png">
+  <link rel="icon" href="favicon.ico" type="image/x-icon" sizes="16x16 32x32 48x48 256x256">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     @font-face {
@@ -281,6 +284,41 @@
     .toast.ok { background: var(--ok); color: #fff; }
 
     .notes { font-size: 11px; color: var(--dim); text-align: center; padding: 8px 0 12px; }
+
+    /* PWA install affordances — hidden unless the browser can actually install */
+    .install-chip {
+      position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+      display: none; z-index: 88; max-width: 90%; white-space: nowrap;
+      padding: 11px 18px; border-radius: 12px; border: 1px solid rgba(0,214,170,.5);
+      background: linear-gradient(135deg, var(--accent), #007a56); color: #fff;
+      font-size: 13px; font-weight: 800; cursor: pointer; text-align: center;
+      box-shadow: 0 8px 26px rgba(0,120,86,.45);
+    }
+    .install-hint {
+      position: absolute; bottom: 58px; left: 50%; transform: translateX(-50%);
+      display: none; z-index: 88; max-width: 88%;
+      padding: 9px 14px; border-radius: 10px; background: #1b2940; color: #cfe0ee;
+      font-size: 12px; line-height: 1.6; text-align: center;
+      box-shadow: 0 6px 22px rgba(0,0,0,.4);
+    }
+    .install-hint b { color: #fff; }
+    .install-hint.warn { color: var(--warn); }
+
+    /* On-demand install diagnostics: invisible until the small button is tapped */
+    .diag-btn {
+      position: fixed; bottom: 10px; left: 10px; z-index: 86;
+      padding: 7px 10px; border-radius: 9px; border: 1px solid var(--line);
+      background: rgba(23,34,54,.94); color: var(--dim); font-size: 11px; cursor: pointer;
+    }
+    .diag-panel {
+      position: fixed; bottom: 46px; left: 10px; right: 10px; z-index: 87;
+      max-height: 48vh; overflow: auto; display: none;
+      padding: 11px 13px; border-radius: 10px; border: 1px solid var(--line);
+      background: rgba(8,13,24,.97); color: #cfe0ee;
+      font: 11px/1.6 ui-monospace, Menlo, Consolas, monospace;
+      white-space: pre-wrap; word-break: break-word; direction: ltr; text-align: left;
+      box-shadow: 0 8px 26px rgba(0,0,0,.45);
+    }
   </style>
 </head>
 <body>
@@ -396,6 +434,17 @@
 
   <div class="success" id="successView"></div>
   <div class="toast" id="toast"></div>
+  <button class="install-chip" id="installBtn" type="button">＋ تثبيت تطبيق البيع</button>
+  <div class="install-hint" id="iosHint">
+    على آيفون: اضغط <b>Share</b ثم <b>Add to Home Screen</b> لتظهر الأيقونة وتفتح كتطبيق مستقل.
+  </div>
+  <div class="install-hint warn" id="insecureHint">
+    البيع يعمل الآن، لكن المتصفح يعتبر الرابط غير آمن بعد تجاوز تحذير الشهادة، ولن يظهر خيار التثبيت الحقيقي. افتح
+    <a href="/cert-help" style="color:#7ec8ff;text-decoration:underline;font-weight:700;">دليل تثبيت شهادة الأمان</a>
+    ثم أعد فتح هذه الصفحة.
+  </div>
+  <button class="diag-btn" id="diagBtn" type="button" title="تشخيص التثبيت">⚙ تشخيص</button>
+  <pre class="diag-panel" id="diagPanel" style="display:none;"></pre>
 
   <script src="vendor/zxing.min.js"></script>
   <script src="app.js"></script>

@@ -1,8 +1,10 @@
 // Service worker for the ZMT Phone POS PWA.
 // Network-first for navigations, cache-first for static assets. Never touch
 // the WebSocket or API endpoints.
-const CACHE = 'zmt-psale-v1';
-const CORE = ['/', 'index.html', 'manifest.webmanifest', 'app.js', 'vendor/zxing.min.js', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
+const CACHE = 'zmt-psale-v3';
+// Relative to this script (/sale/sw.js): './' is the POS page, NOT the scanner
+// root. Registering with a broken core used to cache the wrong application.
+const CORE = ['./', 'index.html', 'manifest.webmanifest', 'app.js', 'vendor/zxing.min.js', 'favicon.ico', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
@@ -20,7 +22,9 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (url.pathname === '/api/pair' || url.pathname === '/ws' || url.pathname === '/cert') return;
+  // Never cache the CA endpoints; /cert-help embeds the live certificate.
+  if (url.pathname === '/api/pair' || url.pathname === '/ws' ||
+      url.pathname === '/cert' || url.pathname === '/cert-help') return;
   const isNavigation = e.request.mode === 'navigate' ||
     (e.request.method === 'GET' && (url.pathname === '/' || url.pathname === '/sale/' || url.pathname === '/sale'));
   if (isNavigation) {

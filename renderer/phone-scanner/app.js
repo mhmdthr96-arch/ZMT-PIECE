@@ -41,6 +41,9 @@
     retry: document.getElementById('retryBtn'),
     install: document.getElementById('installBtn'),
     iosHint: document.getElementById('iosHint'),
+    insecureHint: document.getElementById('insecureHint'),
+    diagBtn: document.getElementById('diagBtn'),
+    diagPanel: document.getElementById('diagPanel'),
   };
 
   var ws = null;
@@ -128,7 +131,7 @@
           wsReady = true;
           startHeartbeat();
           setConn(true, 'online');
-          setStatus('Scanner ready — point at a barcode', 'ok');
+          setStatus('Scanner ready — point at a barcode or QR', 'ok');
           startCamera();
         } else {
           wsReady = false;
@@ -185,18 +188,70 @@
   var decoder = null;
   var frameCount = 0;
 
+  // Printed product QR labels carry ZMT-PRODUCT|<id>|<barcode>. This PWA is a
+  // read-only wireless scanner: it types the decoded value into whichever
+  // desktop field has focus, so send the barcode inside the payload (or the id
+  // on older labels) instead of the raw text — exactly like a wired scanner.
+  function scannableCode(text) {
+    var raw = String(text || '').trim();
+    if (raw.indexOf('ZMT-PRODUCT|') === 0) {
+      var parts = raw.split('|');
+      var barcode = String(parts.slice(2).join('|') || '').trim();
+      if (barcode) return barcode;
+      return String(parts[1] || '').trim();
+    }
+    return raw;
+  }
+
+  function zxingFormats() {
+    if (!window.ZXing || !ZXing.DecodeHintType || !ZXing.BarcodeFormat || typeof Map !== 'function') return null;
+    var hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.QR_CODE,
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.UPC_A,
+      ZXing.BarcodeFormat.UPC_E,
+      ZXing.BarcodeFormat.CODE_128,
+      ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.ITF,
+      ZXing.BarcodeFormat.CODABAR,
+    ]);
+    return hints;
+  }
+
   function startCamera() {
     if (cameraActive) return;
     cameraActive = true;
     if (els.retry.style.display) els.retry.style.display = 'none';
 
+    if (window.ZXing && window.ZXing.BrowserMultiFormatReader) {
+      try {
+        decoder = new ZXing.BrowserMultiFormatReader(zxingFormats());
+        decoder.decodeFromVideoDevice(undefined, 'video', function (result) {
+          if (result && result.text) {
+            sendScan(scannableCode(result.text));
+          }
+          frameCount++;
+        }).then(function (controls) {
+          els.bootLogo.style.display = 'none';
+        }).catch(function (e) {
+          cameraActive = false;
+          setStatus('Camera unavailable — ' + (e.message || 'permission denied'), 'error');
+          els.retry.style.display = '';
+        });
+        return;
+      } catch (e) {
+        /* fall through to the older single-format reader / manual fallback */
+      }
+    }
+
+    // Older bundled ZXing without MultiFormatReader: keep 1D scanning working.
     if (window.ZXing && window.ZXing.BrowserBarcodeReader) {
       try {
         decoder = new ZXing.BrowserBarcodeReader(window.ZXing.BarcodeFormat);
-        decoder.decodeFromVideoDevice(undefined, 'video', function (result, err, controls) {
-          if (result && result.text) {
-            sendScan(String(result.text).trim());
-          }
+        decoder.decodeFromVideoDevice(undefined, 'video', function (result) {
+          if (result && result.text) sendScan(scannableCode(result.text));
           frameCount++;
         }).then(function (controls) {
           els.bootLogo.style.display = 'none';
@@ -219,6 +274,9 @@
       els.retry.style.display = '';
       return;
     }
+    if (!decoder && window.ZXing && ZXing.BrowserMultiFormatReader) {
+      try { decoder = new ZXing.BrowserMultiFormatReader(zxingFormats()); } catch (e) {}
+    }
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(function (stream) {
       video.srcObject = stream;
       els.scanline.classList.add('active');
@@ -232,8 +290,14 @@
             var cv = window.document.createElement('canvas');
             cv.width = video.videoWidth; cv.height = video.videoHeight;
             cv.getContext('2d').drawImage(video, 0, 0);
-            var res = window.decodeBarcodeFromCanvas(cv);
-            if (res) sendScan(String(res).trim());
+            var res = null;
+            if (decoder && typeof decoder.decodeFromCanvas === 'function') {
+              res = decoder.decodeFromCanvas(cv);
+              res = res && res.text ? res.text : null;
+            } else if (typeof window.decodeBarcodeFromCanvas === 'function') {
+              res = window.decodeBarcodeFromCanvas(cv);
+            }
+            if (res) sendScan(scannableCode(res));
           } catch (e) {}
         }
         requestAnimationFrame(tick);
@@ -246,7 +310,29 @@
     });
   }
 
-  // ---- install as PWA ---------------------------------------------------------
+  // ---- PWA install plumbing ---------------------------------------------------
+  // Manifests and icons alone only create a home-screen shortcut on Android.
+  // Chrome requires an active service worker with a fetch handler before it
+  // treats the site as an installable app and fires beforeinstallprompt.
+  // Registration is best-effort: scanning must keep working on older browsers
+  // or when the local CA has not been trusted yet (insecure context).
+  function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return Promise.resolve(false);
+    if (!window.isSecureContext) {
+      console.warn('[ZMT PWA] insecure context — trust the local CA certificate to enable install');
+      return Promise.resolve(false);
+    }
+    return navigator.serviceWorker.register(
+      new URL('sw.js', location.href).href,
+      { scope: new URL('./', location.href).href }
+    ).then(function (reg) {
+      console.info('[ZMT PWA] scanner service worker registered:', reg && reg.scope);
+      return true;
+    }).catch(function (e) {
+      console.warn('[ZMT PWA] scanner service worker failed:', e && e.message);
+      return false;
+    });
+  }
 
   // true once the app runs from the home-screen icon (standalone mode).
   function isInstalled() {
@@ -267,9 +353,17 @@
       return;
     }
 
+    // A cert warning that was clicked through leaves the origin insecure;
+    // service workers cannot register there, so no install prompt will fire.
+    if (!window.isSecureContext) {
+      if (els.insecureHint) els.insecureHint.style.display = '';
+      return;
+    }
+
     window.addEventListener('beforeinstallprompt', function (e) {
       e.preventDefault();
       window.__installPrompt = e;
+      window.__zmtInstallPromptSeen = true;
       els.install.style.display = '';
       els.install.onclick = function () {
         var p = window.__installPrompt;
@@ -286,10 +380,71 @@
     window.addEventListener('appinstalled', function () { els.install.style.display = 'none'; });
   }
 
+  // ---- on-demand install diagnostics -------------------------------------------
+  // A tiny button reveals why Chrome refuses a real install. Purely read-only:
+  // it never changes scanning, pairing, selling or any stored data.
+  function probeResource(url) {
+    return fetch(url, { cache: 'no-store' }).then(function (r) {
+      return r.ok ? 'OK (' + r.status + ')' : 'HTTP ' + r.status;
+    }).catch(function (e) {
+      return 'FAIL: ' + (e && e.message ? e.message : 'unknown');
+    });
+  }
+
+  function showDiagnostics() {
+    var lines = [];
+    lines.push('ZMT Scanner — PWA diagnostics');
+    lines.push('Time: ' + new Date().toLocaleString());
+    lines.push('URL: ' + location.href);
+    lines.push('Secure context: ' + (window.isSecureContext ? 'YES' : 'NO (CA not trusted)'));
+    lines.push('Standalone: ' + (isInstalled() ? 'YES' : 'NO'));
+    lines.push('ServiceWorker API: ' + ('serviceWorker' in navigator ? 'YES' : 'NO'));
+    lines.push('beforeinstallprompt: ' + (window.__zmtInstallPromptSeen ? 'FIRED' : 'not fired'));
+
+    function finish() {
+      var text = lines.join('\n');
+      if (els.diagPanel) els.diagPanel.textContent = text;
+      console.info('[ZMT PWA] diagnostics\n' + text);
+    }
+    if (!('serviceWorker' in navigator)) { finish(); return; }
+
+    navigator.serviceWorker.getRegistration().then(function (reg) {
+      lines.push('SW registration: ' + (reg ? 'YES' : 'NO'));
+      if (reg) lines.push('SW scope: ' + reg.scope + (reg.active ? ' (active)' : ' (pending)'));
+      lines.push('Page controlled: ' + (navigator.serviceWorker.controller ? 'YES' : 'NO'));
+      return Promise.all([
+        probeResource(new URL('manifest.webmanifest', location.href).href).then(function (v) { lines.push('manifest: ' + v); }),
+        probeResource(new URL('icons/icon-192.png', location.href).href).then(function (v) { lines.push('icon-192: ' + v); }),
+        probeResource(new URL('icons/icon-512.png', location.href).href).then(function (v) { lines.push('icon-512: ' + v); }),
+        probeResource(new URL('cert-help', location.href).href).then(function (v) { lines.push('cert-help: ' + v); }),
+      ]);
+    }).catch(function (e) {
+      lines.push('SW lookup error: ' + (e && e.message ? e.message : 'unknown'));
+    }).then(finish);
+  }
+
+  function setupDiagnostics() {
+    if (!els.diagBtn || !els.diagPanel) return;
+    els.diagBtn.onclick = function () {
+      var wasHidden = els.diagPanel.style.display === 'none' || !els.diagPanel.style.display;
+      els.diagPanel.style.display = wasHidden ? 'block' : 'none';
+      if (wasHidden) showDiagnostics();
+    };
+    // If the CA was trusted while the page stayed open, retry on return so the
+    // install prompt can appear without a manual reload.
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'visible') return;
+      if (!window.isSecureContext || !('serviceWorker' in navigator)) return;
+      registerServiceWorker();
+    });
+  }
+
   // ---- boot -------------------------------------------------------------------
 
   function boot() {
+    registerServiceWorker();
     setupInstall();
+    setupDiagnostics();
     els.retry.onclick = function () {
       els.retry.style.display = 'none';
       setStatus('Retrying…');

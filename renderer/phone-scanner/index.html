@@ -10,8 +10,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="ZMT Scan">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180.png">
+  <link rel="icon" href="favicon.ico" type="image/x-icon" sizes="16x16 32x32 48x48 256x256">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; }
@@ -87,6 +90,22 @@
       border-radius: 50%; animation: spin .8s linear infinite;
     }
     #bootLogo .txt { margin-top: 14px; color: #8a97ab; font-size: 14px; }
+
+    /* On-demand install diagnostics: invisible until the small button is tapped */
+    .diag-btn {
+      position: fixed; bottom: 10px; left: 10px; z-index: 86;
+      padding: 7px 10px; border-radius: 9px; border: 1px solid #2a3953;
+      background: rgba(23,34,54,.94); color: #8a97ab; font-size: 11px; cursor: pointer;
+    }
+    .diag-panel {
+      position: fixed; bottom: 46px; left: 10px; right: 10px; z-index: 87;
+      max-height: 48vh; overflow: auto; display: none;
+      padding: 11px 13px; border-radius: 10px; border: 1px solid #2a3953;
+      background: rgba(8,13,24,.97); color: #cfe0ee;
+      font: 11px/1.6 ui-monospace, Menlo, Consolas, monospace;
+      white-space: pre-wrap; word-break: break-word; direction: ltr; text-align: left;
+      box-shadow: 0 8px 26px rgba(0,0,0,.45);
+    }
   </style>
 </head>
 <body>
@@ -121,6 +140,13 @@
   <div id="iosHint" style="display:none;margin-top:8px;width:94%;max-width:420px;font-size:13px;color:#8a97ab;text-align:center;line-height:1.5;padding:10px 14px;background:#182334;border-radius:10px;">
     للحصول على أيقونة على الشاشة الرئيسية: افتح قائمة Share واختر <b>"Add to Home Screen"</b>. بمجرد التثبيت، لن تحتاج لمسح رمز QR مرة أخرى — ستفتح التطبيق من الأيقونة مباشرة.
   </div>
+  <div id="insecureHint" style="display:none;margin-top:8px;width:94%;max-width:420px;font-size:13px;color:#f0b429;text-align:center;line-height:1.5;padding:10px 14px;background:#182334;border-radius:10px;">
+    المسح يعمل الآن، لكن المتصفح يعتبر الرابط غير آمن بعد تجاوز تحذير الشهادة، ولن يظهر خيار التثبيت الحقيقي. افتح
+    <a href="/cert-help" style="color:#7ec8ff;text-decoration:underline;font-weight:700;">دليل تثبيت شهادة الأمان</a>
+    ثم أعد فتح هذه الصفحة.
+  </div>
+  <button class="diag-btn" id="diagBtn" type="button" title="تشخيص التثبيت">⚙ تشخيص</button>
+  <pre class="diag-panel" id="diagPanel" style="display:none;"></pre>
 
   <script src="vendor/zxing.min.js"></script>
   <script src="app.js"></script>

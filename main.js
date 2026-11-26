@@ -1505,7 +1505,9 @@ ipcMain.handle('lan-ensure-firewall', async () => {
 });
 
 // ===== PHONE BARCODE SCANNER (PWA over the shop LAN) =====
-PhoneScanner.setWindowGetter(() => mainWindow);
+// A scan must land in the field the operator is actually using — including
+// the standalone quick-entry child windows, not only the main window.
+PhoneScanner.setWindowGetter(() => BrowserWindow.getFocusedWindow() || mainWindow);
 PhoneScanner.setUserDataDir(IS_COMPANY_PROCESS ? app.getPath('userData') : BASE_USER_DATA);
 if (!IS_COMPANY_PROCESS) {
   PhoneScanner.loadTokens();

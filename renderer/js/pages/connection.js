@@ -85,6 +85,8 @@ function phsActivePort() {
 
 function phsScannerUrl() { return `https://${phsActiveIp()}:${phsActivePort()}`; }
 function phsSaleUrl() { return `https://${phsActiveIp()}:${phsActivePort()}/sale/`; }
+// Served by the phone server itself; absolute path works from /sale/ too.
+function phsCertHelpUrl() { return `https://${phsActiveIp()}:${phsActivePort()}/cert-help`; }
 
 function phsPickIp(ip) {
   _phsSelectedIp = ip || '';
@@ -126,7 +128,7 @@ function phsShowErrDetail() {
 }
 
 function phsCopyLink(kind, btn) {
-  const url = kind === 'sale' ? phsSaleUrl() : phsScannerUrl();
+  const url = kind === 'sale' ? phsSaleUrl() : (kind === 'cert' ? phsCertHelpUrl() : phsScannerUrl());
   const done = () => {
     if (!btn) return;
     const prev = btn.innerHTML;
@@ -147,6 +149,31 @@ function phsCopyFallback(url, done) {
     document.body.appendChild(ta); ta.select();
     document.execCommand('copy'); ta.remove(); done();
   } catch (e) {}
+}
+
+// Open the CA guide in the real browser (Chrome), never in an Electron child
+// window. The button stays hidden until a valid https URL has been rendered.
+function phsOpenCertHelp() {
+  const el = document.getElementById('phsCertHelpLink');
+  const result = document.getElementById('phsCertResult');
+  const url = (el && el.dataset && el.dataset.url) || '';
+  const fail = (msg) => { if (result) result.textContent = msg; };
+  if (!/^https:\/\//i.test(url)) {
+    fail('شغّل خدمة الهاتف أولاً، ثم افتح الدليل من رمز QR أو من زر النسخ.');
+    return;
+  }
+  if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
+    try {
+      const p = window.electronAPI.openExternal(url);
+      fail('');
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => { try { window.open(url, '_blank', 'noopener'); } catch (e) {} });
+      }
+      return;
+    } catch (e) { /* fall through to window.open */ }
+  }
+  try { window.open(url, '_blank', 'noopener'); fail(''); }
+  catch (e) { fail('تعذر فتح المتصفح — انسخ الرابط من الحقل وافتحه يدوياً.'); }
 }
 
 function phsToggleEnable() {
@@ -244,6 +271,20 @@ function phsRefresh() {
 // ===== QR CODE =====
 function phsRenderQr(on) {
   const box = document.getElementById('phsQr');
+  const certBox = document.getElementById('phsCertQr');
+  const certUrlEl = document.getElementById('phsCertUrl');
+  const certLink = document.getElementById('phsCertHelpLink');
+  const certUrl = phsCertHelpUrl();
+  if (certUrlEl) certUrlEl.textContent = on ? certUrl : '';
+  // It is a button, not an anchor: store the URL instead of setting href="#",
+  // which used to open an empty Electron window when the service was off.
+  if (certLink) {
+    if (on) certLink.dataset.url = certUrl;
+    else delete certLink.dataset.url;
+    certLink.style.display = on ? '' : 'none';
+  }
+  if (certBox) certBox.innerHTML = '';
+
   if (!box) return;
   const urlEl = document.getElementById('phsQrUrl');
   if (!on) { box.innerHTML = ''; if (urlEl) urlEl.textContent = ''; return; }
@@ -253,17 +294,29 @@ function phsRenderQr(on) {
 
   // Needs window.qrcodegen (patched UMD). Draw modules to a canvas.
   drawQr(url, box);
+  if (certBox) drawQr(certUrl, certBox);
 }
 
+let _qrPending = []; // queued draws while the patched UMD build is loading
 function drawQr(text, targetEl) {
   if (!window.qrcodegen) {
     // Lazy-load the patched UMD build, then draw. The main page already includes
     // it, but this keeps the tab working even if that script was missed/cached.
-    const s = document.createElement('script');
-    s.src = 'js/vendor/qrcodegen.js';
-    s.onload = () => drawQr(text, targetEl);
-    s.onerror = () => { targetEl.innerHTML = `<span class="text-danger">${t('common.error')}: qrcodegen failed to load</span>`; };
-    document.body.appendChild(s);
+    // Two QR codes are drawn now (scanner + cert guide) — load the script once.
+    _qrPending.push({ text: text, targetEl: targetEl });
+    if (_qrPending.length === 1) {
+      const s = document.createElement('script');
+      s.src = 'js/vendor/qrcodegen.js';
+      s.onload = () => {
+        const queued = _qrPending.slice(); _qrPending = [];
+        queued.forEach((item) => drawQr(item.text, item.targetEl));
+      };
+      s.onerror = () => {
+        const queued = _qrPending.slice(); _qrPending = [];
+        queued.forEach((item) => { item.targetEl.innerHTML = `<span class="text-danger">${t('common.error')}: qrcodegen failed to load</span>`; });
+      };
+      document.body.appendChild(s);
+    }
     return;
   }
   try {

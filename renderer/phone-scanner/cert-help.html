@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>تثبيت شهادة الأمان — ZMT PIECE</title>
+  <meta name="theme-color" content="#0066B1">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      background: #0f1522; color: #e6edf7; line-height: 1.75;
+      min-height: 100vh; display: flex; justify-content: center; padding: 24px 16px 48px;
+    }
+    .wrap { width: 100%; max-width: 620px; }
+    .head {
+      display: flex; align-items: center; gap: 12px; padding: 18px 20px;
+      background: linear-gradient(135deg, #0b6db5, #003f6d); border-radius: 16px 16px 0 0;
+    }
+    .head .mark { font-size: 26px; }
+    .head h1 { font-size: 18px; font-weight: 800; }
+    .head p { font-size: 12px; opacity: .85; }
+    .card {
+      background: #172236; border: 1px solid #2a3953; border-top: none;
+      border-radius: 0 0 16px 16px; padding: 20px;
+    }
+    .note {
+      background: #182b45; border-right: 3px solid #00a878; border-radius: 8px;
+      padding: 12px 14px; font-size: 13px; color: #cfe0ee; margin-bottom: 18px;
+    }
+    h2 { font-size: 15px; margin: 20px 0 8px; color: #7ec8ff; }
+    h2:first-of-type { margin-top: 0; }
+    ol { padding-inline-start: 22px; }
+    li { margin: 7px 0; font-size: 14px; }
+    b { color: #fff; }
+    .dl {
+      display: block; text-align: center; text-decoration: none; margin: 22px 0 8px;
+      padding: 15px; border-radius: 12px; font-size: 16px; font-weight: 800; color: #fff;
+      background: linear-gradient(135deg, #00a878, #006c4d);
+      box-shadow: 0 8px 26px rgba(0,120,86,.35);
+    }
+    .hint { text-align: center; font-size: 12px; color: #8a97ab; }
+    code { background: #0b1220; padding: 2px 6px; border-radius: 5px; color: #7ec8ff; direction: ltr; }
+    .warn { color: #f0b429; }
+    .certbox { margin: 18px 0 8px; padding: 14px; border-radius: 12px; border: 1px solid #2a3953; background: #0b1220; }
+    .certbox p { font-size: 13px; color: #cfe0ee; margin-bottom: 10px; }
+    .certbox textarea {
+      width: 100%; height: 132px; resize: vertical; direction: ltr; text-align: left;
+      background: #050910; color: #7ec8ff; border: 1px solid #2a3953; border-radius: 8px;
+      padding: 10px; font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace;
+    }
+    .cert-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+    .cert-actions button, .cert-actions a {
+      flex: 1; min-width: 140px; text-align: center; text-decoration: none; cursor: pointer;
+      padding: 11px 12px; border-radius: 9px; border: 1px solid rgba(0,214,170,.45);
+      background: linear-gradient(135deg, #00866a, #00614c); color: #fff;
+      font-size: 13px; font-weight: 800;
+    }
+    .cert-result { min-height: 18px; margin-top: 8px; font-size: 12px; color: #7ec8ff; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <span class="mark">🛡️</span>
+      <div>
+        <h1>تثبيت شهادة الأمان على الهاتف</h1>
+        <p>ZMT PIECE — ماسح الباركود والبيع من الهاتف</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="note">
+        هذه الشهادة أنشأها البرنامج على الكمبيوتر لتشفير الاتصال داخل شبكة المحل فقط.
+        تثبيتها <b>مرة واحدة</b> تجعل المتصفح يعتبر الرابط آمناً، وهذا <b>شرط أساسي</b> ليظهر خيار
+        «تثبيت التطبيق» بدل «إضافة كاختصار» على أندرويد.
+      </div>
+
+      <div class="certbox">
+        <p>✅ <b>الطريقة الأضمن على الهاتف:</b> انسخ محتوى الشهادة من الأسفل مباشرة، أو حمّلها من البيانات المضمّنة في هذه الصفحة — لا يحتاج ذلك أي تنزيل من الشبكة.</p>
+        <textarea id="certPem" readonly spellcheck="false" aria-label="محتوى شهادة الأمان">%%ZMT_CERT_PEM%%</textarea>
+        <div class="cert-actions">
+          <button type="button" onclick="copyCertPem()">نسخ محتوى الشهادة</button>
+          <a id="certDataDl" href="#" download="ZMT-PHONE-CA.crt">تنزيل الشهادة من الصفحة</a>
+        </div>
+        <div class="cert-result" id="certResult"></div>
+      </div>
+
+      <a class="dl" href="/cert" download="ZMT-PHONE-CA.crt">⬇ تحميل مباشر (لأي متصفح آخر)</a>
+      <div class="hint">اسم الملف: <code>ZMT-PHONE-CA.crt</code> — إن توقّف هذا التحميل على أندرويد، استخدم الطريقة المضمّنة أعلاه.</div>
+
+      <h2>أندرويد (Chrome)</h2>
+      <ol>
+        <li>انسخ محتوى الشهادة من الصندوق أعلاه واحفظه في ملف باسم <code>ZMT-PHONE-CA.crt</code>، أو اضغط «تنزيل الشهادة من الصفحة».</li>
+        <li>افتح <b>الإعدادات</b> ← <b>الأمان</b> (أو «الخصوصية») ← <b>تثبيت من وحدة التخزين</b>.</li>
+        <li>اختر <b>شهادة CA</b> ثم ملف <code>ZMT-PHONE-CA.crt</code> وأكّد بكلمة مرور الجهاز.</li>
+        <li>أغلق صفحة الماسح/البيع تماماً ثم أعد فتحها، وستجد زر <b>تثبيت التطبيق</b> ظاهراً.</li>
+      </ol>
+
+      <h2>آيفون / iPad (Safari)</h2>
+      <ol>
+        <li>حمّل الشهادة، ثم افتح <b>الإعدادات</b> ← <b>عام</b> ← <b>إعدادات VPN والجهاز</b> ← <b>شهادات الثقة</b>.</li>
+        <li>ستجد شهادة <code>ZMT-PHONE-CA</code>؛ اضغطها وفعّل <b>تمكين الثقة الكاملة</b>.</li>
+        <li>افتح الصفحة ثم <b>Share</b> ← <b>Add to Home Screen</b> لتظهر الأيقونة.</li>
+      </ol>
+
+      <h2>إن كنت ضغطت «متابعة» على تحذير الشهادة سابقاً</h2>
+      <ol>
+        <li>احذف بيانات الموقع من Chrome: الإعدادات ← الخصوصية ← مسح بيانات التصفح (Cookies فقط).</li>
+        <li>ثبّت الشهادة كما هو موضح أعلاه، ثم أعد فتح الرابط من شاشة إعدادات الاتصال في الكمبيوتر.</li>
+      </ol>
+
+      <div class="note warn" style="margin-top:20px;margin-bottom:0;border-right-color:#f0b429;">
+        إن ظهر تحذير أمان عند فتح هذه الصفحة نفسها، اضغط «متقدم ← متابعة» هنا فقط لتنزيل الشهادة،
+        ثم أعد فتح رابط التطبيق بعد تثبيتها.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // The certificate is injected into this page by the server, so copying it
+    // needs no extra network request (Android DownloadManager cannot be used
+    // while the local CA is still untrusted).
+    function certText() {
+      var el = document.getElementById('certPem');
+      var v = el ? String(el.value || '').trim() : '';
+      if (!v || v.indexOf('%%ZMT_CERT_PEM%%') >= 0 || v.indexOf('غير متوفرة') >= 0) return '';
+      return v;
+    }
+    function buildCertDataLink() {
+      var a = document.getElementById('certDataDl');
+      var v = certText();
+      if (!a) return;
+      if (!v) { a.style.display = 'none'; return; }
+      try { a.href = 'data:application/octet-stream;base64,' + btoa(v); }
+      catch (e) { a.style.display = 'none'; }
+    }
+    function copyCertPem() {
+      var result = document.getElementById('certResult');
+      var v = certText();
+      if (!v) {
+        if (result) result.textContent = 'الشهادة غير متوفرة — شغّل خدمة الهاتف ثم أعد فتح الصفحة.';
+        return;
+      }
+      function done() { if (result) result.textContent = 'تم نسخ الشهادة ✓'; }
+      function fallback() {
+        try {
+          var ta = document.getElementById('certPem');
+          ta.focus(); ta.select();
+          if (ta.setSelectionRange) ta.setSelectionRange(0, v.length);
+          document.execCommand('copy'); done();
+        } catch (e) {
+          if (result) result.textContent = 'حدد النص ونسخه يدوياً من الصندوق.';
+        }
+      }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(v).then(done).catch(fallback);
+        } else { fallback(); }
+      } catch (e) { fallback(); }
+    }
+    buildCertDataLink();
+  </script>
+</body>
+</html>

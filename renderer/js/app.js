@@ -653,10 +653,10 @@ window.injectRemoteScan = function injectRemoteScan(code) {
   // unrelated search box.
   let target = mapped || document.querySelector('.scanner-input, .sales-scanner-input');
 
-  // NEW: if the operator has an editable field focused right now, that field is
-  // the target — so a scan lands in any search box / product field the user is
-  // actually working on (product search by barcode, supplier search, …). When
-  // focus is pinned to the page's own scanner field, this is the same element.
+  // If the operator has an editable field focused right now, that field is the
+  // target — including fields inside dialogs (smart-add, edit barcode, …).
+  // Pinned pages keep their own scanner field outside dialogs; inside a dialog
+  // the focused field is the operator's real target.
   const active = document.activeElement;
   if (active && active.tagName && active !== document.body) {
     const tag = active.tagName.toUpperCase();
@@ -664,11 +664,11 @@ window.injectRemoteScan = function injectRemoteScan(code) {
     const editable = ((tag === 'INPUT' || tag === 'TEXTAREA') && ['', 'text', 'search', 'tel', 'url', 'email', 'number'].indexOf(type) >= 0 && !active.disabled && !active.readOnly) ||
       (tag !== 'INPUT' && tag !== 'TEXTAREA' && !!active.isContentEditable);
     const inModal = !!(active.closest && active.closest('.modal-overlay'));
-    // Pinned pages keep their own field, except inside a dialog: there the
-    // focused field is the operator's real target. Outside a dialog, a pinned
-    // page never gives the scan to an unrelated search box.
+    // Pinned pages keep their own field outside a dialog; inside a dialog the
+    // focused field is the operator's real target. All other pages always use
+    // the focused editable field — including smart-add / edit dialogs.
     const pinned = PINNED_SCANNER_PAGES.indexOf(_currentPageId) >= 0;
-    if (editable && (pinned ? inModal : !inModal)) target = active;
+    if (editable && (!pinned || inModal)) target = active;
   }
 
   if (!target) {
@@ -2548,7 +2548,7 @@ const LANG = {
       openDone: 'تم فتح النافذة المستقلة.', openError: 'تعذّر فتح النافذة المستقلة:',
       shortcutDone: 'تم إنشاء الاختصار على سطح المكتب.', shortcutError: 'تعذّر إنشاء الاختصار:',
       isolatedOnly: 'هذه النافذة مخصصة لشركة واحدة فقط.',
-      staleBuild: 'النسخة المثبّتة قديمة ولا تحتوي نافذة الشركة المستقلة. أغلق البرنامج وأعد تشغيل النسخة المحدّثة، أو ثبّت الإصدار 3.3.5.',
+      staleBuild: 'النسخة المثبّتة قديمة ولا تحتوي نافذة الشركة المستقلة. أغلق البرنامج وأعد تشغيل النسخة المحدّثة، أو ثبّت الإصدار 3.3.6.',
       notif: 'إشعارات المخزون المنخفض',       autoBackup: 'نسخ احتياطي تلقائي',
       info: 'معلومات البرنامج',
       version: 'الإصدار', developer: 'مطور البرنامج', company: 'الشركة المطورة', lastUpdate: 'آخر تحديث',
@@ -2830,7 +2830,7 @@ editHelpCustomer: 'قم بتعديل الكميات وسعر الوحدة وال
       openDone: 'تم فتح النافذة المستقلة.', openError: 'تعذّر فتح النافذة المستقلة:',
       shortcutDone: 'تم إنشاء الاختصار على سطح المكتب.', shortcutError: 'تعذّر إنشاء الاختصار:',
       isolatedOnly: 'هذه النافذة مخصصة لشركة واحدة فقط.',
-      staleBuild: 'النسخة المثبّتة قديمة ولا تحتوي نافذة الشركة المستقلة. أغلق البرنامج وأعد تشغيل النسخة المحدّثة، أو ثبّت الإصدار 3.3.5.',
+      staleBuild: 'النسخة المثبّتة قديمة ولا تحتوي نافذة الشركة المستقلة. أغلق البرنامج وأعد تشغيل النسخة المحدّثة، أو ثبّت الإصدار 3.3.6.',
       notif: 'إشعارات المخزون المنخفض',       autoBackup: 'نسخ احتياطي تلقائي',
       info: 'معلومات البرنامج',
       version: 'الإصدار', developer: 'مطور البرنامج', company: 'الشركة المطورة', lastUpdate: 'آخر تحديث',
@@ -3076,6 +3076,10 @@ editHelpCustomer: 'قم بتعديل الكميات وسعر الوحدة وال
       scannerStep3: 'عند فتح الهاتف لأول مرة ستظهر نافذة موافقة هنا — اختر "دائمًا" أو "هذه الجلسة".',
       scannerStep4: 'كل شفرة تُقرأ تُدخل تلقائيًا في حقل الباركود المفتوح.',
       scannerStep5: 'المرة الأولى تظهر رسالة "غير آمن" — افتح المزيد وواصل، ستكون الشهادة مميزة بعد التثبيت.',
+      certHelpTitle: 'تثبيت شهادة الأمان على الهاتف (مطلوب للتطبيق المستقل)',
+      certHelpDesc: 'إن ضغطت «متابعة» على تحذير الشهادة، ثبّت الشهادة مرة واحدة من الرابط التالي ثم أعد فتح الصفحة؛ وإلا سيبقى خيار التثبيت كاختصار فقط.',
+      certHelpOpen: 'فتح دليل التثبيت',
+      certHelpCopy: 'نسخ رابط الدليل',
       scannerDevices: 'الأجهزة المقترنة', scannerNoDevices: 'لا توجد أجهزة مقترنة بعد',
       scannerStarting: 'جاري تشغيل الخدمة…', scannerStarted: 'ماسح الجوال يعمل الآن',
       scannerStartError: 'تعذر تشغيل ماسح الجوال', scannerStopped: 'ماسح الجوال متوقف',
@@ -3991,7 +3995,7 @@ editHelpCustomer: 'قم بتعديل الكميات وسعر الوحدة وال
       openDone: 'Isolated window opened.', openError: 'Could not open the isolated window:',
       shortcutDone: 'Desktop shortcut created.', shortcutError: 'Could not create the shortcut:',
       isolatedOnly: 'This window is dedicated to a single company.',
-      staleBuild: 'This installed build is older and does not include isolated company windows. Close the app and relaunch the updated version, or install 3.3.5.',
+      staleBuild: 'This installed build is older and does not include isolated company windows. Close the app and relaunch the updated version, or install 3.3.6.',
       notif: 'Low Stock Notifications',       autoBackup: 'Auto Backup',
       info: 'About',
       version: 'Version', developer: 'Developer', lastUpdate: 'Last Update',
@@ -4267,7 +4271,7 @@ editHelpCustomer: 'قم بتعديل الكميات وسعر الوحدة وال
       openDone: 'Isolated window opened.', openError: 'Could not open the isolated window:',
       shortcutDone: 'Desktop shortcut created.', shortcutError: 'Could not create the shortcut:',
       isolatedOnly: 'This window is dedicated to a single company.',
-      staleBuild: 'This installed build is older and does not include isolated company windows. Close the app and relaunch the updated version, or install 3.3.5.',
+      staleBuild: 'This installed build is older and does not include isolated company windows. Close the app and relaunch the updated version, or install 3.3.6.',
       notif: 'Low Stock Notifications', autoBackup: 'Auto Backup',
       info: 'About',
       version: 'Version', developer: 'Developer', lastUpdate: 'Last Update',
@@ -4525,6 +4529,10 @@ editHelpCustomer: 'قم بتعديل الكميات وسعر الوحدة وال
       scannerStep3: 'On first open an approval window appears here — choose "Always" or "This session".',
       scannerStep4: 'Every scanned code is inserted automatically into the open barcode field.',
       scannerStep5: 'The first time you may see a "Not secure" warning — tap More / Continue; the cert becomes trusted after one install.',
+      certHelpTitle: 'Install the security certificate on your phone (required for a real app)',
+      certHelpDesc: 'If you tapped Continue on the certificate warning, install the CA once from the link below and reopen the page; otherwise Chrome only offers a home-screen shortcut.',
+      certHelpOpen: 'Open install guide',
+      certHelpCopy: 'Copy guide link',
       scannerDevices: 'Paired devices', scannerNoDevices: 'No devices paired yet',
       scannerStarting: 'Starting service…', scannerStarted: 'Phone scanner is now running',
       scannerStartError: 'Failed to start phone scanner', scannerStopped: 'Phone scanner is off',
@@ -5440,7 +5448,7 @@ editHelpCustomer: 'قم بتعديل الكميات وسعر الوحدة وال
       openDone: 'Fenêtre isolée ouverte.', openError: 'Impossible d’ouvrir la fenêtre isolée :',
       shortcutDone: 'Raccourci créé sur le bureau.', shortcutError: 'Impossible de créer le raccourci :',
       isolatedOnly: 'Cette fenêtre est dédiée à une seule société.',
-      staleBuild: 'Cette version installée est ancienne et ne contient pas les fenêtres de société isolées. Fermez l’application et relancez la version mise à jour, ou installez la 3.3.5.',
+      staleBuild: 'Cette version installée est ancienne et ne contient pas les fenêtres de société isolées. Fermez l’application et relancez la version mise à jour, ou installez la 3.3.6.',
       notif: 'Notifications de Stock Bas',       autoBackup: 'Sauvegarde Auto',
       info: 'À Propos',
       version: 'Version', developer: 'Développeur', company: 'Société', lastUpdate: 'Dernière Mise à Jour',
@@ -5716,7 +5724,7 @@ editHelpCustomer: 'قم بتعديل الكميات وسعر الوحدة وال
       openDone: 'Fenêtre isolée ouverte.', openError: 'Impossible d’ouvrir la fenêtre isolée :',
       shortcutDone: 'Raccourci créé sur le bureau.', shortcutError: 'Impossible de créer le raccourci :',
       isolatedOnly: 'Cette fenêtre est dédiée à une seule société.',
-      staleBuild: 'Cette version installée est ancienne et ne contient pas les fenêtres de société isolées. Fermez l’application et relancez la version mise à jour, ou installez la 3.3.5.',
+      staleBuild: 'Cette version installée est ancienne et ne contient pas les fenêtres de société isolées. Fermez l’application et relancez la version mise à jour, ou installez la 3.3.6.',
       notif: 'Notifications de Stock Bas', autoBackup: 'Sauvegarde Auto',
       info: 'À Propos',
       version: 'Version', developer: 'Développeur', company: 'Société', lastUpdate: 'Dernière Mise à Jour',
@@ -5966,6 +5974,10 @@ editHelpCustomer: 'قم بتعديل الكميات وسعر الوحدة وال
       scannerStep3: 'À la première ouverture, une fenêtre d\'approbation apparaît ici — choisissez « Toujours » ou « Cette session ».',
       scannerStep4: 'Chaque code lu est inséré automatiquement dans le champ actif.',
       scannerStep5: 'La première fois un avertissement « Non sécurisé » peut apparaître — touchez Plus / Continuer ; le certificat devient fiable après installation.',
+      certHelpTitle: 'Installer le certificat de sécurité sur le téléphone (requis pour une vraie application)',
+      certHelpDesc: 'Si vous avez touché Continuer sur l\'avertissement, installez le certificat une fois depuis le lien ci-dessous et rouvrez la page ; sinon Chrome ne propose qu\'un raccourci.',
+      certHelpOpen: 'Ouvrir le guide',
+      certHelpCopy: 'Copier le lien du guide',
       scannerDevices: 'Appareils appairés', scannerNoDevices: 'Aucun appareil appairé',
       scannerStarting: 'Démarrage du service…', scannerStarted: 'Le scanner téléphone fonctionne',
       scannerStartError: 'Échec du démarrage du scanner téléphone', scannerStopped: 'Scanner téléphone arrêté',
@@ -6881,7 +6893,7 @@ editHelpCustomer: 'قم بتعديل الكميات وسعر الوحدة وال
       openDone: '独立窗口已打开。', openError: '无法打开独立窗口：',
       shortcutDone: '桌面快捷方式已创建。', shortcutError: '无法创建快捷方式：',
       isolatedOnly: '此窗口仅专用于一家公司。',
-      staleBuild: '当前安装版本较旧，不包含独立公司窗口。请关闭程序并重新启动更新版本，或安装 3.3.5。',
+      staleBuild: '当前安装版本较旧，不包含独立公司窗口。请关闭程序并重新启动更新版本，或安装 3.3.6。',
       notif: '低库存通知',       autoBackup: '自动备份',
       info: '关于',
       version: '版本', developer: '开发者', company: '公司', lastUpdate: '最后更新',
@@ -7155,7 +7167,7 @@ editHelpCustomer: 'قم بتعديل الكميات وسعر الوحدة وال
       openDone: '独立窗口已打开。', openError: '无法打开独立窗口：',
       shortcutDone: '桌面快捷方式已创建。', shortcutError: '无法创建快捷方式：',
       isolatedOnly: '此窗口仅专用于一家公司。',
-      staleBuild: '当前安装版本较旧，不包含独立公司窗口。请关闭程序并重新启动更新版本，或安装 3.3.5。',
+      staleBuild: '当前安装版本较旧，不包含独立公司窗口。请关闭程序并重新启动更新版本，或安装 3.3.6。',
       notif: '低库存通知', autoBackup: '自动备份',
       info: '关于',
       version: '版本', developer: '开发者', company: '公司', lastUpdate: '最后更新',
@@ -7405,6 +7417,10 @@ editHelpCustomer: 'قم بتعديل الكميات وسعر الوحدة وال
       scannerStep3: '手机首次打开时此处会出现批准窗口——选择“始终”或“本次会话”。',
       scannerStep4: '每次读取的代码会自动输入到打开的条码字段。',
       scannerStep5: '第一次可能出现“不安全”警告——点更多/继续；安装一次后证书即受信任。',
+      certHelpTitle: '在手机上安装安全证书（真正安装应用所需）',
+      certHelpDesc: '如果您点过警告中的“继续”，请从下方链接安装一次证书后重新打开页面；否则 Chrome 只会提供桌面快捷方式。',
+      certHelpOpen: '打开安装指南',
+      certHelpCopy: '复制指南链接',
       scannerDevices: '已配对设备', scannerNoDevices: '暂无配对设备',
       scannerStarting: '正在启动服务…', scannerStarted: '手机扫码枪运行中',
       scannerStartError: '手机扫码枪启动失败', scannerStopped: '手机扫码枪已停止',
