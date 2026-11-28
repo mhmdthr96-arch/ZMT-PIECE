@@ -710,7 +710,10 @@ async function connUploadBackup() {
   // unexpected throws (including prompt()/alert()-free failures).
   try {
     const uploadResult = await Promise.race([
-      CloudService.uploadBackup(),
+      // The explicit button always re-uploads the current local snapshot.
+      // The idle/unchanged short-circuit is only for the timer. The no-data,
+      // isolated-company and LAN-sub guards still apply inside uploadBackup().
+      CloudService.uploadBackup(undefined, { force: true }),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error('انتهت مهلة الرفع الكلية (60 ثانية) — تحقق من سرعة الإنترنت وحاول مرة أخرى')), 60000)
       ),

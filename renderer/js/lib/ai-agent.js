@@ -107,6 +107,13 @@ window.AIAgent = {
 
   _storageKey(provider) { return 'zmt_ai_key_' + provider; },
 
+  // The bridge is present only inside Electron. When absent (unit-test harness)
+  // no secret is available and AI calls fail explicitly instead of leaking a key.
+  _bridge() {
+    return (typeof window !== 'undefined' && window.electronAPI &&
+      typeof window.electronAPI.aiHasKey === 'function') ? window.electronAPI : null;
+  },
+
   async getProvider() {
     return (await this.getStored('zmt_ai_provider')) || 'gemini';
   },
@@ -127,25 +134,77 @@ window.AIAgent = {
     localStorage.removeItem(key);
   },
 
-  async getApiKey(provider) {
-    provider = provider || await this.getProvider();
-    return this.getStored(this._storageKey(provider));
+  // Keys never come back into the renderer — callers must use isConfigured().
+  async getApiKey() { return ''; },
+
+  async _readLegacyKey(key) {
+    const val = localStorage.getItem(key);
+    if (!val) return '';
+    try { return (await CryptoUtils.loadSecurely(key)) || val; } catch (e) { return val; }
+  },
+
+  _clearLegacyKey(key) {
+    try { localStorage.removeItem(key); } catch (e) {}
   },
 
   async saveApiKey(provider, key) {
+    const api = this._bridge();
+    if (api) {
+      await api.aiSetKey(provider, key);
+      this._clearLegacyKey(this._storageKey(provider));
+      return;
+    }
     await this.saveStored(this._storageKey(provider), key);
   },
 
   async clearApiKey(provider) {
-    await this.clearStored(this._storageKey(provider));
+    const api = this._bridge();
+    if (api) await api.aiClearKey(provider);
+    this._clearLegacyKey(this._storageKey(provider));
+  },
+
+  // The endpoint is stored by main.js too: a page script must not be able to
+  // redirect the key to an arbitrary HTTPS host by editing localStorage.
+  async saveBaseUrl(url) {
+    const api = this._bridge();
+    if (api && typeof api.aiSetBaseUrl === 'function') {
+      await api.aiSetBaseUrl(url || '');
+      return;
+    }
+    if (url) await this.saveStored('zmt_ai_base_url', url);
+    else await this.clearStored('zmt_ai_base_url');
+  },
+
+  async clearBaseUrl() {
+    await this.saveBaseUrl('');
+  },
+
+  async getBaseUrl() {
+    const api = this._bridge();
+    if (api && typeof api.aiGetBaseUrl === 'function') {
+      const r = await api.aiGetBaseUrl();
+      return (r && r.url) || '';
+    }
+    return (await this.getStored('zmt_ai_base_url')) || '';
   },
 
   async isConfigured(provider) {
     provider = provider || await this.getProvider();
-    const encrypted = localStorage.getItem(this._storageKey(provider));
-    if (!encrypted) return false;
-    const key = await CryptoUtils.loadSecurely(this._storageKey(provider));
-    return key && key.length > 0;
+    const api = this._bridge();
+    if (api) {
+      const r = await api.aiHasKey(provider);
+      if (r && r.configured) return true;
+      // One-time migration of the old, derivable localStorage key.
+      const legacy = await this._readLegacyKey(this._storageKey(provider));
+      if (legacy) {
+        await api.aiMigrateKey(provider, legacy);
+        this._clearLegacyKey(this._storageKey(provider));
+        return true;
+      }
+      return false;
+    }
+    const legacy = await this._readLegacyKey(this._storageKey(provider));
+    return !!(legacy && legacy.length);
   },
 
   async _call(prompt, systemInstruction) {
@@ -153,54 +212,33 @@ window.AIAgent = {
     const cfg = this.PROVIDERS[provider];
     if (!cfg) throw new Error('مزود AI غير معروف: ' + provider);
 
-    const apiKey = await this.getApiKey(provider);
-    if (!apiKey) {
+    if (!(await this.isConfigured(provider))) {
       const names = { gemini: 'Gemini', openai: 'OpenAI', kimi: 'Kimi', groq: 'Groq', custom: 'Custom' };
       throw new Error('مفتاح ' + (names[provider] || provider) + ' API غير مضبوط. الرجاء إدخاله في الإعدادات.');
     }
 
-    if (provider === 'custom' || provider === 'kimi') {
-      const baseUrl = await this.getStored('zmt_ai_base_url');
-      if (baseUrl) cfg.apiBase = baseUrl.replace(/\/+$/, '') + '/';
-    }
+    const api = this._bridge();
+    if (!api) throw new Error('جسر AI غير متوفر في هذه البيئة.');
 
     const errors = [];
     const tryModel = async (model, timeoutMs = 120000) => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const body = cfg.buildBody(prompt, systemInstruction);
+      body.model = model;
       try {
-        const url = cfg.chatEndpoint(model);
-        const body = cfg.buildBody(prompt, systemInstruction);
-        body.model = model;
-
-        const authParams = cfg.auth(apiKey);
-        let fullUrl = url;
-        if (authParams.key) {
-          fullUrl += (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(authParams.key);
-        }
-
-        const hdrs = cfg.headers(apiKey);
-        const res = await fetch(fullUrl, { method: 'POST', headers: hdrs, body: JSON.stringify(body), signal: controller.signal });
-        clearTimeout(timer);
-
-        if (res.ok) {
-          const data = await res.json();
+        // The key AND the custom endpoint are owned by main.js; an injected
+        // script cannot redirect the key to an arbitrary host.
+        const res = await api.aiCall({ provider, model, body, timeoutMs });
+        if (res && res.ok) {
+          let data = res.text;
+          try { data = JSON.parse(res.text); } catch (e) {}
           const text = cfg.extractText(data);
           this._activeProvider = provider;
           this._activeModel = model;
           return { ok: true, text };
         }
-
-        const errText = await res.text();
-        let msg = '';
-        try {
-          const err = JSON.parse(errText);
-          msg = err.error?.message || JSON.stringify(err);
-        } catch { msg = errText; }
-        return { ok: false, model, msg };
+        return { ok: false, model, msg: (res && res.msg) || 'Network error' };
       } catch (netErr) {
-        clearTimeout(timer);
-        return { ok: false, model, msg: netErr.name === 'AbortError' ? 'Timeout (' + (timeoutMs / 1000) + 's)' : 'Network error: ' + netErr.message };
+        return { ok: false, model, msg: 'Network error: ' + (netErr && netErr.message ? netErr.message : String(netErr)) };
       }
     };
 

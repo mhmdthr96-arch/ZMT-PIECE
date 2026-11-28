@@ -1727,7 +1727,10 @@ window.notifyWebPush = function(type, payload) {
     const legacySecret = localStorage.getItem('zmt_push_secret');
     if (legacySecret) headers['x-zmt-secret'] = legacySecret;
 
-    fetch(siteUrl.replace(/\/+$/, '') + '/api/push-trigger', {
+    const doFetch = (typeof window !== 'undefined' && typeof window.zmtCloudFetch === 'function')
+      ? window.zmtCloudFetch
+      : fetch;
+    doFetch(siteUrl.replace(/\/+$/, '') + '/api/push-trigger', {
       method: 'POST',
       headers: headers,
       body: JSON.stringify(body)

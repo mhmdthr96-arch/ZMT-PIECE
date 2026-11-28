@@ -961,18 +961,34 @@ async function confirmDeviceHardReset() {
   const pwd = document.getElementById('deviceResetPwd');
   const err = document.getElementById('deviceResetError');
   const val = pwd ? String(pwd.value || '').trim() : '';
-  if (val !== '1234512345') {
+  if (!val) {
     if (err) err.textContent = 'كلمة المرور غير صحيحة';
     if (pwd) { try { pwd.focus(); pwd.select(); } catch (e) {} }
     return;
   }
+  // The secret is never stored in this process: main.js compares it and only
+  // returns a boolean verdict, with a lockout after repeated wrong attempts.
+  const api = window.electronAPI;
+  if (api && typeof api.licenseResetVerify === 'function') {
+    try {
+      const verdict = await api.licenseResetVerify(val);
+      if (!verdict || !verdict.ok) {
+        if (err) err.textContent = (verdict && verdict.message) || 'كلمة المرور غير صحيحة';
+        if (pwd) { try { pwd.focus(); pwd.select(); } catch (e) {} }
+        return;
+      }
+    } catch (e) {
+      if (err) err.textContent = 'تعذر التحقق من كلمة المرور';
+      return;
+    }
+  }
   if (err) err.textContent = '';
   if (!confirm('سيتم مسح كل شيء نهائياً وإعادة الجهاز كأن البرنامج مُثبَّت لأول مرة:\n\n• مفتاح التفعيل وبصمة الجهاز وبيانات فحص الوقت\n• قاعدة البيانات المحلية: المنتجات والفواتير والعملاء والموردون والموظفون\n• الإعدادات وكلمات المرور والنسخ الاحتياطية التلقائية وصور الواجهة\n\nلا يمكن التراجع عن هذه العملية. هل أنت متأكد؟')) return;
   closeDeviceResetModal();
-  await doDeviceHardReset();
+  await doDeviceHardReset(val);
 }
 
-async function doDeviceHardReset() {
+async function doDeviceHardReset(password) {
   try {
     if (window.electronAPI && typeof window.electronAPI.licenseHardReset === 'function') {
       // Stop every writer and release the IndexedDB connection BEFORE the main
@@ -992,7 +1008,12 @@ async function doDeviceHardReset() {
         if (typeof DB !== 'undefined' && typeof DB.close === 'function') await DB.close();
       } catch (e) {}
 
-      const res = await window.electronAPI.licenseHardReset();
+      const res = await window.electronAPI.licenseHardReset(password);
+      if (res && res.unauthorized) {
+        alert(res.message || 'كلمة المرور غير صحيحة');
+        openDeviceResetModal();
+        return;
+      }
       if (res && res.success) {
         const left = (res.failed && res.failed.length) ? ('\nتعذّر حذف: ' + res.failed.join('، ')) : '';
         alert('تم التصفير بنجاح. سيعاد تشغيل التطبيق الآن.' + left);

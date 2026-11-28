@@ -152,7 +152,12 @@ const Auth = (() => {
   async function _siteFetch(path, payload) {
     let resp;
     try {
-      resp = await fetch(_getSiteBase() + path, {
+      // Inside Electron the request goes through main.js (no CORS, no leaked
+      // credentials, request/byte budget). Plain fetch is only for tests/PWA.
+      const doFetch = (typeof window !== 'undefined' && typeof window.zmtCloudFetch === 'function')
+        ? window.zmtCloudFetch
+        : fetch;
+      resp = await doFetch(_getSiteBase() + path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload || {}),

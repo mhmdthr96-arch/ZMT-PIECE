@@ -275,9 +275,9 @@ async function settingsSaveAiKey() {
     if (baseInput && baseInput.style.display !== 'none') {
       const baseUrl = baseInput.value.trim();
       if (baseUrl) {
-        await AIAgent.saveStored('zmt_ai_base_url', baseUrl);
+        await AIAgent.saveBaseUrl(baseUrl);
       } else {
-        await AIAgent.clearStored('zmt_ai_base_url');
+        await AIAgent.clearBaseUrl();
       }
     }
     await AIAgent.saveApiKey(provider, key);

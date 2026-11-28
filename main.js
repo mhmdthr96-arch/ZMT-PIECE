@@ -7,7 +7,176 @@ const { spawn } = require('child_process');
 let nodemailer = null;
 try { nodemailer = require('nodemailer'); } catch (e) { nodemailer = null; }
 
-const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session, Menu } = require('electron');
+
+// ===== DEVTOOLS PASSWORD GATE (main process only) =====
+// The inspector must never open on a plain Ctrl+Shift+I. Every request goes
+// through a modal owned by this process; the password is compared here and is
+// never exposed to the renderer, the preload bridge or any packaged asset.
+const DEVTOOLS_PASSWORD = '1234512345.com';
+// Machine factory reset is a separate, more destructive gate with its own
+// secret. Both secrets are compared ONLY here, never in the renderer.
+const HARD_RESET_PASSWORD = '1234512345';
+let _resetFailures = 0;
+let _resetBlockedUntil = 0;
+let _devtoolsAuthWindow = null;
+let _devtoolsTarget = null;
+let _devtoolsFailures = 0;
+let _devtoolsBlockedUntil = 0;
+let _devtoolsAuthorized = false;
+
+function _closeDevtoolsAuth() {
+  if (_devtoolsAuthWindow && !_devtoolsAuthWindow.isDestroyed()) {
+    try { _devtoolsAuthWindow.destroy(); } catch (e) {}
+  }
+  _devtoolsAuthWindow = null;
+  _devtoolsTarget = null;
+}
+
+ipcMain.handle('devtools-auth-submit', async (event, password) => {
+  // Only the dialog we created may answer this channel. A compromised page
+  // cannot unlock the inspector by invoking IPC directly.
+  if (!_devtoolsAuthWindow || event.sender !== _devtoolsAuthWindow.webContents) {
+    return { ok: false };
+  }
+  if (Date.now() < _devtoolsBlockedUntil) {
+    _devtoolsAuthWindow.webContents.send('devtools-auth-error', 'محاولات كثيرة غير صحيحة. انتظر قليلاً ثم حاول مرة أخرى.');
+    return { ok: false, blocked: true };
+  }
+  if (String(password == null ? '' : password) !== DEVTOOLS_PASSWORD) {
+    _devtoolsFailures += 1;
+    let message = 'كلمة المرور غير صحيحة';
+    if (_devtoolsFailures >= 5) {
+      _devtoolsFailures = 0;
+      _devtoolsBlockedUntil = Date.now() + 10000;
+      message = 'محاولات كثيرة غير صحيحة. انتظر 10 ثوانٍ ثم حاول مرة أخرى.';
+    }
+    if (_devtoolsAuthWindow && !_devtoolsAuthWindow.isDestroyed()) {
+      _devtoolsAuthWindow.webContents.send('devtools-auth-error', message);
+    }
+    return { ok: false };
+  }
+  const wc = _devtoolsTarget && !_devtoolsTarget.isDestroyed() ? _devtoolsTarget.webContents : null;
+  _devtoolsFailures = 0;
+  _closeDevtoolsAuth();
+  if (wc && !wc.isDestroyed() && !wc.isDevToolsOpened()) {
+    _devtoolsAuthorized = true;
+    wc.openDevTools({ mode: 'detach' });
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('devtools-auth-cancel', async (event) => {
+  if (_devtoolsAuthWindow && event.sender === _devtoolsAuthWindow.webContents) _closeDevtoolsAuth();
+  return { ok: true };
+});
+
+function openDevToolsAuth(targetWindow) {
+  if (_devtoolsAuthWindow && !_devtoolsAuthWindow.isDestroyed()) {
+    _devtoolsAuthWindow.focus();
+    return;
+  }
+  _devtoolsTarget = targetWindow;
+  const html = '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">' +
+    '<style>body{font-family:Tahoma,Arial;margin:0;background:#1e1e22;color:#eee;direction:rtl}' +
+    '.box{padding:24px}h3{margin:0 0 12px;font-size:16px}p{font-size:12px;color:#bbb;margin:0 0 14px}' +
+    'input{width:100%;box-sizing:border-box;padding:10px;font-size:14px;background:#2b2b31;color:#fff;border:1px solid #555;border-radius:5px}' +
+    '.row{display:flex;gap:8px;margin-top:14px}button{flex:1;padding:9px;font-size:13px;border:0;border-radius:5px;cursor:pointer}' +
+    '.ok{background:#0d6efd;color:#fff}.cancel{background:#444;color:#eee}#err{color:#ff8080;font-size:12px;min-height:17px;margin-top:10px}</style></head>' +
+    '<body><div class="box"><h3>وضع المطور — مطلوب الرقم السري</h3>' +
+    '<p>لا يمكن فتح المفتش إلا بعد إدخال الرقم السري الخاص بالبرنامج.</p>' +
+    '<input id="pwd" type="password" autocomplete="off" spellcheck="false" placeholder="الرقم السري">' +
+    '<div id="err"></div><div class="row"><button class="ok" id="go">فتح المفتش</button>' +
+    '<button class="cancel" id="no">إلغاء</button></div></div>' +
+    '<script>(function(){var p=document.getElementById("pwd"),e=document.getElementById("err");' +
+    'window.zmtDevtoolsAuth.onError(function(m){e.textContent=m;p.value="";p.focus();p.select();});' +
+    'function go(){window.zmtDevtoolsAuth.submit(p.value).then(function(r){if(!r.ok)p.focus();});}' +
+    'document.getElementById("go").addEventListener("click",go);' +
+    'document.getElementById("no").addEventListener("click",function(){window.zmtDevtoolsAuth.cancel();});' +
+    'p.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();go();}' +
+    'else if(ev.key==="Escape"){ev.preventDefault();window.zmtDevtoolsAuth.cancel();}});' +
+    'setTimeout(function(){p.focus();},80);})();<\/script></body></html>';
+
+  _devtoolsAuthWindow = new BrowserWindow({
+    width: 420,
+    height: 230,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    alwaysOnTop: true,
+    parent: targetWindow,
+    modal: true,
+    title: 'ZMT PIECE - DevTools',
+    webPreferences: {
+      preload: path.join(__dirname, 'devtools-auth-preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      devTools: false,
+    },
+  });
+  _devtoolsAuthWindow.on('closed', () => {
+    _devtoolsAuthWindow = null;
+    _devtoolsTarget = null;
+  });
+  _devtoolsAuthWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+}
+
+function _isDevtoolsChord(input) {
+  const key = String(input.key || '').toUpperCase();
+  const ctrlShift = !!(input.control && input.shift && (key === 'I' || key === 'J' || key === 'C'));
+  const cmdAlt = !!(input.meta && input.alt && key === 'I');
+  return ctrlShift || cmdAlt || key === 'F12';
+}
+
+// Attached to EVERY BrowserWindow. Child windows are blocked outright; only the
+// main window can reach the password dialog. `devTools:false` is set on the
+// other windows as a second layer.
+function installDevToolsGuard(win, allowUnlock) {
+  if (!win || win.webContents.isDestroyed() || win.__zmtDevtoolsGuard) return;
+  win.__zmtDevtoolsGuard = true;
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || !_isDevtoolsChord(input)) return;
+    event.preventDefault();
+    const key = String(input.key || '').toUpperCase();
+    if (key === 'F12') {
+      // F12 stays reserved for the cash drawer in the main window.
+      if (win === mainWindow && !win.webContents.isDestroyed()) {
+        try { win.webContents.send('cash-drawer-hotkey'); } catch (e) {}
+      }
+      return;
+    }
+    if (allowUnlock && win === mainWindow) openDevToolsAuth(mainWindow);
+  });
+  win.webContents.on('devtools-opened', () => {
+    if (!_devtoolsAuthorized && !win.webContents.isDestroyed()) {
+      try { win.webContents.closeDevTools(); } catch (e) {}
+    }
+  });
+  win.webContents.on('devtools-closed', () => { _devtoolsAuthorized = false; });
+}
+
+// The stock Electron menu contains "Toggle Developer Tools" with its own
+// accelerator, which bypasses before-input-event. Replace it with a normal
+// app menu that has no developer entry while keeping editing shortcuts.
+function installSecureApplicationMenu() {
+  const template = [
+    { label: 'تحرير', submenu: [
+      { role: 'undo', label: 'تراجع' }, { role: 'redo', label: 'إعادة' }, { type: 'separator' },
+      { role: 'cut', label: 'قص' }, { role: 'copy', label: 'نسخ' }, { role: 'paste', label: 'لصق' },
+      { role: 'selectAll', label: 'تحديد الكل' },
+    ] },
+    { label: 'عرض', submenu: [
+      { role: 'resetZoom', label: 'حجم عادي' }, { role: 'zoomIn', label: 'تكبير' },
+      { role: 'zoomOut', label: 'تصغير' }, { type: 'separator' },
+      { role: 'togglefullscreen', label: 'ملء الشاشة' },
+    ] },
+    { label: 'نافذة', submenu: [
+      { role: 'minimize', label: 'تصغير' }, { role: 'close', label: 'إغلاق' },
+    ] },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 // ===== COMPANY-ISOLATED PROCESS MODE =====
 // Every company must own a *separate Chromium profile*, not just a second
@@ -43,6 +212,101 @@ if (IS_COMPANY_PROCESS) {
   }
 }
 
+// ===== FILESYSTEM PATH ALLOWLIST =====
+// Renderer code can be compromised by an injected command or a malicious page.
+// Every fs/spawn channel therefore accepts only: the app's own userData roots,
+// a path explicitly returned by a native file dialog to that sender, or (for
+// the legacy migration UI) a read-only file with a known data extension.
+const _grantedPaths = new Map(); // sender.id -> Map<lowercase path, expiry>
+const GRANT_TTL_MS = 10 * 60 * 1000;
+const GRANTED_MODES = { r: 1, w: 2, x: 4 };
+
+function _grantPath(sender, rawPath, mode) {
+  if (!sender || typeof rawPath !== 'string' || !rawPath) return;
+  const key = path.resolve(rawPath).toLowerCase();
+  let map = _grantedPaths.get(sender.id);
+  if (!map) { map = new Map(); _grantedPaths.set(sender.id, map); }
+  if (map.size > 100) {
+    const now = Date.now();
+    for (const [k, v] of map) if (v.until < now) map.delete(k);
+  }
+  map.set(key, { until: Date.now() + GRANT_TTL_MS, mode: mode || 'rw' });
+}
+
+function _hasGrant(sender, filePath, wanted) {
+  const map = sender && _grantedPaths.get(sender.id);
+  if (!map) return false;
+  const entry = map.get(filePath.toLowerCase());
+  if (!entry || entry.until < Date.now()) return false;
+  const wantBit = GRANTED_MODES[wanted] || GRANTED_MODES.r;
+  return !!(GRANTED_MODES[entry.mode] & wantBit) ||
+    (entry.mode === 'rw' && (wanted === 'r' || wanted === 'w'));
+}
+
+function _insideDir(root, candidate) {
+  try {
+    const parent = path.resolve(root).toLowerCase();
+    const child = path.resolve(candidate).toLowerCase();
+    if (child === parent) return true;
+    const rel = path.relative(parent, child);
+    return !!rel && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel);
+  } catch (e) { return false; }
+}
+
+const DENY_WRITE_NAMES = new Set([
+  'rustdesk-path.txt', 'zmt_ai_keys.dat', 'zmt_ai_base_url.json', 'zmt_cloud_token.dat',
+  'zmt_cloud_budget.json', 'zmt_machine.dat', 'zmt_license.dat',
+  'zmt_time.dat', 'zmt_device.dat', 'zmt_smbios.dat',
+]);
+const DATA_IMPORT_EXT = /\.(fdb|gdb|fbk|bak|mdb|accdb|dbf|db|sqlite|sqlite3|sql|csv|tsv|txt|xlsx|xls|json|xml|gssp|zgssp|zmt-backup)$/i;
+
+function assertAllowedPath(rawPath, sender, options) {
+  const opts = options || {};
+  if (typeof rawPath !== 'string' || !rawPath || rawPath.length > 4096) {
+    throw new Error('مسار غير صالح');
+  }
+  if (rawPath.indexOf('\0') >= 0 || /^\\\\(\?|\.)[\\/]/i.test(rawPath)) {
+    throw new Error('مسار غير صالح');
+  }
+  const resolved = path.resolve(rawPath);
+  const base = path.basename(resolved);
+  if (/:/.test(base) && !/^[A-Za-z]:$/.test(base)) throw new Error('مسار غير صالح');
+  if (opts.mode === 'w' && DENY_WRITE_NAMES.has(base.toLowerCase())) {
+    throw new Error('هذا الملف محمي من التعديل');
+  }
+  if (opts.backupsOnly && !/\.zmt-backup$/i.test(base)) {
+    throw new Error('يمكن حذف النسخ الاحتياطية فقط');
+  }
+
+  let real = resolved;
+  try {
+    if (fs.existsSync(resolved)) real = fs.realpathSync.native
+      ? fs.realpathSync.native(resolved)
+      : fs.realpathSync(resolved);
+  } catch (e) {}
+
+  const userData = app.getPath('userData');
+  if (IS_COMPANY_PROCESS) {
+    // A company process may only touch its OWN profile. The shared base folder
+    // is readable solely for the snapshot of this company, never writable.
+    if (_insideDir(userData, real)) return resolved;
+    if ((opts.mode || 'r') === 'r') {
+      const ownSnapshot = path.resolve(path.join(COMPANY_PROFILES_DIR, LAUNCH_COMPANY_ID, 'migration.json'));
+      if (path.resolve(real).toLowerCase() === ownSnapshot.toLowerCase()) return resolved;
+    }
+  } else if ([userData, BASE_USER_DATA].concat(opts.extraRoots || [])
+    .some(root => _insideDir(root, real))) {
+    return resolved;
+  }
+  if (_hasGrant(sender, resolved, opts.mode || 'r') ||
+      (real !== resolved && _hasGrant(sender, real, opts.mode || 'r'))) return resolved;
+  // Legacy drag-and-drop migration files arrive via File.path without a dialog.
+  if (opts.dataExtensions && (opts.mode || 'r') === 'r' && DATA_IMPORT_EXT.test(base)) {
+    return resolved;
+  }
+  throw new Error('المسار خارج النطاق المسموح');
+}
+
 if (process.platform === 'win32' && require('os').release().startsWith('6.1')) {
   app.commandLine.appendSwitch('no-sandbox');
 }
@@ -53,6 +317,10 @@ const LAN = require('./lan-server');
 const PrinterNet = require('./printer-net');
 const ScaleNet = require('./scale-net');
 const PhoneScanner = require('./phone-scanner');
+const AIBridge = require('./ai-bridge');
+AIBridge.register();
+const CloudBridge = require('./cloud-bridge');
+CloudBridge.register();
 
 let mainWindow;
 let splashWindow;
@@ -98,9 +366,11 @@ function createSplash() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      devTools: false,
     },
   });
 
+  installDevToolsGuard(splashWindow, false);
   splashWindow.maximize();
 
   splashWindow.loadFile(path.join(__dirname, 'renderer', 'splash.html'))
@@ -126,11 +396,11 @@ function createWindow() {
     backgroundColor: '#1a1a1a',
     show: false,
     icon,
-    webSecurity: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      webSecurity: true,
     },
   });
 
@@ -141,15 +411,6 @@ function createWindow() {
   if (!IS_COMPANY_PROCESS) {
     try { app.setAppUserModelId('com.zmt.piece'); } catch (e) {}
   }
-
-  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
-    callback({
-      responseHeaders: {
-        'Access-Control-Allow-Origin': ['*'],
-        ...details.responseHeaders,
-      }
-    });
-  });
 
   mainWindow.once('ready-to-show', () => {
     console.log('Window ready to show');
@@ -187,27 +448,9 @@ function createWindow() {
   });
 
   // ===== DEVTOOLS + CASH DRAWER KEYS =====
-  // Ctrl+Shift+I keeps toggling the inspector even in release installs, so a
-  // support agent can read the renderer console on-site (e.g. to diagnose the
-  // "white screen" after licence deletion) without a --dev relaunch.
-  // F12 is now reserved for the cash drawer: it is forwarded to the renderer,
-  // which asks the main process to send the ESC/POS pulse.
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return;
-    const isF12 = input.key === 'F12';
-    const isDevShortcut = !!(input.control && input.shift && (input.key === 'I' || input.key === 'i'));
-
-    if (isF12) {
-      event.preventDefault();
-      try { mainWindow.webContents.send('cash-drawer-hotkey'); } catch (e) {}
-      return;
-    }
-    if (!isDevShortcut) return;
-    event.preventDefault();
-    const wc = mainWindow.webContents;
-    if (wc.isDevToolsOpened()) wc.closeDevTools();
-    else wc.openDevTools({ mode: 'detach' });
-  });
+  // Ctrl+Shift+I / Ctrl+Shift+J / Ctrl+Shift+C no longer open the inspector.
+  // They ask the main-process password gate first; F12 remains the cash drawer.
+  installDevToolsGuard(mainWindow, true);
 
   // ===== KIOSK SAFETY NET (price display) =====
   // While kiosk mode is on, Alt+F4 must not kill the app: it is forwarded to
@@ -229,13 +472,16 @@ function createWindow() {
     .then(() => console.log('Page loaded'))
     .catch((err) => console.error('Load error:', err));
 
+  // `--dev` no longer auto-opens the inspector in a shipped build. Developer
+  // diagnostics use the same password gate as any other launch path.
   if (process.argv.includes('--dev')) {
-    mainWindow.webContents.openDevTools();
+    console.log('[dev] inspector stays locked; use the password gate when needed.');
   }
 }
 
 app.whenReady().then(() => {
   console.log('App ready');
+  installSecureApplicationMenu();
   // Licence is machine-wide and must be read from the shared base profile in
   // BOTH main and company processes (company userData holds business data only).
   License.setUserDataPath(BASE_USER_DATA);
@@ -257,7 +503,35 @@ app.whenReady().then(() => {
     // plus the licence mirror in HKCU\Software\ZMT PIECE. The renderer releases
     // its IndexedDB handle (DB.close()) before calling, otherwise Chromium keeps
     // the database folder locked and the wipe silently leaves the data behind.
-    ipcMain.handle('license-hard-reset', async () => {
+    // Password-only probe used by the confirmation dialog BEFORE it asks the
+    // operator to approve an irreversible wipe. It has no side effects.
+    ipcMain.handle('license-reset-verify', async (_event, password) => {
+      const now = Date.now();
+      if (now < _resetBlockedUntil) {
+        return { ok: false, message: 'محاولات كثيرة غير صحيحة. انتظر قليلاً ثم حاول مرة أخرى.' };
+      }
+      if (String(password == null ? '' : password) !== HARD_RESET_PASSWORD) {
+        _resetFailures += 1;
+        if (_resetFailures >= 5) {
+          _resetFailures = 0;
+          _resetBlockedUntil = now + 10000;
+          return { ok: false, message: 'محاولات كثيرة غير صحيحة. انتظر 10 ثوانٍ ثم حاول مرة أخرى.' };
+        }
+        return { ok: false, message: 'كلمة المرور غير صحيحة' };
+      }
+      _resetFailures = 0;
+      return { ok: true };
+    });
+
+    ipcMain.handle('license-hard-reset', async (_event, password) => {
+      // Re-check at the destructive boundary: a page that skipped the probe, or
+      // a renderer compromised later, still cannot wipe the machine.
+      const verdict = String(password == null ? '' : password) === HARD_RESET_PASSWORD &&
+        Date.now() >= _resetBlockedUntil;
+      if (!verdict) {
+        return { success: false, unauthorized: true, message: 'كلمة المرور غير صحيحة' };
+      }
+      _resetFailures = 0;
       // An isolated company has no licence files of its own and must never
       // wipe the shared machine activation or the other companies' profiles.
       if (IS_COMPANY_PROCESS) {
@@ -403,14 +677,16 @@ function openQuickEntryWindow() {
     backgroundColor: '#1a1a1a',
     show: false,
     icon,
-    webSecurity: false,
     title: 'Quick Entry',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      webSecurity: true,
+      devTools: false,
     },
   });
+  installDevToolsGuard(w, false);
   quickEntryWindows.push(w);
   w.setTitle('ZMT Quick Entry - ' + Date.now());
   const qeQuery = { standalone: 'quick-entry' };
@@ -549,21 +825,24 @@ ipcMain.on('zmt-db-changed', (event) => {
 
 ipcMain.handle('dialog-open-file', async (event, options) => {
   const result = await dialog.showOpenDialog(mainWindow, options);
+  (result.filePaths || []).forEach(p => _grantPath(event.sender, p, 'r'));
   fixWindowFocus();
   return result;
 });
 
 ipcMain.handle('dialog-save-file', async (event, options) => {
   const result = await dialog.showSaveDialog(mainWindow, options);
+  if (result.filePath) _grantPath(event.sender, result.filePath, 'rw');
   fixWindowFocus();
   return result;
 });
 
 ipcMain.handle('write-file', async (event, filePath, data) => {
   try {
-    const dir = require('path').dirname(filePath);
+    const safePath = assertAllowedPath(filePath, event.sender, { mode: 'w' });
+    const dir = require('path').dirname(safePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(filePath, data, 'utf-8');
+    fs.writeFileSync(safePath, data, 'utf-8');
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -572,19 +851,38 @@ ipcMain.handle('write-file', async (event, filePath, data) => {
 
 ipcMain.handle('write-file-binary', async (event, filePath, base64Data) => {
   try {
+    const safePath = assertAllowedPath(filePath, event.sender, { mode: 'w' });
+    const dir = require('path').dirname(safePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const buffer = Buffer.from(base64Data, 'base64');
-    fs.writeFileSync(filePath, buffer);
+    fs.writeFileSync(safePath, buffer);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
   }
 });
 
+const PRINT_CSP = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\' data:; img-src data: file: blob:; font-src data: file:; connect-src \'none\'; form-action \'none\'; base-uri \'none\'">';
+
 ipcMain.handle('generate-invoice-pdf', async (event, html) => {
   let win = null;
   try {
-    win = new BrowserWindow({ show: false, webPreferences: { sandbox: false } });
-    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    if (typeof html !== 'string' || html.length > 12 * 1024 * 1024) {
+      return { success: false, error: 'حجم الفاتورة كبير جداً' };
+    }
+    win = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        sandbox: true,
+        nodeIntegration: false,
+        contextIsolation: true,
+        webSecurity: true,
+        devTools: false,
+        backgroundThrottling: false,
+      },
+    });
+    installDevToolsGuard(win, false);
+    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(PRINT_CSP + html));
     const buf = await win.webContents.printToPDF({ printBackground: true, pageSize: 'A4', margins: { top: 0, bottom: 0, left: 0, right: 0 } });
     return { success: true, data: buf.toString('base64') };
   } catch (err) {
@@ -622,7 +920,8 @@ ipcMain.handle('send-email', async (event, payload) => {
 
 ipcMain.handle('read-file', async (event, filePath) => {
   try {
-    const data = fs.readFileSync(filePath, 'utf-8');
+    const safePath = assertAllowedPath(filePath, event.sender, { mode: 'r' });
+    const data = fs.readFileSync(safePath, 'utf-8');
     return { success: true, data };
   } catch (err) {
     return { success: false, error: err.message };
@@ -631,7 +930,8 @@ ipcMain.handle('read-file', async (event, filePath) => {
 
 ipcMain.handle('read-directory', async (event, dirPath) => {
   try {
-    const files = fs.readdirSync(dirPath).filter(f => f.endsWith('.zmt-backup'));
+    const safePath = assertAllowedPath(dirPath, event.sender, { mode: 'r' });
+    const files = fs.readdirSync(safePath).filter(f => f.endsWith('.zmt-backup'));
     return { success: true, files };
   } catch (err) {
     return { success: false, error: err.message };
@@ -754,7 +1054,8 @@ _companyIpcHandle('company-create-shortcut', (event, companyId, companyName) => 
 
 ipcMain.handle('delete-file', async (event, filePath) => {
   try {
-    fs.unlinkSync(filePath);
+    const safePath = assertAllowedPath(filePath, event.sender, { mode: 'w', backupsOnly: true });
+    fs.unlinkSync(safePath);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -763,7 +1064,8 @@ ipcMain.handle('delete-file', async (event, filePath) => {
 
 ipcMain.handle('read-file-buffer', async (event, filePath) => {
   try {
-    const buffer = fs.readFileSync(filePath);
+    const safePath = assertAllowedPath(filePath, event.sender, { mode: 'r' });
+    const buffer = fs.readFileSync(safePath);
     return { success: true, data: buffer.toString('base64') };
   } catch (err) {
     return { success: false, error: err.message };
@@ -807,12 +1109,13 @@ const LOGO_MIME = (ext) => ({
 ipcMain.handle('invoice-logo-import', async (event, srcPath, previousPath) => {
   try {
     if (!srcPath || typeof srcPath !== 'string') return { success: false, error: 'bad_path' };
-    if (!fs.existsSync(srcPath)) return { success: false, error: 'missing_source' };
+    const safeSrc = assertAllowedPath(srcPath, event.sender, { mode: 'r' });
+    if (!fs.existsSync(safeSrc)) return { success: false, error: 'missing_source' };
     const dir = INVOICE_LOGO_DIR();
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const ext = LOGO_EXT(srcPath);
+    const ext = LOGO_EXT(safeSrc);
     const dest = path.join(dir, 'logo-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8) + ext);
-    fs.copyFileSync(srcPath, dest);
+    fs.copyFileSync(safeSrc, dest);
     // best-effort cleanup of the replaced file (only ever inside our own dir)
     try {
       if (previousPath && typeof previousPath === 'string') {
@@ -843,9 +1146,13 @@ ipcMain.handle('invoice-logo-remove', async (event, destPath) => {
 ipcMain.handle('invoice-logo-dataurl', async (event, logoPath) => {
   try {
     if (!logoPath || typeof logoPath !== 'string') return { success: false, error: 'no_path' };
-    if (!fs.existsSync(logoPath)) return { success: false, error: 'missing_file' };
-    const ext = LOGO_EXT(logoPath);
-    const buf = fs.readFileSync(logoPath);
+    // An injected localStorage value must not turn this into an arbitrary-file
+    // read: only files created by invoice-logo-import may be inlined.
+    if (!_isInside(INVOICE_LOGO_DIR(), logoPath)) return { success: false, error: 'outside_logo_dir' };
+    const safeLogo = assertAllowedPath(logoPath, event.sender, { mode: 'r' });
+    if (!fs.existsSync(safeLogo)) return { success: false, error: 'missing_file' };
+    const ext = LOGO_EXT(safeLogo);
+    const buf = fs.readFileSync(safeLogo);
     return { success: true, dataUrl: 'data:' + LOGO_MIME(ext) + ';base64,' + buf.toString('base64'), size: buf.length };
   } catch (err) {
     return { success: false, error: err.message };
@@ -855,13 +1162,14 @@ ipcMain.handle('invoice-logo-dataurl', async (event, logoPath) => {
 ipcMain.handle('pd-import-media', async (event, srcPath, kind) => {
   try {
     if (!srcPath || typeof srcPath !== 'string') return { success: false, error: 'bad_path' };
-    if (!fs.existsSync(srcPath)) return { success: false, error: 'missing_source' };
+    const safeSrc = assertAllowedPath(srcPath, event.sender, { mode: 'r' });
+    if (!fs.existsSync(safeSrc)) return { success: false, error: 'missing_source' };
     const dir = PD_MEDIA_DIR();
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const prefix = kind === 'image' ? 'img' : 'vid';
     const base = prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
-    const dest = path.join(dir, base + PD_SAFE_EXT(srcPath));
-    fs.copyFileSync(srcPath, dest);
+    const dest = path.join(dir, base + PD_SAFE_EXT(safeSrc));
+    fs.copyFileSync(safeSrc, dest);
     return { success: true, path: dest, size: fs.statSync(dest).size };
   } catch (err) {
     return { success: false, error: err.message };
@@ -941,14 +1249,19 @@ ipcMain.handle('open-file-import', async (event) => {
       { name: 'All Files', extensions: ['*'] },
     ],
   });
+  (result.filePaths || []).forEach(p => _grantPath(event.sender, p, 'r'));
   fixWindowFocus();
   return result;
 });
 
 // ===== FIREBIRD (.fdb/.gdb) READER =====
+function _safeImportPath(rawPath, sender) {
+  return assertAllowedPath(rawPath, sender, { mode: 'r', dataExtensions: true });
+}
+
 ipcMain.handle('firebird-detect', async (event, dbPath, options) => {
   try {
-    return { success: true, data: await Firebird.detect(dbPath, options) };
+    return { success: true, data: await Firebird.detect(_safeImportPath(dbPath, event.sender), options) };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -956,7 +1269,7 @@ ipcMain.handle('firebird-detect', async (event, dbPath, options) => {
 
 ipcMain.handle('firebird-tables', async (event, dbPath, options) => {
   try {
-    return { success: true, data: await Firebird.listTables(dbPath, options) };
+    return { success: true, data: await Firebird.listTables(_safeImportPath(dbPath, event.sender), options) };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -964,7 +1277,7 @@ ipcMain.handle('firebird-tables', async (event, dbPath, options) => {
 
 ipcMain.handle('firebird-columns', async (event, dbPath, table, options) => {
   try {
-    return { success: true, data: await Firebird.getColumns(dbPath, table, options) };
+    return { success: true, data: await Firebird.getColumns(_safeImportPath(dbPath, event.sender), table, options) };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -972,7 +1285,7 @@ ipcMain.handle('firebird-columns', async (event, dbPath, table, options) => {
 
 ipcMain.handle('firebird-count', async (event, dbPath, table, options) => {
   try {
-    return { success: true, data: await Firebird.getRowCount(dbPath, table, options) };
+    return { success: true, data: await Firebird.getRowCount(_safeImportPath(dbPath, event.sender), table, options) };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -980,7 +1293,7 @@ ipcMain.handle('firebird-count', async (event, dbPath, table, options) => {
 
 ipcMain.handle('firebird-query', async (event, dbPath, table, columns, from, to, options) => {
   try {
-    return { success: true, data: await Firebird.queryTable(dbPath, table, columns, from, to, options) };
+    return { success: true, data: await Firebird.queryTable(_safeImportPath(dbPath, event.sender), table, columns, from, to, options) };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -988,7 +1301,11 @@ ipcMain.handle('firebird-query', async (event, dbPath, table, columns, from, to,
 
 ipcMain.handle('firebird-restore', async (event, backupPath, options) => {
   try {
-    const target = await Firebird.restoreBackup(backupPath, options);
+    const safe = _safeImportPath(backupPath, event.sender);
+    // Destination is always a main-owned temp folder: a page must not be able
+    // to choose an arbitrary write target through `options`.
+    const safeOptions = Object.assign({}, options || {}, { targetDir: undefined, targetPath: undefined });
+    const target = await Firebird.restoreBackup(safe, safeOptions);
     return { success: true, data: { path: target } };
   } catch (err) {
     return { success: false, error: err.message };
@@ -1001,19 +1318,19 @@ ipcMain.handle('mssql-bak-ensure', async () => {
   catch (err) { return { success: false, error: err.message }; }
 });
 ipcMain.handle('mssql-bak-detect', async (event, bakPath) => {
-  try { return await MssqlBak.detect(bakPath); }
+  try { return await MssqlBak.detect(_safeImportPath(bakPath, event.sender)); }
   catch (err) { return { success: false, error: err.message }; }
 });
 ipcMain.handle('mssql-bak-export', async (event, bakPath) => {
-  try { return await MssqlBak.exportAll(bakPath); }
+  try { return await MssqlBak.exportAll(_safeImportPath(bakPath, event.sender)); }
   catch (err) { return { success: false, error: err.message }; }
 });
 ipcMain.handle('mssql-bak-read-table', async (event, bakPath, table) => {
-  try { return await MssqlBak.readTable(bakPath, table); }
+  try { return await MssqlBak.readTable(_safeImportPath(bakPath, event.sender), table); }
   catch (err) { return { success: false, error: err.message }; }
 });
 ipcMain.handle('mssql-bak-dispose', async (event, bakPath) => {
-  try { return await MssqlBak.dispose(bakPath); }
+  try { return await MssqlBak.dispose(_safeImportPath(bakPath, event.sender)); }
   catch (err) { return { success: false, error: err.message }; }
 });
 
@@ -1056,6 +1373,11 @@ function _httpsGet(url, redirects) {
     let u;
     try { u = new URL(url); } catch (e) { return reject(new Error('bad url')); }
     if (u.protocol !== 'https:') return reject(new Error('https required'));
+    const UPDATE_HOSTS = ['github.com', 'githubusercontent.com'];
+    if (u.username || u.password || !UPDATE_HOSTS.some(h =>
+      u.hostname.toLowerCase() === h || u.hostname.toLowerCase().endsWith('.' + h))) {
+      return reject(new Error('update host not allowed'));
+    }
     const req = https.get(u, { headers: { 'User-Agent': 'ZMT-PIECE-Updater', 'Accept': 'application/json,application/octet-stream' } }, (res) => {
       const s = res.statusCode;
       if (s >= 300 && s < 400 && res.headers.location) {
@@ -1623,8 +1945,16 @@ function restPrintHidden(payload) {
         show: false,
         width: mmToPx((payload && payload.paperWidth) || 80),
         height: mmToPx(220),
-        webPreferences: { backgroundThrottling: false }
+        webPreferences: {
+          sandbox: true,
+          nodeIntegration: false,
+          contextIsolation: true,
+          webSecurity: true,
+          devTools: false,
+          backgroundThrottling: false,
+        }
       });
+      installDevToolsGuard(win, false);
     } catch (e) {
       return resolve({ ok: false, error: String((e && e.message) || e) });
     }
@@ -1653,7 +1983,11 @@ function restPrintHidden(payload) {
         });
       } catch (e) { onFail(e); }
     });
-    const htmlSrc = 'data:text/html;charset=utf-8,' + encodeURIComponent((payload && payload.html) || '');
+    const receiptHtml = (payload && payload.html) || '';
+    if (typeof receiptHtml !== 'string' || receiptHtml.length > 4 * 1024 * 1024) {
+      return resolve({ ok: false, error: 'حجم الإيصال كبير جداً' });
+    }
+    const htmlSrc = 'data:text/html;charset=utf-8,' + encodeURIComponent(PRINT_CSP + receiptHtml);
     win.loadURL(htmlSrc);
   });
 }
@@ -1670,11 +2004,47 @@ ipcMain.handle('rest-list-printers', async (event) => {
 
 ipcMain.handle('rest-print', (event, payload) => restPrintHidden(payload));
 
+// Only known destinations may be handed to the operating system shell. An
+// injected renderer command must not be able to launch arbitrary protocols or
+// internal admin pages through shell.openExternal.
+const EXTERNAL_HOSTS = [
+  'google.com', 'github.com', 'wa.me', 'rustdesk.com', 'anydesk.com',
+  'mail.google.com', 'zmt-website.vercel.app', 'vercel.app',
+];
+
+function _isLanAddress(host) {
+  const h = String(host || '').toLowerCase();
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return false;
+  const p = h.split('.').map(Number);
+  if (p.some(n => n > 255) || (p[0] === 169 && p[1] === 254)) return false;
+  return p[0] === 127 || p[0] === 10 || p[0] === 0 ||
+    (p[0] === 192 && p[1] === 168) || (p[0] === 172 && p[1] >= 16 && p[1] <= 31);
+}
+
+function _isAllowedExternalUrl(value) {
+  if (typeof value !== 'string' || value.length > 2048) return false;
+  const raw = value.trim();
+  if (/^mailto:/i.test(raw)) return /^mailto:[^\s@]+@[^\s@]+\.[^\s@]+(?:\?[^\s]*)?$/i.test(raw);
+  if (/^tel:/i.test(raw)) return /^tel:[+0-9()\-\s]{3,30}$/i.test(raw);
+  let target;
+  try { target = new URL(raw); } catch (e) { return false; }
+  if (target.username || target.password) return false;
+  if (target.protocol !== 'https:' && target.protocol !== 'http:') return false;
+  const host = target.hostname.toLowerCase();
+  const known = EXTERNAL_HOSTS.some(domain => host === domain || host.endsWith('.' + domain));
+  if (known) {
+    return target.protocol === 'https:' || target.port === '' || target.port === '80';
+  }
+  // LAN help pages (e.g. https://192.168.1.10:4520/cert-help) stay reachable.
+  return _isLanAddress(host);
+}
+
 // Open an external URL in the default browser
 ipcMain.handle('open-external', async (event, url) => {
   try {
-    if (typeof url !== 'string' || !/^(https?:\/\/|mailto:|tel:)/i.test(url)) {
-      return { success: false, error: 'رابط غير صالح' };
+    if (!_isAllowedExternalUrl(url)) {
+      return { success: false, error: 'رابط غير مسموح' };
     }
     // The app window is always-on-top; otherwise the external window (e.g. Gmail)
     // would open hidden behind it. Temporarily disable it and restore on focus.
@@ -1769,9 +2139,12 @@ function findRustDesk(savedPath) {
 
 // Launch RustDesk (remote support). Returns notFound so the renderer can offer to
 // pick the executable manually, remembering the chosen path for later.
-ipcMain.handle('open-rustdesk', async (_event, savedPath) => {
+ipcMain.handle('open-rustdesk', async () => {
   try {
-    const exe = findRustDesk(savedPath || readSavedRustDeskPath());
+    // Never trust an executable path supplied by the page: it could have been
+    // injected. Only the path chosen through pick-rustdesk and stored by main
+    // (or a fixed install location) is allowed.
+    const exe = findRustDesk(readSavedRustDeskPath());
     if (!exe) return { success: false, notFound: true };
     const child = spawn(exe, [], { detached: true, stdio: 'ignore' });
     child.unref();

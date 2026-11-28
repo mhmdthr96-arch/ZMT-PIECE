@@ -1,6 +1,6 @@
 {
   "name": "zmt-piece",
-  "version": "3.3.7",
+  "version": "3.3.8",
   "description": "ZMT PIECE - برنامج إدارة قطع غيار السيارات",
   "main": "main.js",
   "author": "ZERIBIT MOHAMMED TAHAR - ZMT SOFTWARE",
@@ -60,6 +60,9 @@
       "scale-net.js",
       "phone-scanner.js",
       "phone-cert.js",
+      "ai-bridge.js",
+      "cloud-bridge.js",
+      "devtools-auth-preload.js",
       "renderer/**/*",
       "!renderer/**/*.bak*",
       "!renderer/**/*.backup",

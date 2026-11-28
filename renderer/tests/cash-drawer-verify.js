@@ -236,9 +236,9 @@ ok(salesJs.indexOf('window.CashDrawer.openFromSale()') > salesJs.indexOf("showIn
 ok(/CashDrawer\.openFromSale\(\)[\s\S]{0,260}?salesBarcodeScan'\)\.focus\(\);\s*}/.test(salesJs),
   'p2: the barcode refocus stays the last statement of the checkout');
 
-has(mainJs, "mainWindow.webContents.send('cash-drawer-hotkey')", 'p2: main.js forwards F12 to the renderer');
-has(mainJs, "input.key === 'F12'", 'p2: main.js still recognises F12');
-has(mainJs, "input.key === 'I' || input.key === 'i'", 'p2: Ctrl+Shift+I remains the DevTools key');
+has(mainJs, "win.webContents.send('cash-drawer-hotkey')", 'p2: main.js forwards F12 to the renderer');
+has(mainJs, "key === 'F12'", 'p2: main.js still recognises F12');
+has(mainJs, "key === 'I' || key === 'J' || key === 'C'", 'p2: Ctrl+Shift+I/J/C are intercepted by the DevTools gate');
 has(mainJs, 'wc.openDevTools({ mode: \'detach\' })', 'p2: DevTools can still be opened');
 ok(!/isF12[\s\S]{0,200}openDevTools/.test(mainJs), 'p2: F12 no longer toggles DevTools');
 

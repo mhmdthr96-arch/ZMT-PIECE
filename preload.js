@@ -62,7 +62,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   licenseMachineId: () => ipcRenderer.invoke('license-machine-id'),
   licenseDeactivate: (payload) => ipcRenderer.invoke('license-deactivate', payload),
   licenseImport: (payload) => ipcRenderer.invoke('license-import', payload),
-  licenseHardReset: () => ipcRenderer.invoke('license-hard-reset'),
+  licenseResetVerify: (password) => ipcRenderer.invoke('license-reset-verify', password),
+  licenseHardReset: (password) => ipcRenderer.invoke('license-hard-reset', password),
   // LAN Sync (main/sub server)
   lanConfigure: (config) => ipcRenderer.invoke('lan-configure', config),
   lanSend: (payload) => ipcRenderer.invoke('lan-send', payload),
@@ -147,6 +148,120 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updaterOpenLog: () => ipcRenderer.invoke('update-open-log'),
   updaterOpenFolder: () => ipcRenderer.invoke('update-open-folder'),
   onUpdaterProgress: (cb) => ipcRenderer.on('update-progress', (_e, p) => cb(p)),
-  licenseHardReset: () => ipcRenderer.invoke('license-hard-reset'),
   relaunchApp: () => ipcRenderer.invoke('app-relaunch'),
+  // AI keys and inference live in the main process. Only prompts/results cross
+  // this bridge; the key itself is never returned to the page.
+  aiSetKey: (provider, key) => ipcRenderer.invoke('ai-set-key', provider, key),
+  aiClearKey: (provider) => ipcRenderer.invoke('ai-clear-key', provider),
+  aiHasKey: (provider) => ipcRenderer.invoke('ai-has-key', provider),
+  aiMigrateKey: (provider, key) => ipcRenderer.invoke('ai-migrate-key', provider, key),
+  aiSetBaseUrl: (url) => ipcRenderer.invoke('ai-set-base-url', url),
+  aiGetBaseUrl: () => ipcRenderer.invoke('ai-get-base-url'),
+  aiCall: (request) => ipcRenderer.invoke('ai-call', request),
+  // Cloud credentials and HTTP traffic are handled in the main process.
+  cloudTokenStatus: () => ipcRenderer.invoke('cloud-token-status'),
+  cloudTokenObtain: (args) => ipcRenderer.invoke('cloud-token-obtain', args),
+  cloudTokenStore: (token, expiresAt) => ipcRenderer.invoke('cloud-token-store', token, expiresAt),
+  cloudTokenClear: () => ipcRenderer.invoke('cloud-token-clear'),
+  cloudBroadcast: (payload) => ipcRenderer.invoke('cloud-broadcast', payload),
+  cloudBudget: () => ipcRenderer.invoke('cloud-budget'),
+  cloudRequest: (descriptor) => ipcRenderer.invoke('cloud-request', descriptor),
+});
+
+// Fetch-compatible bridge used by supabase-js and the website API helpers.
+// The real URL/key/token are appended in main.js; this side never holds them.
+function zmtNormalizeHeaders(headers) {
+  const out = {};
+  if (!headers) return out;
+  if (typeof headers.forEach === 'function') {
+    headers.forEach((v, k) => { out[String(k)] = String(v); });
+  } else if (Array.isArray(headers)) {
+    headers.forEach((pair) => { if (Array.isArray(pair)) out[String(pair[0])] = String(pair[1]); });
+  } else {
+    Object.keys(headers).forEach((k) => { out[String(k)] = String(headers[k]); });
+  }
+  return out;
+}
+
+function zmtBytesToBase64(bytes) {
+  const step = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+  }
+  return btoa(binary);
+}
+
+function zmtBase64ToBytes(value) {
+  const binary = atob(value || '');
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function zmtEncodeBody(body) {
+  if (body == null) return '';
+  // The renderer pre-encodes non-string bodies (multipart uploads, raw byte
+  // payloads) into this plain descriptor because Web API objects such as
+  // FormData/Blob/ArrayBuffer do not survive contextBridge reliably.
+  if (body && typeof body === 'object' && typeof body.__zmtBinaryBase64 === 'string') {
+    const encoded = body.__zmtBinaryBase64;
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) throw new Error('جسم الطلب غير صالح');
+    return encoded;
+  }
+  const enc = new TextEncoder();
+  if (typeof body === 'string') return zmtBytesToBase64(enc.encode(body));
+  if (typeof ArrayBuffer !== 'undefined' && body instanceof ArrayBuffer) return zmtBytesToBase64(new Uint8Array(body));
+  if (ArrayBuffer.isView && ArrayBuffer.isView(body)) {
+    return zmtBytesToBase64(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
+  }
+  if (typeof Blob !== 'undefined' && body instanceof Blob) return zmtBytesToBase64(new Uint8Array(await body.arrayBuffer()));
+  if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) return zmtBytesToBase64(enc.encode(body.toString()));
+  return zmtBytesToBase64(enc.encode(String(body)));
+}
+
+function zmtMakeResponse(result) {
+  const bytes = zmtBase64ToBytes(result.bodyBase64);
+  const headers = result.headers || {};
+  const find = (name) => {
+    const key = String(name).toLowerCase();
+    const hit = Object.keys(headers).find((k) => k.toLowerCase() === key);
+    return hit === undefined ? null : String(headers[hit]);
+  };
+  const type = find('content-type') || '';
+  return {
+    ok: result.status >= 200 && result.status < 300,
+    status: result.status,
+    statusText: result.statusText || '',
+    url: '',
+    headers: { get: find, has: (name) => find(name) !== null, forEach: (cb) => Object.keys(headers).forEach((k) => cb(String(headers[k]), k)) },
+    clone: () => zmtMakeResponse(result),
+    json: async () => JSON.parse(new TextDecoder().decode(bytes)),
+    text: async () => new TextDecoder().decode(bytes),
+    blob: async () => new Blob([bytes], { type }),
+    arrayBuffer: async () => bytes.buffer,
+  };
+}
+
+contextBridge.exposeInMainWorld('zmtCloudFetch', async (url, options) => {
+  const init = options || {};
+  const target = typeof url === 'string' ? url : ((url && url.url) || '');
+  let parsed = null;
+  try { parsed = new URL(target); } catch (e) {}
+  const isCloud = !!(parsed && parsed.origin === 'https://cloud.zmt.local');
+  const scope = isCloud ? 'supabase' : 'site';
+  // For site calls the origin is always taken from the URL, never from an
+  // arbitrary `siteBase` supplied by page JavaScript.
+  const siteBase = isCloud ? undefined : ((parsed && parsed.origin) || init.siteBase || undefined);
+  const result = await ipcRenderer.invoke('cloud-request', {
+    scope,
+    url: target,
+    method: init.method || (url && url.method) || 'GET',
+    headers: zmtNormalizeHeaders(init.headers || (url && url.headers)),
+    bodyBase64: await zmtEncodeBody(init.body != null ? init.body : (url && url.body)),
+    siteBase,
+    timeoutMs: init.timeoutMs,
+  });
+  if (!result || result.ok !== true) throw new Error((result && result.error) || 'فشل طلب السحابة');
+  return zmtMakeResponse(result);
 });

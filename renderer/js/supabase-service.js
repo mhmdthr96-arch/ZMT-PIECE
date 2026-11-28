@@ -90,12 +90,135 @@ const CloudService = (() => {
     ]);
   }
 
-  // ===== HARDCODED SUPABASE CREDENTIALS (Developer Only) =====
-  const SUPABASE_URL = 'https://dzqiybhpevqoolsmatat.supabase.co';
-  const SUPABASE_KEY = 'sb_publishable_8dlWp7k7vDyZ2CZxa0kG8w_WRN_3yGZ';
+  // All HTTP goes through main.js in Electron. The direct fetch path exists
+  // only for the offline regression harness, which has no electronAPI.
+  function _cloudFetch(url, init) {
+    if (_bridge() && typeof window.zmtCloudFetch === 'function') {
+      return window.zmtCloudFetch(url, Object.assign({}, init || {}, { siteBase: _getSiteBase() }));
+    }
+    return fetch(url, init);
+  }
 
+  // ===== IPC FETCH ADAPTER (renderer side) =====
+  // supabase-js hands `fetch` a real `Headers` object and, for storage writes,
+  // a real `FormData` object. Electron's contextBridge cannot carry those Web
+  // API objects intact: the `x-upsert` header vanishes (Supabase then answers
+  // "The resource already exists" on every re-upload) and the gzip Blob body
+  // becomes the literal string "[object FormData]". Convert BOTH here, in the
+  // renderer, before anything crosses the bridge. The plain-object body is
+  // decoded back to bytes by preload.js.
+  const ZMT_BINARY_KEY = '__zmtBinaryBase64';
+
+  function _plainHeaders(headers) {
+    const out = {};
+    if (!headers) return out;
+    if (typeof headers.forEach === 'function') {
+      headers.forEach((v, k) => { out[String(k)] = String(v); });
+    } else if (Array.isArray(headers)) {
+      for (const pair of headers) {
+        if (Array.isArray(pair)) out[String(pair[0])] = String(pair[1]);
+      }
+    } else {
+      Object.keys(headers).forEach((k) => { out[String(k)] = String(headers[k]); });
+    }
+    return out;
+  }
+
+  function _bytesToBase64(bytes) {
+    const view = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
+    const chunk = 0x8000;
+    let binary = '';
+    for (let i = 0; i < view.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, view.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+
+  function _cleanHeaderValue(value) {
+    return String(value == null ? '' : value).replace(/["\r\n]/g, '');
+  }
+
+  // Rebuild exactly the multipart body supabase-js intended: `cacheControl`
+  // (and optional metadata) fields plus the gzip file under the empty name.
+  async function _formDataToDescriptor(fd) {
+    const boundary = '----zmt-' + Date.now().toString(16) + '-' + Math.random().toString(16).slice(2);
+    const enc = new TextEncoder();
+    const entries = [];
+    if (typeof fd.entries === 'function') {
+      for (const pair of fd.entries()) entries.push(pair);
+    } else if (typeof fd.forEach === 'function') {
+      fd.forEach((v, k) => { entries.push([k, v]); });
+    }
+    const chunks = [];
+    for (const [name, value] of entries) {
+      const lines = ['--' + boundary + '\r\n'];
+      if ((typeof Blob !== 'undefined' && value instanceof Blob) ||
+          (value && typeof value.arrayBuffer === 'function')) {
+        const bytes = new Uint8Array(await value.arrayBuffer());
+        lines.push('Content-Disposition: form-data; name="' + _cleanHeaderValue(name) +
+          '"; filename="' + _cleanHeaderValue(value.name || 'blob') + '"\r\n');
+        if (value.type) lines.push('Content-Type: ' + _cleanHeaderValue(value.type) + '\r\n');
+        lines.push('\r\n');
+        chunks.push(enc.encode(lines.join('')));
+        chunks.push(bytes);
+        chunks.push(enc.encode('\r\n'));
+      } else {
+        lines.push('Content-Disposition: form-data; name="' + _cleanHeaderValue(name) + '"\r\n\r\n');
+        chunks.push(enc.encode(lines.join('')));
+        chunks.push(enc.encode(String(value == null ? '' : value)));
+        chunks.push(enc.encode('\r\n'));
+      }
+    }
+    chunks.push(enc.encode('--' + boundary + '--\r\n'));
+    let total = 0;
+    for (const c of chunks) total += c.length;
+    const body = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) { body.set(c, offset); offset += c.length; }
+    return {
+      contentType: 'multipart/form-data; boundary=' + boundary,
+      body: { [ZMT_BINARY_KEY]: _bytesToBase64(body) },
+    };
+  }
+
+  async function _bridgeFetch(url, init) {
+    const options = init || {};
+    const headers = _plainHeaders(options.headers);
+    let body = options.body;
+    if (typeof FormData !== 'undefined' && body instanceof FormData) {
+      const converted = await _formDataToDescriptor(body);
+      headers['Content-Type'] = converted.contentType;
+      body = converted.body;
+    } else if (body != null && typeof body !== 'string' &&
+               (typeof ArrayBuffer !== 'undefined' &&
+                (body instanceof ArrayBuffer || ArrayBuffer.isView(body)))) {
+      body = { [ZMT_BINARY_KEY]: _bytesToBase64(body) };
+    }
+    // Storage writes build a gzip Blob and can legitimately take minutes.
+    // main.js defaults to 30 s unless we pass an explicit budget.
+    return window.zmtCloudFetch(String(url), {
+      method: options.method || 'GET',
+      headers,
+      body,
+      timeoutMs: 180000,
+    });
+  }
+
+  // ===== CLOUD CREDENTIALS (main process only) =====
+  // The real URL/key and the RLS token live in cloud-bridge.js in the main
+  // process. The renderer only uses a local placeholder origin; every request
+  // is rewritten, authenticated and counted by main.js.
+  const SUPABASE_URL = 'https://cloud.zmt.local';
+  const SUPABASE_KEY = 'managed-by-main-process';
+
+  function _bridge() {
+    return (typeof window !== 'undefined' && window.electronAPI &&
+      typeof window.electronAPI.cloudTokenStatus === 'function') ? window.electronAPI : null;
+  }
+
+  // No credential is exposed here. getConfig() is kept for API compatibility.
   function getConfig() {
-    return { url: SUPABASE_URL, key: SUPABASE_KEY };
+    return { url: _bridge() ? 'cloud-bridge' : SUPABASE_URL, key: _bridge() ? 'managed-by-main-process' : SUPABASE_KEY };
   }
 
   function saveConfig(cfg) {
@@ -123,7 +246,17 @@ const CloudService = (() => {
     return localStorage.getItem('zmt_store_password') || '';
   }
 
+  let _tokenValidCache = false;
+  if (_bridge()) {
+    try {
+      _bridge().cloudTokenStatus().then((r) => { _tokenValidCache = !!(r && r.valid); }).catch(() => {});
+    } catch (e) {}
+  }
+
+  // In Electron the token never reaches this process. Local storage is kept
+  // only as the fallback for the non-Electron regression harness.
   function _readCloudToken() {
+    if (_bridge()) return null;
     try {
       const raw = localStorage.getItem('zmt_cloud_token');
       if (!raw) return null;
@@ -134,16 +267,27 @@ const CloudService = (() => {
   }
 
   function _storeCloudToken(token, expiresAt) {
+    if (_bridge()) {
+      _tokenValidCache = true;
+      try { _bridge().cloudTokenStore(token, expiresAt).catch(() => {}); } catch (e) {}
+      return;
+    }
     localStorage.setItem('zmt_cloud_token', JSON.stringify({ token, expiresAt }));
   }
 
   function _clearCloudToken() {
+    if (_bridge()) {
+      _tokenValidCache = false;
+      try { _bridge().cloudTokenClear().catch(() => {}); } catch (e) {}
+      return;
+    }
     localStorage.removeItem('zmt_cloud_token');
   }
 
   // True when a non-expired cloud token is present (i.e. the user is already
   // authenticated to the cloud). Used by the UI to skip redundant password prompts.
   function hasValidCloudToken() {
+    if (_bridge()) return _tokenValidCache;
     const t = _readCloudToken();
     return !!(t && t.token && t.expiresAt > Date.now() + 60 * 1000);
   }
@@ -197,7 +341,7 @@ const CloudService = (() => {
       const password = _getStorePassword();
       if (!code || !password) return;
       const resp = await withTimeout(
-        fetch(_getSiteBase() + '/api/push-trigger', {
+        _cloudFetch(_getSiteBase() + '/api/push-trigger', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'license_status', code, password }),
@@ -234,7 +378,47 @@ const CloudService = (() => {
     } catch (e) { /* offline or transient — ignore, next cycle re-checks */ }
   }
 
+  // With the bridge present the JWT itself never enters this process: main.js
+  // stores it encrypted and injects it into every cloud request. The sentinel
+  // simply tells the rest of this module that a valid token is available.
+  const MAIN_TOKEN = 'main-process-managed';
+
   async function _obtainCloudToken() {
+    if (_bridge()) {
+      try {
+        const status = await withTimeout(_bridge().cloudTokenStatus(), 5000, 'تعذر قراءة حالة رمز السحابة');
+        _tokenValidCache = !!(status && status.valid);
+        if (_tokenValidCache) return MAIN_TOKEN;
+      } catch (e) { _tokenValidCache = false; }
+
+      const code = getStoreCode();
+      const password = _getStorePassword();
+      const parent = getParentCode();
+      if (!code || !password) {
+        _tokenFailReason = password ? 'رمز المحل غير متوفر' : 'كلمة مرور المحل غير محفوظة في هذا الجهاز';
+        return null;
+      }
+      try {
+        const result = await withTimeout(
+          _bridge().cloudTokenObtain({ siteBase: _getSiteBase(), code, password, parentCode: parent }),
+          15000,
+          'انتهت مهلة الاتصال بخادم المصادقة (15 ثانية)'
+        );
+        if (result && result.ok) {
+          _tokenFailReason = '';
+          _tokenValidCache = true;
+          return MAIN_TOKEN;
+        }
+        _tokenFailReason = (result && result.reason) || 'الخادم لم يمنح رمز وصول';
+        return null;
+      } catch (e) {
+        _tokenFailReason = 'تعذر الوصول لخادم المصادقة: ' + (e && e.message ? e.message : e);
+        console.warn('[Cloud] token acquisition failed:', e && e.message);
+        return null;
+      }
+    }
+
+    // Non-Electron regression harness only.
     const cached = _readCloudToken();
     if (cached) return cached;
     const code = getStoreCode();
@@ -246,7 +430,7 @@ const CloudService = (() => {
     }
     try {
       const resp = await withTimeout(
-        fetch(_getSiteBase() + '/api/push-trigger', {
+        _cloudFetch(_getSiteBase() + '/api/push-trigger', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'token', mode: 'auth', code, password, parentCode: parent || undefined }),
@@ -289,13 +473,24 @@ const CloudService = (() => {
   }
 
   function getClient() {
-    const token = _readCloudToken();
+    const token = _bridge() ? MAIN_TOKEN : _readCloudToken();
     if (client && client._zmtToken === token) return client;
     try {
+      const globalOpts = {};
+      if (_bridge()) {
+        // supabase-js must use the IPC fetch bridge: no real URL/key exists in
+        // this process and the Network tab shows only the local placeholder.
+        if (typeof window.zmtCloudFetch !== 'function') return null;
+        // _bridgeFetch normalises Headers/FormData inside THIS realm first.
+        // Passing window.zmtCloudFetch straight to supabase-js loses x-upsert.
+        globalOpts.fetch = _bridgeFetch;
+      } else if (token) {
+        globalOpts.headers = { Authorization: 'Bearer ' + token };
+      }
       const opts = {
         auth: { persistSession: false, autoRefreshToken: false },
+        global: globalOpts,
       };
-      if (token) opts.global = { headers: { Authorization: 'Bearer ' + token } };
       client = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, opts);
       client._zmtToken = token;
       client._url = SUPABASE_URL;
@@ -313,14 +508,22 @@ const CloudService = (() => {
   // helper bypasses the HTTP cache with a unique cache-busting query string so
   // every poll/merge reads the live object.
   async function _downloadFresh(path) {
+    // Reject traversal / query injection from any caller (including a tampered
+    // store code) before it ever reaches the cloud bridge.
+    const safePath = String(path || '');
+    if (!safePath || /[\\\?\#\0]/.test(safePath) || safePath.split('/').some(p => p === '..' || p === '.')) {
+      throw new Error('مسار السحابة غير صالح');
+    }
     const token = await _obtainCloudToken();
-    const auth = token || SUPABASE_KEY;
-    const url = SUPABASE_URL + '/storage/v1/object/' + BUCKET + '/' + path + '?ts=' + Date.now();
+    const url = SUPABASE_URL + '/storage/v1/object/' + BUCKET + '/' + safePath + '?ts=' + Date.now();
+    const init = { cache: 'no-store' };
+    // In Electron the key + token are supplied by main.js only.
+    if (!_bridge()) {
+      const auth = token || SUPABASE_KEY;
+      init.headers = { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + auth };
+    }
     const resp = await withTimeout(
-      fetch(url, {
-        cache: 'no-store',
-        headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + auth },
-      }),
+      _cloudFetch(url, init),
       30000,
       'انتهت مهلة تحميل البيانات من السحابة (30 ثانية)'
     );
@@ -591,21 +794,21 @@ const CloudService = (() => {
   // Silent self-heal wrapper: if a cached cloud token became stale/invalid,
   // clear it and retry exactly once. No UI, no prompts — this is what keeps
   // manual AND scheduled backups working without asking for the password.
-  async function uploadBackup(data) {
+  async function uploadBackup(data, options) {
     if (_isIsolatedCompany()) return { success: true, skipped: true, reason: 'company_profile' };
     try {
-      return await _uploadBackupOnce(data);
+      return await _uploadBackupOnce(data, options);
     } catch (e) {
       const msg = (e && e.message) ? e.message : String(e);
       if (_isAuthError(msg)) {
         _clearCloudToken();
-        return await _uploadBackupOnce(data);
+        return await _uploadBackupOnce(data, options);
       }
       throw e;
     }
   }
 
-  async function _uploadBackupOnce(data) {
+  async function _uploadBackupOnce(data, options) {
     await requireCloudToken();
     const supabase = getClient();
     if (!supabase) throw new Error('Supabase غير متصل');
@@ -633,10 +836,11 @@ const CloudService = (() => {
     // While local data is untouched the tick now stops here; every
     // CLOUD_RECONCILE_TICKS-th tick still performs the full reconciliation so
     // the safety net keeps its guarantee with bounded staleness.
+    const force = !!(options && options.force);
     const preHash = dataHash(data || collectAllData());
     _cloudReconcileTick = (_cloudReconcileTick || 0) + 1;
     const reconcileDue = _cloudReconcileTick % CLOUD_RECONCILE_TICKS === 0;
-    if (preHash === _lastSyncHash && !reconcileDue) {
+    if (!force && preHash === _lastSyncHash && !reconcileDue) {
       return { success: true, skipped: true, reason: 'idle' };
     }
 
@@ -658,7 +862,7 @@ const CloudService = (() => {
     if (!data) data = collectAllData();
 
     const hash = dataHash(data);
-    if (hash === _lastSyncHash) return { success: true, skipped: true };
+    if (!force && hash === _lastSyncHash) return { success: true, skipped: true };
 
     // LAN sub devices still pull website commands/orders (above) but never
     // upload: only the location's LAN main server writes to the cloud.
@@ -730,6 +934,42 @@ const CloudService = (() => {
     return { success: true, path };
   }
 
+  // ===== INBOUND COMMAND GUARD =====
+  // A poisoned commands.json (or a compromised website response) must never be
+  // able to overwrite business data with arbitrary ops, put an unlimited number
+  // of records into IndexedDB, or push the desktop into an upload storm that
+  // drains the free Supabase quota. Everything is validated before DB.apply.
+  const MAX_COMMANDS_FILE_CHARS = 2 * 1024 * 1024;
+  const MAX_COMMANDS_PER_POLL = 100;
+  const MAX_COMMAND_JSON_CHARS = 512 * 1024;
+  const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+  let _seenCommandKeys = new Set();
+  let _seenCommandStore = '';
+
+  function _commandTimestamp(cmd) {
+    if (cmd.ts == null) return 1; // legacy commands without a timestamp
+    if (typeof cmd.ts !== 'number' || !Number.isFinite(cmd.ts) || cmd.ts <= 0) return -1;
+    return cmd.ts;
+  }
+
+  function _isValidRemoteCommand(cmd, code, now, ts, seen) {
+    if (!cmd || typeof cmd !== 'object' || Array.isArray(cmd)) return false;
+    if (cmd.op !== 'create' && cmd.op !== 'update' && cmd.op !== 'delete') return false;
+    if (ts < 0 || ts > now + MAX_FUTURE_SKEW_MS) return false;
+    if (cmd.kind != null && (typeof cmd.kind !== 'string' || cmd.kind.length > 64)) return false;
+    if (cmd.storeCode != null && (typeof cmd.storeCode !== 'string' || cmd.storeCode !== code)) return false;
+    if (cmd.recordId != null && (typeof cmd.recordId !== 'string' || cmd.recordId.length > 256)) return false;
+    let size;
+    try { size = JSON.stringify(cmd).length; } catch (e) { return false; }
+    if (size > MAX_COMMAND_JSON_CHARS) return false;
+    const orderId = (cmd.order && cmd.order.id) || cmd.orderId || cmd.recordId || '';
+    if (typeof orderId !== 'string' || orderId.length > 256) return false;
+    const key = ts + '|' + cmd.op + '|' + (cmd.kind || 'order') + '|' + orderId;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }
+
   // Download the website's command file for THIS store and apply each command
   // (create/update/delete) to the local DB. Returns the number of commands that
   // actually changed local data. Commands are idempotent, so re-scanning the
@@ -745,7 +985,11 @@ const CloudService = (() => {
     try {
       const data = await _downloadFresh(getCommandsPath());
       if (!data) { _lastCommandsFetch = 'missing'; return 0; }
-      file = JSON.parse(await data.text());
+      const text = await data.text();
+      if (text.length > MAX_COMMANDS_FILE_CHARS) {
+        throw new Error('command file exceeds the safety limit');
+      }
+      file = JSON.parse(text);
       _lastCommandsFetch = 'ok';
     } catch (e) {
       _lastCommandsFetch = 'error';
@@ -763,12 +1007,23 @@ const CloudService = (() => {
     let watermark = 0;
     try { watermark = parseInt(localStorage.getItem(watermarkKey) || '0', 10) || 0; } catch (e) { watermark = 0; }
 
+    if (_seenCommandStore !== code) {
+      _seenCommandStore = code;
+      _seenCommandKeys = new Set();
+    }
+    if (_seenCommandKeys.size > 2000) _seenCommandKeys = new Set();
+
+    const now = Date.now();
     let applied = 0;
     let maxTs = watermark;
+    let processed = 0;
     for (const cmd of file) {
-      if (!cmd || typeof cmd.op !== 'string') continue;
-      if (typeof cmd.ts === 'number' && cmd.ts <= watermark) continue;
-      if (typeof cmd.ts === 'number' && cmd.ts > maxTs) maxTs = cmd.ts;
+      if (processed >= MAX_COMMANDS_PER_POLL) break;
+      const ts = _commandTimestamp(cmd);
+      if (ts <= watermark) continue;
+      if (!_isValidRemoteCommand(cmd, code, now, ts, _seenCommandKeys)) continue;
+      processed++;
+      if (ts > maxTs) maxTs = ts;
       if (typeof DB.applyOrderCommand === 'function' && DB.applyOrderCommand(cmd.op, cmd)) {
         applied++;
       }
@@ -847,10 +1102,32 @@ const CloudService = (() => {
   let _liveChannelName = null;
 
   function getLiveChannel() {
-    if (!window.supabase || typeof window.supabase.createClient !== 'function') return null;
     const parent = getParentCode() || getStoreCode();
     const name = 'zmt-live-' + (parent || 'global');
     if (_liveChannel && _liveChannelName === name) return _liveChannel;
+
+    if (_bridge()) {
+      // Realtime WebSocket cannot be opened from the renderer anymore: doing so
+      // would expose the placeholder URL/key and bypass the bridge. The main
+      // process owns one best-effort connection and sends broadcasts for us.
+      const stub = {
+        send: (message) => {
+          const payload = (message && typeof message.payload === 'object' && message.payload) || {};
+          const api = _bridge();
+          return api ? api.cloudBroadcast(Object.assign({ channel: name }, payload)) : Promise.resolve();
+        },
+        subscribe: () => {},
+        unsubscribe: () => {
+          if (_liveChannel === stub) { _liveChannel = null; _liveChannelName = null; }
+        },
+      };
+      _liveChannel = stub;
+      _liveChannelName = name;
+      return _liveChannel;
+    }
+
+    // Non-Electron harness path only.
+    if (!window.supabase || typeof window.supabase.createClient !== 'function') return null;
     try {
       const supabase = getClient();
       if (!supabase || !supabase.channel) return null;
@@ -870,9 +1147,15 @@ const CloudService = (() => {
 
   function broadcastDesktopChange(payload) {
     try {
+      let safePayload = payload;
+      // A malformed record must never be able to flood the realtime channel.
+      if (safePayload && safePayload.record) {
+        const size = JSON.stringify(safePayload.record).length;
+        if (size > 200 * 1024) safePayload = Object.assign({}, safePayload, { record: undefined });
+      }
       const ch = getLiveChannel();
       if (!ch || typeof ch.send !== 'function') return;
-      const p = ch.send({ type: 'broadcast', event: 'desktop-change', payload });
+      const p = ch.send({ type: 'broadcast', event: 'desktop-change', payload: safePayload });
       if (p && typeof p.catch === 'function') p.catch(() => {});
     } catch (e) { /* realtime is best-effort */ }
   }
