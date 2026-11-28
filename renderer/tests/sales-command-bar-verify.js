@@ -158,8 +158,10 @@ check(salesHtml.indexOf('id="salesSearch"') === -1, 'لا يوجد حقل بحث
 check(!!commandBar, 'salesCommandBar موجود');
 check(!!scan.closest('#salesCommandBar'), 'حقل الماسح/البحث داخل شريط الأوامر');
 check(!!pay && !!pay.closest('#salesCommandBar'), 'كتلة الدفع داخل شريط الأوامر');
-check(!!doc.getElementById('salesCartTotal').closest('.sales-cart-footer'), 'المجاميع تبقى في أسفل السلة');
-check(!pay.closest('.sales-cart-footer'), 'كتلة الدفع لم تعد داخل أسفل السلة');
+check(!!doc.getElementById('salesCartTotal').closest('#salesPaySection'), 'المجاميع انتقلت إلى شريط الدفع العلوي');
+check(!!doc.getElementById('salesCartTotal').closest('.sales-pay-amounts'), 'المجاميع بجوار المبلغ المدفوع وزر «دفع كلياً»');
+check(!doc.getElementById('salesCartTotal').closest('#salesCartSection'), 'المجاميع لم تعد داخل لوحة السلة');
+check(salesHtml.indexOf('sales-cart-footer') === -1, 'غلاف المجاميع القديم أُزيل فأصبح أسفل السلة خالياً');
 check(salesHtml.indexOf('onkeydown="handleSalesBarcodeScan(event)"') === -1 && scan.getAttribute('dir') === 'auto',
   'الماسح يوجّه النص تلقائياً ولا يربط onkeydown مزدوجاً (الربط في setup)');
 const css = read('renderer/css/main.css');

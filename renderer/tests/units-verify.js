@@ -153,6 +153,14 @@ check(has(css, '--sales-cart-width: 420px'), 'العرض الافتراضي 420p
 check(has(css, 'grid-template-columns: 1fr !important;'), 'أقل من 1100px ⇒ عمود واحد');
 check(has(salesHtml, 'id="salesCommandBar"') && has(css, '.sales-pay-bar {'), 'منطقة الدفع داخل شريط الأوامر أعلى الصفحة');
 check(has(css, '.sales-cart-items-wrap { flex: 1 1 auto; min-height: 0; overflow-y: auto; }'), 'عناصر السلة وحدها تُمرَّر');
+{
+  const cartListBlock = css.slice(css.indexOf('.sales-cart-items {'), css.indexOf('.sales-cart-badge {'));
+  const cartCardBlock = css.slice(css.indexOf('.sales-cart-section {'), css.indexOf('.sales-cart-section .sales-cart-items-wrap'));
+  check(!/max-height|overflow-y/.test(cartListBlock), 'قائمة السلة بلا سقف داخلي ولا تمرير مزدوج');
+  check(/flex:\s*0 1 auto/.test(cartCardBlock) && /height:\s*auto/.test(cartCardBlock) && /max-height:\s*100%/.test(cartCardBlock),
+    'بطاقة السلة تلتف حول المنتجات وتتوقف عند ارتفاع الصف');
+  check(!has(css, 'scrollbar-gutter: stable;'), 'لا عمود فارغ محجوز تحت آخر منتج');
+}
 
 // ---------- 5b. richer sales list rows ----------
 console.log('\n--- 5b. بطاقات القائمة الأغنى ---');

@@ -2698,6 +2698,10 @@ async function _ensureDefaultCompany() {
         const custId = inv.customerId || null;
         for (const line of lines) {
           out.push({
+            // Product id is required by the batched callers (last-sold price,
+            // frequently-bought-together index). Additive: existing readers
+            // keep exactly the same fields they always had.
+            productId: line.productId,
             invoiceId: inv.id,
             invoiceNumber: inv.invoiceNumber || '',
             date: inv.date || inv.createdAt || 0,

@@ -20,6 +20,25 @@ var _salesSuppId = null;
 var _salesSupMode = false;
 var _salesCreditUsed = 0;      // رصيد العميل الخاضع للخصم في البيع الحالي
 var _salesComputedTotal = 0;   // آخر إجمالي محسوب بعد الخصومات (للباقي والدفع الكامل)
+var _salesWalkin = false;      // زبون غير مسجّل — يُقرأ عند بناء لقطة التبويب الأول
+
+// "Last sold price": ONE map built per page load / per completed sale, never one
+// invoice query per card. DB.getProductSalesHistory() is already company/store
+// scoped and returns rows newest-first, and its `price` is the final unit price
+// actually charged to the customer (after every discount).
+var _salesLastSaleMap = null;
+
+// Frequently bought together. Same rule as last-sold: ONE batched scan of the
+// scoped sale history, then O(1) lookups while painting cards. Session memory
+// only — no localStorage, no new table, no cross-company leakage.
+var _salesCrossSellMap = null;
+
+// Hold carts (Multi-Tab). Session memory ONLY: nothing is written to disk, so
+// switching company/store or closing the app can never leak a stale cart.
+var _salesHoldTabs = [];
+var _salesActiveTabId = null;
+var _salesHoldSeq = 0;
+var _salesHoldRestoring = false;
 
 function onSalesPaidInput() {
   _salesPaidTouched = true;
@@ -57,6 +76,268 @@ function resetSalesPaymentUI() {
   document.querySelectorAll('.pay-method-btn').forEach(b => b.classList.toggle('active', b.dataset.method === 'cash'));
   document.getElementById('salesSinglePay').style.display = '';
   document.getElementById('salesMixedPay').style.display = 'none';
+}
+
+// ===== HOLD CARTS / MULTI-TAB (session memory only) =====
+// Every snapshot is a full copy of the cashier state. One-shot authorisation
+// flags (margin / overpay / credit bypass) are deliberately NOT copied: they
+// must be re-earned for each invoice at checkout.
+function _salesFieldValue(id, def) {
+  const el = document.getElementById(id);
+  return el ? el.value : (def == null ? '' : def);
+}
+function _salesSetField(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.value = (v == null ? '' : String(v));
+}
+function _salesInvoiceNoteText() {
+  return _salesFieldValue('salesInvoiceNote', '').trim();
+}
+// The note box is collapsed by default so the cart is all product lines. Its
+// value is read straight from the textarea, so hiding it changes nothing in
+// checkout or in the held-cart snapshots.
+function _setSalesInvoiceNoteOpen(open) {
+  const box = document.getElementById('salesInvoiceNoteBox');
+  const btn = document.getElementById('salesNoteToggleBtn');
+  if (box) box.style.display = open ? '' : 'none';
+  if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function toggleSalesInvoiceNote() {
+  const btn = document.getElementById('salesNoteToggleBtn');
+  const isOpen = !!(btn && btn.getAttribute && btn.getAttribute('aria-expanded') === 'true');
+  _setSalesInvoiceNoteOpen(!isOpen);
+}
+function _cloneSalesCartForHold(cart) {
+  return (cart || []).map(l => Object.assign({}, l, {
+    entries: (l.entries || []).map(e => Object.assign({}, e)),
+    scale: l.scale ? Object.assign({}, l.scale) : l.scale,
+  }));
+}
+function emptySalesHoldState() {
+  return {
+    cart: [], customerId: null, subCustomerId: null, subPickerId: null,
+    walkin: false, supplierId: null, supMode: false, creditUsed: 0,
+    defaultMode: 'unit', payMethod: 'cash', paidTouched: false,
+    paidAmount: '0', cashAmount: '0', ccpAmount: '0', extraDisc: '0',
+    note: '', computedTotal: 0,
+  };
+}
+function _salesHoldState() {
+  return {
+    cart: _cloneSalesCartForHold(_salesCart),
+    customerId: _salesCustomerId || null,
+    subCustomerId: _salesSubCustomerId || null,
+    subPickerId: _salesSubPickerId || null,
+    walkin: !!_salesWalkin,
+    supplierId: _salesSuppId || null,
+    supMode: !!_salesSupMode,
+    creditUsed: _salesCreditUsed || 0,
+    defaultMode: _salesDefaultMode || 'unit',
+    payMethod: _salesPayMethod || 'cash',
+    paidTouched: !!_salesPaidTouched,
+    paidAmount: _salesFieldValue('salesPaidAmount', '0'),
+    cashAmount: _salesFieldValue('salesCashAmount', '0'),
+    ccpAmount: _salesFieldValue('salesCcpAmount', '0'),
+    extraDisc: _salesFieldValue('salesExtraDisc', '0'),
+    note: _salesInvoiceNoteText(),
+    computedTotal: _salesComputedTotal || 0,
+  };
+}
+function ensureSalesHoldTabs() {
+  if (_salesHoldTabs.length) return;
+  _salesHoldSeq = 1;
+  _salesActiveTabId = 'zmt-inv-1';
+  _salesHoldTabs.push({ id: _salesActiveTabId, state: _salesHoldState() });
+}
+function getActiveSalesHoldTab() {
+  return _salesHoldTabs.find(tb => tb.id === _salesActiveTabId) || null;
+}
+function salesHoldTabLabel(tb, idx) {
+  const s = tb.state || {};
+  let name = '';
+  if (s.supplierId && typeof DB.getSuppliers === 'function') {
+    const sup = (DB.getSuppliers() || []).find(x => x.id === s.supplierId);
+    if (sup) name = sup.name || '';
+  }
+  if (!name && s.customerId && typeof DB.getCustomer === 'function') {
+    const c = DB.getCustomer(s.customerId);
+    if (c) name = c.name || '';
+  }
+  if (!name && s.walkin) name = t('sales.unregistered') || 'زبون غير مسجل';
+  return name || `${t('sales.invoiceN') || 'فاتورة'} ${idx + 1}`;
+}
+function salesHoldTabSummary(s) {
+  const cart = (s && s.cart) || [];
+  const count = cart.length;
+  const sub = cart.reduce((sum, l) => sum + (Number(l && l.total) || 0), 0);
+  let pct = 0;
+  if (s && s.customerId && typeof DB.getCustomer === 'function') {
+    const c = DB.getCustomer(s.customerId);
+    if (c && Number(c.discount) > 0) pct = Number(c.discount);
+  }
+  const after = sub * (1 - Math.min(100, Math.max(0, pct)) / 100);
+  const extra = Math.min(Math.max(0, Number(s && s.extraDisc) || 0), after);
+  return { count, total: Math.max(0, after - extra) };
+}
+function renderSalesHoldTabs() {
+  const list = document.getElementById('salesHoldTabsList');
+  if (!list) return;
+  const html = _salesHoldTabs.map((tb, idx) => {
+    const sm = salesHoldTabSummary(tb.state);
+    const active = tb.id === _salesActiveTabId ? ' is-active' : '';
+    const label = escHtml(salesHoldTabLabel(tb, idx));
+    const meta = `${sm.count} <i class="fas fa-cubes"></i> · DA${fmtMoney(sm.total)}`;
+    return `<div class="sales-hold-tab${active}" onclick="switchSalesHoldTab('${tb.id}')" title="${label}">
+      <span class="sales-hold-tab-name">${label}</span>
+      <span class="sales-hold-tab-meta">${meta}</span>
+      <button type="button" class="sales-hold-tab-close" onclick="event.stopPropagation();closeSalesHoldTab('${tb.id}')" title="${escHtml(t('sales.closeTab') || 'إغلاق الفاتورة')}"><i class="fas fa-times"></i></button>
+    </div>`;
+  }).join('');
+  list.innerHTML = html;
+  const addBtn = document.getElementById('salesHoldAddBtn');
+  if (addBtn) addBtn.disabled = _salesHoldTabs.length >= 9;
+}
+function syncActiveSalesHoldTab() {
+  // Suppressed while switching: clearSalesCart() runs inside the restore path
+  // and must not overwrite the snapshot that was just taken from the old tab.
+  if (_salesHoldRestoring || !_salesHoldTabs.length) return;
+  const tb = getActiveSalesHoldTab();
+  if (!tb) return;
+  tb.state = _salesHoldState();
+  renderSalesHoldTabs();
+}
+function _restoreSalesSupplierUI(s) {
+  if (typeof DB.getSuppliers === 'function' && s.supplierId) {
+    const sup = (DB.getSuppliers() || []).find(x => x.id === s.supplierId);
+    if (sup && typeof updateSupSaleBanner === 'function') updateSupSaleBanner(sup);
+  }
+  const row = document.getElementById('salesCustRow');
+  if (row) row.style.display = 'none';
+  const lw = document.getElementById('salesLedCustomer');
+  if (lw) lw.classList.add('has-selection');
+  if (typeof _syncSalesPickSubBtn === 'function') _syncSalesPickSubBtn();
+}
+function restoreSalesHoldState(s) {
+  if (!s) return;
+  _salesCart = _cloneSalesCartForHold(s.cart);
+  _salesCustomerId = s.customerId || null;
+  _salesSubCustomerId = null;
+  _salesSubPickerId = null;
+  _salesWalkin = !!s.walkin;
+  _salesSuppId = s.supplierId || null;
+  _salesSupMode = !!s.supMode;
+  _salesCreditUsed = Number(s.creditUsed) || 0;
+  _salesDefaultMode = s.defaultMode || 'unit';
+  _salesPayMethod = s.payMethod || 'cash';
+  _salesPaidTouched = !!s.paidTouched;
+  _salesComputedTotal = Number(s.computedTotal) || 0;
+  // One-shot bypasses never travel with a held cart.
+  _salesMarginBypass = false;
+  _salesOverpayBypass = false;
+  _salesCreditBypass = false;
+
+  if (_salesSupMode) {
+    _restoreSalesSupplierUI(s);
+  } else if (_salesCustomerId && typeof DB.getCustomer === 'function' && DB.getCustomer(_salesCustomerId)) {
+    selectSalesCustomer(_salesCustomerId);
+    _salesDefaultMode = s.defaultMode || 'unit';
+    _salesCreditUsed = Number(s.creditUsed) || 0;
+  } else if (_salesWalkin) {
+    setSalesWalkin();
+    _salesDefaultMode = s.defaultMode || 'unit';
+  }
+  _salesSubCustomerId = s.subCustomerId || null;
+  _salesSubPickerId = s.subPickerId || null;
+  if (typeof _syncSalesSubBadge === 'function') _syncSalesSubBadge();
+
+  _salesSetField('salesPaidAmount', s.paidAmount);
+  _salesSetField('salesCashAmount', s.cashAmount);
+  _salesSetField('salesCcpAmount', s.ccpAmount);
+  _salesSetField('salesExtraDisc', s.extraDisc);
+  _salesSetField('salesInvoiceNote', s.note);
+  // A held invoice with a note opens it automatically; an empty one stays
+  // collapsed so the product lines keep the whole cart.
+  _setSalesInvoiceNoteOpen(!!(s.note && String(s.note).trim()));
+  document.querySelectorAll('.pay-method-btn').forEach(b => b.classList.toggle('active', b.dataset.method === _salesPayMethod));
+  const single = document.getElementById('salesSinglePay');
+  if (single) single.style.display = (_salesPayMethod === 'mixed') ? 'none' : '';
+  const mixed = document.getElementById('salesMixedPay');
+  if (mixed) mixed.style.display = (_salesPayMethod === 'mixed') ? '' : 'none';
+}
+function switchSalesHoldTab(id) {
+  ensureSalesHoldTabs();
+  if (id === _salesActiveTabId) return;
+  const active = getActiveSalesHoldTab();
+  if (active) active.state = _salesHoldState();
+  const next = _salesHoldTabs.find(tb => tb.id === id);
+  if (!next) return;
+  _salesHoldRestoring = true;
+  try {
+    if (typeof clearSalesCart === 'function') clearSalesCart(true);
+    restoreSalesHoldState(next.state);
+    _salesActiveTabId = id;
+    if (typeof renderSalesCart === 'function') renderSalesCart();
+    try { updateSalesTotals(); } catch (e) {}
+  } finally {
+    _salesHoldRestoring = false;
+  }
+  renderSalesHoldTabs();
+  const scan = document.getElementById('salesBarcodeScan');
+  if (scan && scan.focus) { try { scan.focus(); } catch (e) {} }
+}
+function cycleSalesHoldTabs(dir) {
+  ensureSalesHoldTabs();
+  if (_salesHoldTabs.length < 2) return;
+  const idx = _salesHoldTabs.findIndex(tb => tb.id === _salesActiveTabId);
+  const from = idx < 0 ? 0 : idx;
+  const next = (from + (dir > 0 ? 1 : -1) + _salesHoldTabs.length) % _salesHoldTabs.length;
+  switchSalesHoldTab(_salesHoldTabs[next].id);
+}
+function switchSalesHoldTabByNumber(n) {
+  ensureSalesHoldTabs();
+  const tb = _salesHoldTabs[n - 1];
+  if (tb) switchSalesHoldTab(tb.id);
+}
+function addSalesHoldTab() {
+  ensureSalesHoldTabs();
+  if (_salesHoldTabs.length >= 9) { alert(t('sales.tabMax')); return; }
+  const active = getActiveSalesHoldTab();
+  if (active) active.state = _salesHoldState();
+  _salesHoldSeq += 1;
+  const id = 'zmt-inv-' + _salesHoldSeq;
+  _salesHoldTabs.push({ id, state: emptySalesHoldState() });
+  switchSalesHoldTab(id);
+}
+function closeSalesHoldTab(id) {
+  ensureSalesHoldTabs();
+  const tb = _salesHoldTabs.find(x => x.id === id);
+  if (!tb) return;
+  const st = tb.state || {};
+  if ((st.cart && st.cart.length) && !confirm(t('sales.tabCloseConfirm'))) return;
+  if (_salesHoldTabs.length === 1) {
+    if (id === _salesActiveTabId && typeof clearSalesCart === 'function') clearSalesCart(true);
+    _salesHoldTabs[0].state = emptySalesHoldState();
+    renderSalesHoldTabs();
+    return;
+  }
+  const idx = _salesHoldTabs.indexOf(tb);
+  let nextId = null;
+  if (id === _salesActiveTabId) {
+    _salesActiveTabId = null; // so switchSalesHoldTab() does not early-return
+    const next = _salesHoldTabs[idx + 1] || _salesHoldTabs[idx - 1];
+    nextId = next ? next.id : null;
+  }
+  _salesHoldTabs.splice(idx, 1);
+  if (nextId) switchSalesHoldTab(nextId);
+  else renderSalesHoldTabs();
+}
+// Called only AFTER the invoice is persisted: the paid tab is emptied and the
+// other held carts stay untouched, ready for the next customer.
+function resetSalesHoldTabAfterSale() {
+  ensureSalesHoldTabs();
+  const tb = getActiveSalesHoldTab();
+  if (tb) tb.state = emptySalesHoldState();
+  renderSalesHoldTabs();
 }
 
 // Settings helpers (also defined in settings.js — duplicated here for availability in sales page)
@@ -104,6 +385,17 @@ function getTvaRate() {
 }
 
 function _salesPageKeyHandler(e) {
+  // Alt+1..9 jumps straight to a held invoice. This must be checked BEFORE the
+  // generic modifier guard below; it does not affect F6 ("إضافة مصروف") at all.
+  if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code || '') || /^[1-9]$/.exec(e.key || '');
+    if (m) {
+      e.preventDefault();
+      e.stopPropagation();
+      switchSalesHoldTabByNumber(Number(m[1]));
+      return;
+    }
+  }
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   // F10 sells an item that is not in the catalogue. It works whatever has
   // focus — the cashier may be mid-search — but never on top of an open modal,
@@ -125,6 +417,15 @@ function _salesPageKeyHandler(e) {
     e.stopPropagation();
     if (salesAnyOverlayOpen && salesAnyOverlayOpen()) return;
     openSalesSubCustomerModal();
+    return;
+  }
+  // F7 cycles held invoices (Shift+F7 goes back). Page-scoped like F5 so the
+  // global F6 "إضافة مصروف" shortcut stays exactly as it was on every page.
+  if (e.key === 'F7' || e.code === 'F7') {
+    e.preventDefault();
+    e.stopPropagation();
+    if (salesAnyOverlayOpen && salesAnyOverlayOpen()) return;
+    cycleSalesHoldTabs(e.shiftKey ? -1 : 1);
     return;
   }
   const target = e.target;
@@ -156,6 +457,18 @@ function _salesPageKeyHandler(e) {
 function init_sales() {
   _salesProducts = (typeof salesAllProducts === 'function') ? salesAllProducts() : (DB.getProducts ? DB.getProducts() : (_salesProducts || []));
   invalidateSalesGroupsCache();
+  // One invoice scan for the whole grid, and the held-cart strip rebuilt from
+  // session state (the page markup itself is re-injected on every navigation).
+  buildSalesLastSaleMap();
+  buildSalesCrossSellMap();
+  ensureSalesHoldTabs();
+  const _initHoldTab = getActiveSalesHoldTab();
+  if (_initHoldTab) {
+    const _initNote = (_initHoldTab.state || {}).note || '';
+    _salesSetField('salesInvoiceNote', _initNote);
+    _setSalesInvoiceNoteOpen(!!String(_initNote).trim());
+  }
+  renderSalesHoldTabs();
   _salesSearchQuery = '';
   _salesDefaultMode = 'unit';
   _salesHideUntilSearch = (function () { try { return localStorage.getItem('zmt_sales_hide_until_search') === '1'; } catch (e) { return false; } })();
@@ -1769,6 +2082,226 @@ function salesGroupOutOfStockCached(g) {
   return v;
 }
 
+// ===== LAST SOLD PRICE =====
+// The helper is batch-scoped: one DB call for the whole catalogue, not one call
+// per rendered card (the grid is windowed to 60 + lazy pages up to 600 nodes).
+function buildSalesLastSaleMap() {
+  const map = Object.create(null);
+  _salesLastSaleMap = map;
+  if (typeof DB.getProductSalesHistory !== 'function') return map;
+  let ids = [];
+  try {
+    const list = (DB.getProducts ? DB.getProducts() : (_salesProducts || [])) || [];
+    ids = list.map(p => p && p.id).filter(Boolean);
+  } catch (e) { ids = []; }
+  if (!ids.length) return map;
+  let rows = [];
+  try { rows = DB.getProductSalesHistory(ids) || []; } catch (e) { return map; }
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    const id = r.productId ? String(r.productId) : '';
+    // Rows arrive newest-first: the first row seen for a product IS the last sale.
+    if (!id || map[id]) continue;
+    map[id] = {
+      price: Number(r.price) || 0,
+      date: r.date || 0,
+      invoiceNumber: r.invoiceNumber || '',
+      customerName: r.customerName || '',
+    };
+  }
+  return map;
+}
+
+function _salesRowTs(v) {
+  if (!v) return 0;
+  const n = typeof v.date === 'number' ? v.date : Date.parse(v.date);
+  return isFinite(n) ? n : 0;
+}
+
+function salesGroupLastSale(g) {
+  if (!_salesLastSaleMap) buildSalesLastSaleMap();
+  const map = _salesLastSaleMap || {};
+  let best = null;
+  const records = (g && g.records) || [];
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i] || {};
+    if (!r.id) continue;
+    const v = map[String(r.id)];
+    if (v && (!best || _salesRowTs(v) > _salesRowTs(best))) best = v;
+  }
+  return best;
+}
+
+function _salesLastSaleDate(v) {
+  if (!v || !v.date) return '';
+  try {
+    const d = new Date(v.date);
+    return isNaN(d.getTime()) ? String(v.date) : d.toLocaleDateString();
+  } catch (e) { return String(v.date); }
+}
+
+function salesLastSalePillHTML(g, compact) {
+  const v = salesGroupLastSale(g);
+  if (!v || !(Number(v.price) > 0)) return '';
+  const label = escHtml(t('sales.lastSold') || 'آخر بيع');
+  const price = `DA${fmtMoney(v.price)}`;
+  if (compact) {
+    const tip = `${label}: ${price}` + (v.invoiceNumber ? ` • #${escHtml(v.invoiceNumber)}` : '');
+    return `<span class="sales-list-price last-sold" title="${tip}"><b>${price}</b><span class="sales-list-price-kind">${label}</span></span>`;
+  }
+  return `<div class="price-pill price-last-sold">
+    <span>${label}</span><b>${price}</b>
+    <button type="button" class="last-sale-toggle" onclick="event.stopPropagation();toggleSalesCardLastSale(this)" title="${label}"><i class="fas fa-chevron-down"></i></button>
+  </div>
+  <div class="prod-card-last-sale-details">
+    <span><b>${escHtml(t('sales.lastSaleDate') || 'تاريخ آخر بيع')}:</b> ${escHtml(_salesLastSaleDate(v))}</span>
+    ${v.invoiceNumber ? `<span><b>${escHtml(t('sales.lastSaleInvoice') || 'رقم الفاتورة')}:</b> ${escHtml(v.invoiceNumber)}</span>` : ''}
+    ${v.customerName ? `<span><b>${escHtml(t('sales.lastSaleCustomer') || 'الزبون')}:</b> ${escHtml(v.customerName)}</span>` : ''}
+  </div>`;
+}
+
+function toggleSalesCardLastSale(btn) {
+  const card = btn && btn.closest ? btn.closest('.prod-card') : null;
+  if (!card) return;
+  const box = card.querySelector('.prod-card-last-sale-details');
+  if (!box) return;
+  box.classList.toggle('open');
+  const icon = btn.querySelector('i');
+  if (icon) { icon.classList.toggle('fa-chevron-down'); icon.classList.toggle('fa-chevron-up'); }
+}
+
+// The list view already has an expander arrow: the full history line lives in
+// that same details panel, so no second arrow/button is added to the row.
+function salesLastSaleDetailsHTML(g) {
+  const v = salesGroupLastSale(g);
+  if (!v || !(Number(v.price) > 0)) return '';
+  const bits = [`<b>${escHtml(t('sales.lastSold') || 'آخر بيع')}:</b> DA${fmtMoney(v.price)}`];
+  const dt = _salesLastSaleDate(v);
+  if (dt) bits.push(`${escHtml(t('sales.lastSaleDate') || 'تاريخ آخر بيع')}: ${escHtml(dt)}`);
+  if (v.invoiceNumber) bits.push(`${escHtml(t('sales.lastSaleInvoice') || 'رقم الفاتورة')}: ${escHtml(v.invoiceNumber)}`);
+  if (v.customerName) bits.push(`${escHtml(t('sales.lastSaleCustomer') || 'الزبون')}: ${escHtml(v.customerName)}`);
+  return `<span class="sales-list-last-sale">${bits.join(' • ')}</span>`;
+}
+
+// ===== FREQUENTLY BOUGHT TOGETHER (cross-sell) =====
+// Row shape comes from DB.getProductSalesHistory(): { productId, invoiceId, ... }
+// and is already scoped to the active company/store. Counting distinct invoices
+// (not lines) avoids over-weighting a product that has several batches on one
+// invoice.
+function buildSalesCrossSellMap() {
+  const map = Object.create(null);
+  _salesCrossSellMap = map;
+  if (typeof DB.getProductSalesHistory !== 'function') return map;
+  let ids = [];
+  try {
+    const list = (DB.getProducts ? DB.getProducts() : (_salesProducts || [])) || [];
+    ids = list.map(p => p && p.id).filter(Boolean);
+  } catch (e) { ids = []; }
+  if (!ids.length) return map;
+
+  let rows = [];
+  try { rows = DB.getProductSalesHistory(ids) || []; } catch (e) { return map; }
+
+  const byInvoice = new Map();
+  const invoicesByProduct = Object.create(null);
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    const pid = r.productId ? String(r.productId) : '';
+    const iid = r.invoiceId ? String(r.invoiceId) : '';
+    if (!pid || !iid) continue;
+    let set = byInvoice.get(iid);
+    if (!set) { set = new Set(); byInvoice.set(iid, set); }
+    set.add(pid);
+    let seen = invoicesByProduct[pid];
+    if (!seen) { seen = new Set(); invoicesByProduct[pid] = seen; }
+    seen.add(iid);
+  }
+
+  const pairs = Object.create(null);
+  byInvoice.forEach(function (set) {
+    if (set.size < 2) return;
+    const arr = Array.from(set);
+    for (let a = 0; a < arr.length; a++) {
+      for (let b = 0; b < arr.length; b++) {
+        if (arr[a] === arr[b]) continue;
+        let bucket = pairs[arr[a]] || (pairs[arr[a]] = Object.create(null));
+        bucket[arr[b]] = (bucket[arr[b]] || 0) + 1;
+      }
+    }
+  });
+
+  Object.keys(pairs).forEach(function (pid) {
+    const total = (invoicesByProduct[pid] && invoicesByProduct[pid].size) || 0;
+    const ranked = Object.keys(pairs[pid]).map(function (other) {
+      const count = pairs[pid][other];
+      return { id: other, count: count, ratio: total > 0 ? count / total : 0 };
+    })
+      // Two invoices minimum + at least a quarter of this product's sales:
+      // one accidental bundle must never become a permanent suggestion.
+      .filter(function (x) { return x.count >= 2 && x.ratio >= 0.25; })
+      .sort(function (x, y) { return (y.ratio - x.ratio) || (y.count - x.count) || String(x.id).localeCompare(String(y.id)); })
+      .slice(0, 3);
+    if (ranked.length) map[pid] = ranked;
+  });
+  return map;
+}
+
+function salesCrossSellForGroup(g) {
+  if (!_salesCrossSellMap) buildSalesCrossSellMap();
+  const map = _salesCrossSellMap || {};
+  let best = null;
+  const records = (g && g.records) || [];
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i] || {};
+    if (!r.id) continue;
+    const v = map[String(r.id)];
+    if (!v || !v.length) continue;
+    if (!best || v[0].ratio > best[0].ratio || (v[0].ratio === best[0].ratio && v[0].count > best[0].count)) best = v;
+  }
+  return best;
+}
+
+function salesCrossSellChip(s) {
+  const p = DB.getProduct ? DB.getProduct(s.id) : null;
+  if (!p) return '';
+  const peer = getSalesGroupByKey(salesGroupKey(p));
+  if (!peer || isGroupOutOfStock(peer)) return '';
+  // An item reserved for a bundle can't be sold alone; don't offer it.
+  if (!p.isBundle) {
+    const reserved = (typeof bundleReservedQty === 'function') ? bundleReservedQty(s.id) : 0;
+    if (reserved > 0 && getGroupAvailableQty(peer) <= reserved) return '';
+  }
+  if (_salesCart.some(l => l.key === peer.key)) return '';
+  const name = escHtml((peer.name || p.name || '').slice(0, 18));
+  const full = escHtml(peer.name || p.name || '');
+  return `<button type="button" class="crosssell-chip" onclick="event.stopPropagation();addSalesCrossSell('${escHtml(s.id)}')" title="${full}"><i class="fas fa-plus"></i> ${name}</button>`;
+}
+
+// One thin, collapsible line on the card — never a second full card and never
+// an invoice query per card. The add button reuses the normal sale path.
+function salesCrossSellHTML(g) {
+  const recs = salesCrossSellForGroup(g);
+  if (!recs || !recs.length) return '';
+  const chips = [];
+  for (let i = 0; i < recs.length && chips.length < 2; i++) {
+    const html = salesCrossSellChip(recs[i]);
+    if (html) chips.push(html);
+  }
+  if (!chips.length) return '';
+  const label = escHtml(t('sales.crossSellLabel') || 'يُطلب معه غالباً');
+  const hint = escHtml(t('sales.crossSellHint') || 'من سجل الفواتير السابقة');
+  return `<div class="prod-card-crosssell" title="${hint}">
+    <span class="crosssell-label"><i class="fas fa-magic"></i> ${label}</span>
+    <span class="crosssell-chips">${chips.join('')}</span>
+  </div>`;
+}
+
+function addSalesCrossSell(productId) {
+  // Going through the shipped barcode/scan helper keeps stock, bundle
+  // reservation, price floor checks, discounts and company isolation intact.
+  if (typeof addToSalesCart === 'function') addToSalesCart(productId);
+}
+
 function salesCardHTML(g, i) {
   const ctx = _salesCardCtx || (_salesCardCtx = _buildSalesCardCtx());
   const fixed = isGroupFixed(g);
@@ -1819,6 +2352,8 @@ function salesCardHTML(g, i) {
       ${salesExtraPillsHTML(rep)}
       ${salesMinPriceBadge(g, false)}
     </div>
+    ${salesLastSalePillHTML(g, false)}
+    ${salesCrossSellHTML(g)}
     ${substituteAvailable ? `<button type="button" class="prod-card-oos-btn" onclick="event.stopPropagation();openSalesSubstitutes(${i})"><i class="fas fa-pills"></i> ${t('sales.findSubstitute')}</button>` : ''}
     ${ctx.restOrder ? `<button type="button" class="rest-order-btn rest-order-btn-primary" onclick="event.stopPropagation();window.RestService.restOrderGroup(${i})"><i class="fas fa-utensils"></i> ${escHtml(t('rest.orderBtn'))}</button>` : ''}
     ${ctx.restSelf ? `<button type="button" class="rest-order-btn rest-order-btn-self" onclick="event.stopPropagation();window.RestService.restOrderGroupSelf(${i})"><i class="fas fa-store"></i> ${escHtml(t('rest.orderSelfBtn'))}</button>` : ''}
@@ -1972,6 +2507,7 @@ function salesListRowHTML(g, i) {
         <span class="sales-list-price whole"><b>${whole > 0 ? 'DA' + fmtMoney(whole) : '-'}</b><span class="sales-list-price-kind">${escHtml(t('sales.wholesale'))}</span></span>
         ${salesExtraPillsHTML(rep, 'sales-list-extra')}
         ${salesMinPriceBadge(g, true)}
+        ${salesLastSalePillHTML(g, true)}
       </div>`;
   return `<div class="sales-list-row ${outOfStock ? 'oos' : ''}" onclick="${outOfStock ? '' : `addSalesGroupToCart(${i})`}" data-idx="${i}">
     <div class="sales-list-row-name">${escHtml(g.name)}${rep.reference ? ` <span class="sales-list-ref">${referenceCellHTML(rep.reference)}</span>` : ''}${unitLabel && unitLabel !== Unit.name('piece') ? ` <span class="sc-unit-badge">${Unit.esc(unitLabel)}</span>` : ''}</div>
@@ -1991,6 +2527,7 @@ function salesListRowHTML(g, i) {
       <span><b>${t('quickEntry.storageLocation')}:</b> ${escHtml(rep.storageLocation || '-')}</span>
       <span><b>${t('units.label')}:</b> ${escHtml(unitLabel)}</span>
       ${rep.family ? `<span><b>${t('quickEntry.family')}:</b> ${escHtml(rep.family)}</span>` : ''}
+      ${salesLastSaleDetailsHTML(g)}
     </div>
   </div>`;
 }
@@ -3982,6 +4519,10 @@ function updateSalesTotals() {
   }
   renderSalesCreditSection();
   updateSalesLed();
+  // The tab strip mirrors the live invoice. Every cart/price/discount change
+  // funnels through here; switchSalesHoldTab() snapshots again explicitly, and
+  // _salesHoldRestoring blocks this hook while a held cart is being loaded.
+  syncActiveSalesHoldTab();
 }
 
 // Legacy helper: a fresh line starts at 1 and the + / − buttons follow each
@@ -4584,7 +5125,9 @@ function confirmSalesCheckout() {
       // Optional sub-customer label + French note. SaleCore keeps customerId
       // and the single balance write on the parent, unchanged.
       subCustomer: subCustomer,
-      note: subNote || undefined,
+      // Free-form invoice note is additive: the customer-tree label keeps its
+      // existing place, so invoices without a typed note stay byte-identical.
+      note: ([subNote, _salesInvoiceNoteText()].filter(Boolean).join('\n')) || undefined,
       supplierId: _salesSuppId,
       supMode: _salesSupMode,
       customerDiscountPct: custDiscPct,
@@ -4625,8 +5168,14 @@ function confirmSalesCheckout() {
   // every id (old panel + new LED variants) and resets the totals strip too;
   // the cart is emptied first so clearSalesCart() takes its silent branch and
   // the cashier is never asked "تفريغ السلة؟" after a sale he just confirmed.
+  // Both advisory maps are rebuilt once here so the grid rebuilt by
+  // clearSalesCart() already shows the price just charged and the new pair.
+  // Only the paid tab is emptied; every other held cart stays untouched.
+  buildSalesLastSaleMap();
+  buildSalesCrossSellMap();
   _salesCart = [];
   clearSalesCart();
+  resetSalesHoldTabAfterSale();
 
   // Explicit "sale recorded" feedback: in thermal mode no preview window opens,
   // so without this the cashier only sees the cart vanish.
@@ -4664,7 +5213,7 @@ function confirmSalesCheckout() {
   document.getElementById('salesBarcodeScan').focus();
 }
 
-function clearSalesCart() {
+function clearSalesCart(force) {
   if (_salesCart.length === 0) {
     _salesCart = [];
     _salesCustomerId = null;
@@ -4704,6 +5253,8 @@ function clearSalesCart() {
     if (psec) psec.style.display = 'none';
     const ed = document.getElementById('salesExtraDisc');
     if (ed) ed.value = '0';
+    _salesSetField('salesInvoiceNote', '');
+    _setSalesInvoiceNoteOpen(false);
     resetSalesPaymentUI();
     resetSupSalePayUI();
     const csec = document.getElementById('salesCartSection');
@@ -4717,11 +5268,14 @@ function clearSalesCart() {
     renderSalesProducts();
     try { updateSalesTotals(); } catch (e) {}
     try { updateSalesLed(); } catch (e) {}
+    syncActiveSalesHoldTab();
     const bs = document.getElementById('salesBarcodeScan');
     if (bs) { try { bs.focus(); } catch (e) {} }
     return;
   }
-  if (!confirm(t('sales.clearCartConfirm'))) return;
+  // `force` is used internally by tab switching: switching is not "تفريغ السلة"
+  // and must never ask the cashier to confirm a different invoice's contents.
+  if (!force && !confirm(t('sales.clearCartConfirm'))) return;
   _salesCart = [];
   _salesCustomerId = null;
   _resetSalesSubCustomer();
@@ -4760,6 +5314,8 @@ function clearSalesCart() {
   if (psec) psec.style.display = 'none';
   const ed = document.getElementById('salesExtraDisc');
   if (ed) ed.value = '0';
+  _salesSetField('salesInvoiceNote', '');
+  _setSalesInvoiceNoteOpen(false);
   resetSalesPaymentUI();
   resetSupSalePayUI();
   const csec = document.getElementById('salesCartSection');
@@ -4773,6 +5329,7 @@ function clearSalesCart() {
   renderSalesProducts();
   try { updateSalesTotals(); } catch (e) {}
   try { updateSalesLed(); } catch (e) {}
+  syncActiveSalesHoldTab();
   const bs = document.getElementById('salesBarcodeScan');
   if (bs) { try { bs.focus(); } catch (e) {} }
 }

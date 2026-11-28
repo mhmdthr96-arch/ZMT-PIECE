@@ -87,6 +87,18 @@
     </div>
   </div>
 
+  <!-- ===== HOLD CARTS / MULTI-TAB =====
+       Session memory only: switching tabs keeps every line, discount, customer
+       and note. Nothing is written to disk, so company isolation stays intact. -->
+  <div class="sales-hold-tabs" id="salesHoldTabs">
+    <span class="sales-hold-tabs-label"><i class="fas fa-layer-group"></i> <span data-i18n="sales.holdCarts">الفواتير المعلقة</span></span>
+    <div class="sales-hold-tabs-list" id="salesHoldTabsList"></div>
+    <button type="button" class="sales-hold-add" id="salesHoldAddBtn" onclick="addSalesHoldTab()" title="فاتورة جديدة" data-i18n-title="sales.newTab">
+      <i class="fas fa-plus"></i> <span data-i18n="sales.newTab">فاتورة جديدة</span>
+    </button>
+    <span class="sales-hold-hint" data-i18n="sales.tabShortcutHint">F7 للتنقل · Alt+1..9 للقفز</span>
+  </div>
+
   <div class="page-body" style="padding:16px 20px">
     <div class="sales-layout">
 
@@ -142,6 +154,32 @@
                       id="salesCcpAmount" value="0" min="0" dir="ltr"
                       oninput="onSalesPaidInput()">
                     <span class="sales-pay-currency">DA</span>
+                  </div>
+                </div>
+
+                <!-- Compact totals live here, beside the paid amount and «دفع كلياً».
+                     Every id is unchanged, so all totals/payment helpers keep
+                     reading the exact same nodes as before. -->
+                <div class="sales-totals sales-pay-totals" id="salesPayTotals">
+                  <div class="sales-total-line">
+                    <span data-i18n="common.subtotal">المجموع الفرعي</span>
+                    <span id="salesCartSubtotal">DA0</span>
+                  </div>
+                  <div id="salesCartCustDiscount" class="sales-discount-line" style="display:none">
+                    <span data-i18n="common.customerDiscount">خصم العميل</span>
+                    <span id="salesCartCustDiscVal">-DA0</span>
+                  </div>
+                  <div class="sales-total-line">
+                    <span data-i18n="common.additionalDiscount">تخفيض إضافي</span>
+                    <div class="sales-disc-input">
+                      <input type="text" class="no-spinner num-input" id="salesExtraDisc" inputmode="decimal"
+                        value="0" min="0" dir="ltr" oninput="updateSalesTotals()" onblur="clampExtraDisc()">
+                      <span>DA</span>
+                    </div>
+                  </div>
+                  <div class="sales-grand-total">
+                    <span data-i18n="common.total">الإجمالي</span>
+                    <span id="salesCartTotal">DA0</span>
                   </div>
                 </div>
               </div>
@@ -258,38 +296,24 @@
             <i class="fas fa-shopping-cart" style="color:var(--bmw-blue-1)"></i>
             <span data-i18n="sales.cartTitle">سلة المشتريات</span>
             <span class="sales-cart-badge" id="salesCartCount">0</span>
+            <!-- Note is collapsed by default: the product lines own the cart.
+                 Its value is still captured in every held-cart snapshot. -->
+            <button type="button" class="sales-note-toggle" id="salesNoteToggleBtn"
+              onclick="toggleSalesInvoiceNote()" aria-expanded="false" aria-controls="salesInvoiceNoteBox"
+              title="ملاحظة الفاتورة" data-i18n-title="sales.invoiceNote">
+              <i class="fas fa-sticky-note"></i>
+              <span data-i18n="sales.invoiceNote">ملاحظة الفاتورة</span>
+              <i class="fas fa-chevron-down note-toggle-chevron"></i>
+            </button>
+          </div>
+          <div class="sales-invoice-note" id="salesInvoiceNoteBox" style="display:none">
+            <textarea id="salesInvoiceNote" rows="2" dir="auto" placeholder="اكتب ملاحظة لهذه الفاتورة (اختياري)..."
+              aria-label="ملاحظة الفاتورة" data-i18n-aria-label="sales.invoiceNote"
+              data-i18n-placeholder="sales.invoiceNotePlaceholder"></textarea>
           </div>
           <div class="sales-cart-items-wrap">
             <div id="salesCartItems" class="sales-cart-items"></div>
           </div>
-
-                    <div class="sales-cart-footer">
-<!-- Totals -->
-          <div class="sales-totals">
-            <div class="sales-total-line">
-              <span data-i18n="common.subtotal">المجموع الفرعي</span>
-              <span id="salesCartSubtotal">DA0</span>
-            </div>
-            <div id="salesCartCustDiscount" class="sales-discount-line" style="display:none">
-              <span data-i18n="common.customerDiscount">خصم العميل</span>
-              <span id="salesCartCustDiscVal">-DA0</span>
-            </div>
-            <div class="sales-total-line">
-              <span data-i18n="common.additionalDiscount">تخفيض إضافي</span>
-              <div class="sales-disc-input">
-                <input type="text" class="no-spinner num-input" id="salesExtraDisc" inputmode="decimal"
-                  value="0" min="0" dir="ltr" oninput="updateSalesTotals()" onblur="clampExtraDisc()">
-                <span>DA</span>
-              </div>
-            </div>
-            <div class="sales-grand-total">
-              <span data-i18n="common.total">الإجمالي</span>
-              <span id="salesCartTotal">DA0</span>
-            </div>
-          </div>
-          </div>
-
-          <!-- Payment -->
 
         </div>
 

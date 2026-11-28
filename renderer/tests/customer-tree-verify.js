@@ -378,7 +378,8 @@ check(salesJs.includes("alert(t('customerTree.noParent'))"), 'F5 بلا عميل
 check(salesJs.includes('var _salesSubCustomerId = null;'), 'حالة الابن منفصلة عن _salesCustomerId');
 check(!/F5/.test(shortcutsSrc.replace(/2F5/g, '')), 'لا ربط F5 عامّ يلغي التحديث في بقية الصفحات');
 check(salesJs.includes('subCustomer: subCustomer,'), 'الابن يُمرَّر إلى SaleCore');
-check(salesJs.includes('note: subNote || undefined,'), 'الملاحظة الفرنسية تُمرَّر إلى SaleCore');
+check(salesJs.includes("note: ([subNote, _salesInvoiceNoteText()].filter(Boolean).join('\\n')) || undefined,"), 'الملاحظة الفرنسية تُمرَّر إلى SaleCore أولاً');
+check(salesJs.includes("filter(Boolean).join('\\n')) || undefined"), 'ملاحظة فاتورة فارغة لا تضيف سطراً ولا تغيّر السلوك السابق');
 for (const fn of ['setSalesWalkin()', 'clearSalesCustomer()', 'openSupSaleMode()', 'selectSalesCustomer(id)', 'confirmSalesTransfer()']) {
   const i = salesJs.indexOf('function ' + fn);
   check(i >= 0 && salesJs.indexOf('_resetSalesSubCustomer();', i) > i && salesJs.indexOf('_resetSalesSubCustomer();', i) < i + 400,
